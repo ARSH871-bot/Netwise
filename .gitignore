@@ -1,0 +1,56 @@
+# ---------------------------------------------------------------------------
+# Netwise .gitignore
+#
+# RULE 1 of this project: no client network configuration data ever enters git.
+# Once a config is committed it lives in history forever, so these patterns are
+# deliberately broad. If you need to add an exception, discuss it with the team
+# first -- do not quietly narrow these rules.
+# ---------------------------------------------------------------------------
+
+# --- Network configuration data (NEVER commit) -----------------------------
+configs/
+snapshots/
+*.cfg
+*.conf
+*.xml            # PF Sense exports
+*.pfsense
+
+# --- Secrets ---------------------------------------------------------------
+.env
+.env.*
+*.pem
+*.key
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# --- Virtual environments --------------------------------------------------
+venv/
+.venv/
+env/
+ENV/
+
+# --- Tooling / test caches -------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Notebooks -------------------------------------------------------------
+.ipynb_checkpoints/
+
+# --- Editors / OS ----------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
