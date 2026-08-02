@@ -1,7 +1,22 @@
 # Proposal: structured output schema for the analysis pipeline
 
-**Status:** PROPOSAL — for team decision. Nothing is built against this yet.
-**Decide with:** Ankeet (engine), Shubham + Samika (dashboard).
+> ## ⚠️ SUPERSEDED — kept for background only
+>
+> The team agreed the **F-1 finding format** instead. See
+> [`docs/finding-format.md`](../finding-format.md), which is the authoritative
+> contract. Do not build against this document.
+>
+> The agreed format is closest to **Option A** below (a flat findings list),
+> with one important addition this proposal missed: an explicit `status` field
+> distinguishing `found` / `none` / `error`. That directly answers open
+> question 3, and it is a better answer than anything proposed here —
+> the distinction is carried in the finding itself rather than in the wrapper
+> around it.
+>
+> This file is retained because the trade-offs are useful background for the
+> project review.
+
+**Status:** SUPERSEDED by `docs/finding-format.md`.
 **Written:** 2026-07-29
 
 ---

@@ -110,6 +110,60 @@ Batfish runs in Docker container `batfish` (image `batfish/allinone`), exposing
   a known hard problem — **timebox it** and fall back to supported-vendor
   sample configs if it stalls.
 
+## 7a. The finding format (F-1) — the one contract
+
+**`docs/finding-format.md` is authoritative.** It was agreed by all four team
+members and supersedes any earlier schema discussion. Do not change it, or the
+field vocabulary in `analysis/findings.py`, without full team agreement.
+
+Every check returns a **list of findings**, each a dict with exactly these
+fields: `id`, `check`, `severity`, `device`, `summary`, `evidence`
+(`detail` + `source`), `status`.
+
+The `status` field is safety-critical (**F-4**):
+
+| `status` | Meaning | Dashboard shows |
+|---|---|---|
+| `found` | The check ran and found a problem | The finding |
+| `none` | The check ran and found nothing | Green tick |
+| `error` | The check **could not run** | Amber warning |
+
+`none` and `error` must never look alike. "We checked and found nothing" and
+"we could not check" are different claims, and conflating them is how a
+security tool ends up telling a user they are safe when nobody looked.
+
+Findings are built with the helpers in `analysis/findings.py`, which validate
+every field — a malformed finding fails loudly in the check that made it
+rather than quietly downstream.
+
+## 7b. The pipeline (F-3) — how features plug together
+
+`analysis/pipeline.py` is the shared backbone. It connects to Batfish, loads a
+snapshot, runs the registered checks, and returns one combined list of
+findings. Each team member owns one check:
+
+```
+analysis/checks/access_control.py     Arsh     (written — the template)
+analysis/checks/routing.py            Ankeet
+analysis/checks/policy_compliance.py  Shubham
+analysis/checks/change_impact.py      Shubham
+analysis/checks/risk.py               Samika
+```
+
+A check is one file with one function, `run(bf: Session) -> list[dict]`, plus
+one line in the `CHECKS` registry in `pipeline.py`. Checks do not connect,
+load snapshots, or handle their own crashes — the pipeline isolates each one,
+so a bug in one feature cannot take down the other three.
+
+```bash
+python -m analysis.pipeline tests/fixtures/rtr-us5-secure
+```
+
+Synthetic test configs live in `tests/fixtures/` and **are** committed — they
+are the single exception to the no-configs-in-git rule, because we invented
+them and they describe nobody's real network. Real configs stay in the ignored
+`configs/` folder.
+
 ## 8. Repository layout
 
 ```

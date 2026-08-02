@@ -8,12 +8,35 @@
 # ---------------------------------------------------------------------------
 
 # --- Network configuration data (NEVER commit) -----------------------------
-configs/
+# NOTE the leading slash: /configs/ means "the configs folder at the REPO ROOT".
+# Without it, `configs/` would match a folder called configs at ANY depth --
+# including tests/fixtures/<name>/configs/, which is where Batfish requires
+# device files to live. Real client configs are still blocked everywhere by the
+# file-extension rules below, so anchoring this costs us no protection.
+/configs/
 snapshots/
 *.cfg
 *.conf
 *.xml            # PF Sense exports
 *.pfsense
+
+# --- Test fixtures: the ONE allowed exception ------------------------------
+# Synthetic configs WE invented, used to test our own code. These are not
+# client data -- nobody's real network is described by them -- so committing
+# them is safe, and it means a teammate can clone the repo and immediately run
+# the pipeline instead of asking someone to email them a config.
+#
+# THE LINE: if a file came from a real network, it does NOT go here. It lives
+# in configs/, which stays ignored above. When in doubt, keep it out.
+#
+# These negations only work because no PARENT DIRECTORY of these files is
+# excluded. Git cannot re-include a file inside an ignored folder -- it never
+# looks inside one. That is why /configs/ above is anchored to the repo root.
+# If you ever add a broad directory rule, check this still works:
+#     git check-ignore -v tests/fixtures/rtr-us5-secure/configs/rtr-us5.cfg
+# It should print nothing and exit 1.
+!tests/fixtures/**/*.cfg
+!tests/fixtures/**/*.conf
 
 # --- Secrets ---------------------------------------------------------------
 .env
