@@ -48,7 +48,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from pybatfish.client.session import Session
 
 from analysis import findings
-from analysis.checks import access_control
+from analysis.checks import access_control, policy_compliance
 
 # --- The check registry -----------------------------------------------------
 #
@@ -56,10 +56,14 @@ from analysis.checks import access_control
 # produces) to the function that runs it. Add your check here; one line.
 CHECKS = {
     "access_control": access_control.run,
+    "policy_compliance": policy_compliance.run,
     # "routing":           routing.run,             # Ankeet
-    # "policy_compliance": policy_compliance.run,   # Shubham
-    # "change_impact":     change_impact.run,       # Shubham
     # "risk":              risk.run,                # Samika
+    #
+    # change_impact is deliberately NOT here. It compares two snapshots, which
+    # differentialReachability requires, and this registry hands a check exactly
+    # one. It will be a separate entry point instead -- team decision, shape
+    # still being agreed. Do not add it to CHECKS.
 }
 
 
