@@ -7,6 +7,15 @@ Everything runs offline and locally. The tool never touches a live network.
 
 ---
 
+## Read these two first
+
+| Document | What it governs |
+|---|---|
+| [`docs/finding-format.md`](docs/finding-format.md) | **The finding contract (F-1).** The exact shape every check returns. Agreed by all four members; changing it needs all four. Summarised in §7a below. |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | **The workflow.** Feature branches, pull requests, and how to add a check. Nobody commits directly to `main`. |
+
+---
+
 ## 1. The problem
 
 Routers, switches and firewalls are controlled by plain-text configuration
