@@ -155,13 +155,32 @@ def make_finding(
 
 
 def no_issues_finding(
-    *, check: str, device: str, summary: str, detail: str, source: str
+    *,
+    check: str,
+    device: str,
+    summary: str,
+    detail: str,
+    source: str,
+    number: int = SENTINEL_NUMBER,
 ) -> Dict[str, Any]:
     """status="none" -- the check RAN and found nothing. This is good news.
 
     Severity is "low" because there is nothing wrong. Use this only when the
     check genuinely completed. If anything stopped it running, use
     error_finding() instead -- see F-4.
+
+    `number` defaults to the 000 sentinel, which is right for every check that
+    owns its ID prefix outright. It exists because two checks do NOT:
+    policy_compliance and change_impact both map to "PC" (see PREFIX_BY_CHECK),
+    so if both used 000 for "all clear" they would emit the same `id`. The
+    agreed split is policy_compliance 000-099 and change_impact 100-199, so
+    change_impact passes number=100 here. Documented in docs/policy-rules.md.
+
+    That convention is enforced by discipline, not by this function -- and it
+    does not cover real findings at all, since make_finding() takes `number` as
+    a required argument. analysis.pipeline.duplicate_id_findings() is the
+    backstop that catches what slips through, and a distinct prefix for
+    change_impact is the real fix (needs all four of us).
     """
     return make_finding(
         check=check,
@@ -171,7 +190,7 @@ def no_issues_finding(
         detail=detail,
         source=source,
         status="none",
-        number=SENTINEL_NUMBER,
+        number=number,
     )
 
 

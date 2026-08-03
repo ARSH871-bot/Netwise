@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<!--
+  Netwise dashboard -- the two-pane interface.
+
+  LEFT PANE   config upload, then the findings the analysis produced.
+  RIGHT PANE  a chat panel for plain-English questions about those findings.
+
+  This file is only the skeleton. Everything inside #findings and #chat-log is
+  built by static/app.js, because it depends on data.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Netwise</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+
+  <body>
+    <header class="masthead">
+      <h1>Netwise</h1>
+      <p class="tagline">
+        Network configuration analysis &mdash; runs entirely offline
+      </p>
+    </header>
+
+    <main class="panes">
+      <!-- ============ LEFT PANE: upload + results ============ -->
+      <section class="pane pane-results" aria-labelledby="results-heading">
+        <!-- ---- Upload ---- -->
+        <div class="card upload">
+          <h2>Analyse a config</h2>
+          <p class="hint">
+            Cisco IOS config files (.cfg, .conf, .txt), up to 2&nbsp;MB.
+            Nothing leaves this machine.
+          </p>
+
+          <label class="file-picker">
+            <input type="file" id="file-input" accept=".cfg,.conf,.txt" />
+            <span>Choose a config file</span>
+          </label>
+
+          <!-- Validation result: accepted or rejected, with the reason. -->
+          <p id="upload-message" class="upload-message" role="status"></p>
+        </div>
+
+        <!-- ---- Coverage summary ----
+             Three counts, never merged. "Could not check" is shown even when
+             it is zero, because an explicit zero is a stronger statement than
+             an absent row. -->
+        <h2 id="results-heading">Findings</h2>
+        <div id="summary" class="summary" aria-live="polite"></div>
+
+        <!-- ---- The findings themselves, grouped by status ---- -->
+        <div id="findings"></div>
+      </section>
+
+      <!-- ============ RIGHT PANE: chat ============ -->
+      <section class="pane pane-chat" aria-labelledby="chat-heading">
+        <h2 id="chat-heading">Ask a question</h2>
+        <p class="hint">
+          Answers come from a local model, grounded strictly in the findings on
+          the left. It is never asked to guess about your network.
+        </p>
+
+        <div id="chat-log" class="chat-log" aria-live="polite"></div>
+
+        <form id="chat-form" class="chat-form">
+          <input
+            type="text"
+            id="chat-input"
+            placeholder="e.g. why can the guest network reach finance?"
+            autocomplete="off"
+          />
+          <button type="submit">Ask</button>
+        </form>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

@@ -122,8 +122,14 @@ def run(bf: Session) -> List[Dict[str, Any]]:
     this function only has to ask questions and shape the answers.
     """
     # One shared counter across all four analyses, so every finding gets a
-    # unique id (AC-001, AC-002, ...). The dashboard uses `id` as a key, so
-    # duplicates would silently collide.
+    # unique id (AC-001, AC-002, ...). docs/finding-format.md calls `id` a
+    # unique identifier, so anything downstream may rely on it -- duplicates
+    # would let a consumer silently drop one of a colliding pair.
+    #
+    # KNOWN WEAKNESS: these numbers are assigned in discovery order, so a
+    # finding's id shifts if an earlier one stops occurring. policy_compliance
+    # pins ids to rules instead, which is better and is what would let the
+    # dashboard show what changed since the previous run. Worth adopting here.
     numbering = count(1)
 
     results: List[Dict[str, Any]] = []
