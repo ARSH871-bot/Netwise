@@ -12,28 +12,44 @@ Netwise -- access-control check (Arsh's feature).
     contract. The pipeline handles connecting, loading, and catching your
     mistakes -- you only write the analysis.
 
-WHAT THIS CHECK DOES
-    It asserts an access policy: a list of "this traffic must be allowed" and
-    "this traffic must be blocked" statements, each checked against the real
-    config with Batfish's testFilters question.
+WHAT THIS CHECK DOES -- four analyses, one check
 
-    This grew out of US-5, which ran the same two queries and printed them.
-    Printing is fine for a proof; the product needs findings, so the same logic
-    now RETURNS F-1 findings instead.
+    1. POLICY STATEMENTS (testFilters)
+       "This exact packet must be allowed / blocked." Spot-checks one flow at a
+       time and names the ACL line that decided.
+
+    2. GUARANTEES (searchFilters)   <-- our strongest capability
+       "NO packet in this whole space may be permitted." Searches an entire
+       space of flows at once, so it PROVES a property instead of sampling it.
+
+    3. DEAD RULES (filterLineReachability)
+       Finds ACL lines that can never match because an earlier line shadows
+       them. The config looks like it does something; it does nothing.
+
+    4. UNDEFINED REFERENCES (undefinedReferences)
+       Finds config pointing at an ACL or object group that was never defined.
+
+    All four are access control, so they are ONE check -- `access_control` --
+    producing `AC-` findings. They are not four registry entries: F-1 fixes the
+    `check` vocabulary to five values, and adding to it needs all four of us.
 
 HOW IT DECIDES WHAT TO REPORT
-    For each policy statement:
-      - Batfish agrees with the policy   -> nothing to report
-      - Batfish disagrees                -> status="found", a real violation
-      - Batfish could not answer         -> status="error", we are blind here
-    If every statement was checked and all held -> a single status="none".
+    Every analysis reports independently:
+      - a real problem            -> status="found"
+      - Batfish could not answer  -> status="error", we are blind here
+      - nothing wrong anywhere    -> ONE status="none" for the whole check
 
-    That last distinction matters. If the router does not exist, or the ACL was
-    renamed, we must NOT report "all clear" -- we never actually checked. See
-    F-4 in docs/finding-format.md.
+    Each analysis is wrapped separately, so if filterLineReachability fails we
+    still run undefinedReferences. A blind spot in one analysis must not
+    silently shrink the others.
+
+    And we only ever say "all clear" if every analysis actually completed. If a
+    query failed, the honest answer is "we could not check" -- see F-4 in
+    docs/finding-format.md.
 """
 
-from typing import Any, Dict, List
+from itertools import count
+from typing import Any, Dict, Iterator, List
 
 from pybatfish.client.session import Session
 from pybatfish.datamodel.flow import HeaderConstraints
@@ -44,14 +60,12 @@ from analysis import findings
 # finding's "check" field.
 CHECK_NAME = "access_control"
 
-# --- The access policy being asserted --------------------------------------
+# --- 1. Policy statements: single flows that must be allowed or blocked -----
 #
-# PLACEHOLDER: these statements describe the rtr-us5 test fixture. The real
-# client policy will replace them -- that is a later user story, and it is why
-# the policy lives here as plain data rather than being buried in the code.
-# Editing this list should not require understanding anything below it.
-#
-# Each statement says: "a packet like THIS must be <expected> by <filter>".
+# PLACEHOLDER: these describe the rtr-us5 test fixture. The real client policy
+# will replace them -- that is why the policy lives here as plain data rather
+# than being buried in the code. Editing this list should not require
+# understanding anything below it.
 POLICY: List[Dict[str, Any]] = [
     {
         "description": "DNS lookups to the approved DNS server must be allowed",
@@ -63,7 +77,6 @@ POLICY: List[Dict[str, Any]] = [
             "applications": ["dns"],
         },
         "expected": "PERMIT",
-        # What to tell the user if this statement is violated, and how bad it is.
         "violation_summary": "DNS to the approved server is blocked, so name lookups will fail",
         "violation_severity": "medium",
     },
@@ -82,19 +95,79 @@ POLICY: List[Dict[str, Any]] = [
     },
 ]
 
+# --- 2. Guarantees: whole SPACES of traffic that must never be permitted ----
+#
+# The difference from POLICY above is the difference between testing and
+# proving. A policy statement checks one packet. A guarantee checks every
+# packet that fits the description -- every source address in the subnet,
+# every source port, all at once. If Batfish returns nothing, no such packet
+# exists. That is a proof, not a sample.
+GUARANTEES: List[Dict[str, Any]] = [
+    {
+        "description": "No unencrypted web traffic may be permitted out of the internal subnet",
+        "node": "rtr-us5",
+        "filter": "acl_in",
+        # Deliberately broad: ANY source in the subnet, ANY destination.
+        "headers": {"srcIps": "10.10.10.0/24", "applications": ["http"]},
+        "violation_summary": "Unencrypted web traffic is allowed out of the internal subnet",
+        "violation_severity": "high",
+    },
+]
+
 
 def run(bf: Session) -> List[Dict[str, Any]]:
-    """Check every policy statement and return F-1 findings.
+    """Run all four analyses and return F-1 findings.
 
     The pipeline has already connected to Batfish and loaded the snapshot, so
     this function only has to ask questions and shape the answers.
     """
-    results: List[Dict[str, Any]] = []
+    # One shared counter across all four analyses, so every finding gets a
+    # unique id (AC-001, AC-002, ...). docs/finding-format.md calls `id` a
+    # unique identifier, so anything downstream may rely on it -- duplicates
+    # would let a consumer silently drop one of a colliding pair.
+    #
+    # KNOWN WEAKNESS: these numbers are assigned in discovery order, so a
+    # finding's id shifts if an earlier one stops occurring. policy_compliance
+    # pins ids to rules instead, which is better and is what would let the
+    # dashboard show what changed since the previous run. Worth adopting here.
+    numbering = count(1)
 
-    # Sequence numbers for the IDs (AC-001, AC-002 ...). Violations and errors
-    # are numbered separately so no two findings share an id.
-    violation_number = 0
-    error_number = 0
+    results: List[Dict[str, Any]] = []
+    results.extend(_check_policy_statements(bf, numbering))
+    results.extend(_check_guarantees(bf, numbering))
+    results.extend(_check_dead_rules(bf, numbering))
+    results.extend(_check_undefined_references(bf, numbering))
+
+    # Only claim "all clear" if every analysis ran AND found nothing. If any
+    # produced an error finding, `results` is non-empty and we never get here --
+    # which is the point.
+    if not results:
+        return [
+            findings.no_issues_finding(
+                check=CHECK_NAME,
+                device=POLICY[0]["node"] if POLICY else "unknown",
+                summary="No issues found by access control",
+                detail=(
+                    f"{len(POLICY)} policy statement(s) hold, {len(GUARANTEES)} "
+                    "guarantee(s) proven, no dead rules, no undefined references"
+                ),
+                source=", ".join(sorted({s["node"] for s in POLICY})),
+            )
+        ]
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# 1. Policy statements -- testFilters
+# ---------------------------------------------------------------------------
+
+
+def _check_policy_statements(
+    bf: Session, numbering: Iterator[int]
+) -> List[Dict[str, Any]]:
+    """Check each single-flow policy statement with testFilters."""
+    results: List[Dict[str, Any]] = []
 
     for statement in POLICY:
         node = statement["node"]
@@ -118,26 +191,21 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                 .frame()
             )
         except Exception as error:
-            # Could not ask the question at all -- a bad node name, a renamed
-            # ACL, an invalid header. We are blind for this statement, so it is
-            # an error, NOT a clean result.
-            error_number += 1
             results.append(
                 findings.error_finding(
                     check=CHECK_NAME,
                     device=node,
                     summary=f"Could not check: {statement['description'].lower()}",
-                    detail=f"Batfish could not answer this query: {error}",
+                    detail=findings.describe_error(error),
                     source=f"{node}:{filter_name}",
-                    number=error_number,
+                    number=next(numbering),
                 )
             )
             continue
 
         if frame.empty:
             # The query ran but matched nothing -- usually the node or filter
-            # does not exist in this snapshot. Again: blind, not clean.
-            error_number += 1
+            # does not exist in this snapshot. Blind, not clean.
             results.append(
                 findings.error_finding(
                     check=CHECK_NAME,
@@ -148,21 +216,17 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                         f"on device {node!r}. Does it exist in this config?"
                     ),
                     source=f"{node}:{filter_name}",
-                    number=error_number,
+                    number=next(numbering),
                 )
             )
             continue
 
         row = frame.iloc[0]
         actual = row["Action"]
-        matched_line = row["Line_Content"]
 
         if actual == statement["expected"]:
-            # The config agrees with the policy. Nothing to report.
-            continue
+            continue  # config agrees with policy -- nothing to report
 
-        # The config disagrees with the policy: a real finding.
-        violation_number += 1
         results.append(
             findings.make_finding(
                 check=CHECK_NAME,
@@ -174,26 +238,241 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                 # grounded in this string.
                 detail=(
                     f"Expected {statement['expected']} but got {actual}, "
-                    f"decided by: {matched_line}"
+                    f"decided by: {row['Line_Content']}"
                 ),
                 # testFilters names the matching LINE but not its line NUMBER,
                 # so the best source we can give is device:filter.
                 source=f"{node}:{filter_name}",
                 status="found",
-                number=violation_number,
+                number=next(numbering),
             )
         )
 
-    # Only claim "all clear" if we actually checked everything successfully.
-    if not results:
-        return [
-            findings.no_issues_finding(
+    return results
+
+
+# ---------------------------------------------------------------------------
+# 2. Guarantees -- searchFilters  (the strongest capability)
+# ---------------------------------------------------------------------------
+
+
+def _check_guarantees(bf: Session, numbering: Iterator[int]) -> List[Dict[str, Any]]:
+    """Prove that no packet in a whole space is permitted, using searchFilters.
+
+    WHY THIS IS DIFFERENT FROM testFilters
+        testFilters asks about one packet. searchFilters asks about every packet
+        matching a description -- every address in the subnet, every source
+        port -- and returns one that violates the rule, if any exists.
+
+        So an EMPTY result is the interesting one: it means Batfish searched
+        the whole space and found no permitted flow. That is a proof the
+        guarantee holds, not a sample that happened to pass.
+
+        A returned row is a counter-example: a specific flow that IS permitted
+        when it should not be, plus the ACL line responsible.
+    """
+    results: List[Dict[str, Any]] = []
+
+    for guarantee in GUARANTEES:
+        node = guarantee["node"]
+        filter_name = guarantee["filter"]
+
+        try:
+            frame = (
+                bf.q.searchFilters(
+                    nodes=node,
+                    filters=filter_name,
+                    # action="permit" means "search for flows this filter
+                    # PERMITS". We expect none, because the guarantee says this
+                    # traffic must never be allowed.
+                    action="permit",
+                    headers=HeaderConstraints(**guarantee["headers"]),
+                )
+                .answer()
+                .frame()
+            )
+        except Exception as error:
+            results.append(
+                findings.error_finding(
+                    check=CHECK_NAME,
+                    device=node,
+                    summary=f"Could not prove: {guarantee['description'].lower()}",
+                    detail=findings.describe_error(error),
+                    source=f"{node}:{filter_name}",
+                    number=next(numbering),
+                )
+            )
+            continue
+
+        if frame.empty:
+            # Nothing in the whole space is permitted -- the guarantee holds.
+            # No finding: this analysis found no problem.
+            continue
+
+        # Batfish found at least one violating flow. Report the first as the
+        # counter-example -- one concrete packet is far more useful to a human
+        # than "the policy is violated somewhere".
+        row = frame.iloc[0]
+        results.append(
+            findings.make_finding(
                 check=CHECK_NAME,
-                device=POLICY[0]["node"] if POLICY else "unknown",
-                summary="No issues found by access control",
-                detail=f"All {len(POLICY)} access policy statement(s) hold",
-                source=", ".join(sorted({s["node"] for s in POLICY})),
+                severity=guarantee["violation_severity"],
+                device=node,
+                summary=guarantee["violation_summary"],
+                detail=(
+                    f"Example permitted flow: {row['Flow']}, "
+                    f"allowed by: {row['Line_Content']}"
+                ),
+                source=f"{node}:{filter_name}",
+                status="found",
+                number=next(numbering),
+            )
+        )
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# 3. Dead rules -- filterLineReachability
+# ---------------------------------------------------------------------------
+
+
+def _check_dead_rules(bf: Session, numbering: Iterator[int]) -> List[Dict[str, Any]]:
+    """Find ACL lines that can never match because an earlier line shadows them.
+
+    WHY THIS MATTERS
+        A dead rule is dangerous precisely because it looks fine. Someone reads
+        the config, sees "permit HTTPS to the finance server", and believes it
+        works. It never fires, because a broader line above it already decided.
+
+        Batfish returns ONE ROW PER UNREACHABLE LINE, naming the blocking
+        line(s). An empty result means every line in every ACL can fire.
+    """
+    try:
+        frame = bf.q.filterLineReachability().answer().frame()
+    except Exception as error:
+        return [
+            findings.error_finding(
+                check=CHECK_NAME,
+                summary="Could not check for dead ACL rules",
+                detail=findings.describe_error(error),
+                source="filterLineReachability",
+                number=next(numbering),
             )
         ]
 
+    results: List[Dict[str, Any]] = []
+    for _, row in frame.iterrows():
+        # `Sources` looks like ["rtr-us5: acl_in"] -- the device and filter the
+        # dead line belongs to. Split it back apart for the finding fields.
+        source_text = row["Sources"][0] if len(row["Sources"]) else "unknown: unknown"
+        device, _, filter_name = source_text.partition(": ")
+
+        # A dead DENY is worse than a dead PERMIT. A permit that never fires
+        # blocks traffic someone wanted (an availability problem). A deny that
+        # never fires lets through traffic someone meant to block -- a security
+        # hole. Batfish tells us which it is, so we grade accordingly rather
+        # than guessing.
+        dead_action = row["Unreachable_Line_Action"]
+        severity = "high" if dead_action == "DENY" else "medium"
+
+        blocking = ", ".join(row["Blocking_Lines"]) or "an earlier line"
+        results.append(
+            findings.make_finding(
+                check=CHECK_NAME,
+                severity=severity,
+                device=device,
+                summary=f"ACL rule never takes effect in {filter_name}",
+                detail=(
+                    f"Unreachable line: {row['Unreachable_Line']} "
+                    f"(action {dead_action}). Blocked by: {blocking}. "
+                    f"Reason: {row['Reason']}"
+                ),
+                source=source_text,
+                status="found",
+                number=next(numbering),
+            )
+        )
+
     return results
+
+
+# ---------------------------------------------------------------------------
+# 4. Undefined references -- undefinedReferences
+# ---------------------------------------------------------------------------
+
+
+def _check_undefined_references(
+    bf: Session, numbering: Iterator[int]
+) -> List[Dict[str, Any]]:
+    """Find config that points at a structure which was never defined.
+
+    WHY THIS MATTERS
+        `ip access-group acl_guest_in in` on an interface, with no
+        `ip access-list acl_guest_in` anywhere, is a silent failure. The author
+        believed they had applied a filter. Depending on the platform the
+        traffic may be entirely unfiltered.
+
+        An empty result means every referenced structure exists.
+    """
+    try:
+        frame = bf.q.undefinedReferences().answer().frame()
+    except Exception as error:
+        return [
+            findings.error_finding(
+                check=CHECK_NAME,
+                summary="Could not check for undefined references",
+                detail=findings.describe_error(error),
+                source="undefinedReferences",
+                number=next(numbering),
+            )
+        ]
+
+    # undefinedReferences reports the FILE, not the device. Rather than guessing
+    # a hostname from the filename, ask Batfish which nodes came from which
+    # file -- so `device` stays grounded in real output like everything else.
+    file_to_node = _map_files_to_nodes(bf)
+
+    results: List[Dict[str, Any]] = []
+    for _, row in frame.iterrows():
+        file_name = row["File_Name"]
+        results.append(
+            findings.make_finding(
+                check=CHECK_NAME,
+                # High: an undefined ACL reference means traffic the author
+                # believed was filtered may not be filtered at all.
+                severity="high",
+                device=file_to_node.get(file_name, "unknown"),
+                summary=f"Config refers to {row['Struct_Type']} '{row['Ref_Name']}' which is not defined",
+                detail=(
+                    f"Referenced as: {row['Context']}. "
+                    f"The structure {row['Ref_Name']!r} is never defined in this snapshot."
+                ),
+                # `Lines` is already in filename:[line] form -- exactly the
+                # "filename:line" F-1 asks for.
+                source=str(row["Lines"]),
+                status="found",
+                number=next(numbering),
+            )
+        )
+
+    return results
+
+
+def _map_files_to_nodes(bf: Session) -> Dict[str, str]:
+    """Map each config file to the device defined in it, using fileParseStatus.
+
+    Returns an empty map on failure -- callers fall back to "unknown", which is
+    what F-1 says to use when we cannot tell which device a finding belongs to.
+    """
+    try:
+        frame = bf.q.fileParseStatus().answer().frame()
+    except Exception:
+        return {}
+
+    mapping: Dict[str, str] = {}
+    for _, row in frame.iterrows():
+        nodes = row["Nodes"]
+        if len(nodes):
+            mapping[row["File_Name"]] = nodes[0]
+    return mapping

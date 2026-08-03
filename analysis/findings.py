@@ -22,6 +22,15 @@ THE THREE HELPERS, one per status value:
 That third one is the safety-critical one (F-4). "We checked and found
 nothing" and "we could not check" must never look the same to a user, so they
 are separate functions and you have to choose deliberately between them.
+
+PLUS ONE UTILITY, which is not a finding builder:
+
+    describe_error(...)    turn an exception into ONE safe line
+
+    Use it whenever you would otherwise write f"...: {error}". A raw Batfish
+    exception carries kilobytes of server log, and that text would go straight
+    into evidence.detail -- which the AI layer treats as grounding and the
+    dashboard shows the client. See the function for the measurements.
 """
 
 from typing import Any, Dict
@@ -54,6 +63,46 @@ VALID_STATUSES = ("found", "none", "error")
 # Findings numbered 000 are the "nothing found" and "could not run" sentinels.
 # Real problems are numbered from 001 upwards by the check that found them.
 SENTINEL_NUMBER = 0
+
+
+def describe_error(error: Exception, limit: int = 200) -> str:
+    """Condense an exception into ONE line that is safe to put in a finding.
+
+    WHY THIS EXISTS
+        The obvious thing -- f"...: {error}" -- looks harmless and is not. A
+        failed Batfish query raises BatfishException carrying the server's own
+        log: measured at 5241 characters over 20 lines, containing work_item
+        JSON, internal UUIDs, container names, and "Loading configurations for
+        NetworkSnapshot{...}" repeated many times.
+
+        That text ends up in evidence.detail, which is:
+          - what the AI layer receives AS ITS GROUNDING. Five kilobytes of Java
+            internals is noise the model must ignore, and exactly the kind of
+            input that leaks internal identifiers into a user-facing sentence.
+          - what the dashboard renders IN FRONT OF THE CLIENT.
+
+        docs/finding-format.md says evidence.detail is "the config line or
+        Batfish result". A stack trace is neither.
+
+    WHAT IT KEEPS
+        The exception type and its first line -- which is the part a human can
+        act on. The example above becomes:
+
+            BatfishException: Work terminated abnormally
+
+        The full text is NOT lost: log it at debug level if you are chasing a
+        bug. Debuggability and a clean contract are not in tension; they just
+        belong in different places.
+
+    USE IT everywhere you would otherwise interpolate an exception:
+
+        detail=findings.describe_error(error)
+    """
+    first_line = (str(error).strip().splitlines() or [""])[0]
+    text = f"{type(error).__name__}: {first_line}"
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
 
 
 def make_finding(
@@ -123,10 +172,15 @@ def no_issues_finding(
     `number` defaults to the 000 sentinel, which is right for every check that
     owns its ID prefix outright. It exists because two checks do NOT:
     policy_compliance and change_impact both map to "PC" (see PREFIX_BY_CHECK),
-    so if both used 000 for "all clear" they would emit the same `id`, and the
-    dashboard keys on `id`. The agreed split is policy_compliance 000-099 and
-    change_impact 100-199, so change_impact passes number=100 here.
-    Documented in docs/policy-rules.md.
+    so if both used 000 for "all clear" they would emit the same `id`. The
+    agreed split is policy_compliance 000-099 and change_impact 100-199, so
+    change_impact passes number=100 here. Documented in docs/policy-rules.md.
+
+    That convention is enforced by discipline, not by this function -- and it
+    does not cover real findings at all, since make_finding() takes `number` as
+    a required argument. analysis.pipeline.duplicate_id_findings() is the
+    backstop that catches what slips through, and a distinct prefix for
+    change_impact is the real fix (needs all four of us).
     """
     return make_finding(
         check=check,
@@ -159,8 +213,15 @@ def error_finding(
 
     `number` defaults to the 000 sentinel, which suits the common case of one
     error per check. If a single check can fail in several independent ways at
-    once, number them 1, 2, 3 ... so the IDs stay unique -- the dashboard uses
-    `id` as a key.
+    once, number them 1, 2, 3 ... so the ids stay unique.
+
+    Why unique matters: docs/finding-format.md calls `id` a "unique identifier",
+    so anything downstream is entitled to rely on it -- a diff between two runs,
+    the AI layer referring to one finding, a consumer keying by id. The
+    dashboard deliberately does NOT key by id today, precisely because ids were
+    found to collide; that is a defensive choice on its part, not permission for
+    ids to be duplicated. analysis.pipeline.duplicate_id_findings() reports any
+    that slip through.
     """
     return make_finding(
         check=check,
