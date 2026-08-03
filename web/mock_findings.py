@@ -44,11 +44,17 @@ THE EVIDENCE IS REAL WHERE IT CAN BE
         where one of Shubham's two checks is clean and the other errors
         produces two findings with the same id.
 
-    docs/finding-format.md calls id a "unique identifier", and
-    analysis/findings.py says outright that the dashboard uses id as a key. If
-    the dashboard did that, one of these two would be silently dropped -- and
-    if the dropped one were the error, the user would see "policy compliance:
-    all clear" with no indication that change impact never ran.
+    docs/finding-format.md calls id a "unique identifier", so anything
+    downstream is entitled to key on it -- this dashboard, the AI layer, a diff
+    between two runs. If this dashboard did, one of these two would be silently
+    dropped -- and if the dropped one were the error, the user would see
+    "policy compliance: all clear" with no indication that change impact never
+    ran.
+
+    (Cited against the F-1 document deliberately, not against a docstring in
+    analysis/findings.py. PR #19 rewrites the docstring that used to make this
+    point, and a comment quoting a sentence that no longer exists is worse than
+    no comment at all. The contract document is the durable reference.)
 
     The dashboard is written not to key by id (see the note at the top of
     static/app.js), so it survives. This pair is the case that proves it.
