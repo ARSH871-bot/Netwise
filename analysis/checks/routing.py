@@ -2,11 +2,11 @@
 Netwise -- routing check (Ankeet's feature).
 
 WHAT THIS CHECK DOES
-    It asserts a reachability policy: a list of "traffic from A must be able
-    to reach B" statements, each proved or disproved against the real config
-    with Batfish's traceroute question. This answers the client's core
-    question for this feature: "can host A reach host B?", answered purely
-    from the config, with the hop-by-hop path as evidence.
+    It asserts a reachability policy: a list of "traffic from A must (or must
+    not) be able to reach B" statements, each proved or disproved against the
+    real config with Batfish's traceroute question. This answers the client's
+    core question for this feature: "can host A reach host B?", answered
+    purely from the config, with the hop-by-hop path as evidence.
 
 WHY traceroute AND NOT THE routes QUESTION
     Both are listed in CLAUDE.md as tools for this feature. `routes` shows
@@ -17,16 +17,34 @@ WHY traceroute AND NOT THE routes QUESTION
     unused here, the same way policy_compliance.py chose one Batfish question
     over another and documented why rather than using both by default.
 
-WHAT COUNTS AS "REACHABLE"
-    Batfish's own tooling (pybatfish.datamodel.flow._get_color_for_disposition)
-    treats three dispositions as success: ACCEPTED, DELIVERED_TO_SUBNET, and
-    EXITS_NETWORK. This module uses exactly that set. Measured directly
-    against a real two-router fixture (see tests/fixtures/routing-secure):
-    traceroute between two LANs connected over a WAN link reports
-    DELIVERED_TO_SUBNET, not ACCEPTED -- ACCEPTED requires the destination IP
-    to be a device's own interface address, which a plain host address on a
-    LAN never is. Treating DELIVERED_TO_SUBNET as failure would make every
-    ordinary LAN-to-LAN route look broken.
+WHAT COUNTS AS "REACHABLE" -- and why EXITS_NETWORK is deliberately excluded
+    pybatfish's own tooling (pybatfish.datamodel.flow._get_color_for_disposition)
+    treats three dispositions as success for colouring a trace diagram green:
+    ACCEPTED, DELIVERED_TO_SUBNET, and EXITS_NETWORK. This module uses only
+    the first two.
+
+    DELIVERED_TO_SUBNET is included on purpose. Measured directly against a
+    real two-router fixture (see tests/fixtures/routing-secure): traceroute
+    between two LANs connected over a WAN link reports DELIVERED_TO_SUBNET,
+    not ACCEPTED -- ACCEPTED requires the destination IP to be a device's own
+    interface address, which a plain host address on a LAN never is. Treating
+    DELIVERED_TO_SUBNET as failure would make every ordinary LAN-to-LAN route
+    look broken.
+
+    EXITS_NETWORK is excluded on purpose, and this was found by independent
+    review, not anticipated up front. It means "forwarded toward a next hop
+    Batfish has no model of at all" -- which sounds like a reasonable thing to
+    call success for a flow headed to the real internet, but every ROUTES
+    statement below names a SPECIFIC destination NODE that is meant to exist
+    in this snapshot. Measured: deleting rtr-branch.cfg from routing-secure
+    entirely and re-running the HQ -> branch statement reports EXITS_NETWORK,
+    not an error. If EXITS_NETWORK counted as success, a whole device missing
+    from the upload -- a real, plausible mistake -- would be reported as a
+    clean, working route, which is exactly the false "none" F-4 exists to
+    prevent. Excluding it means that case instead surfaces as a genuine
+    finding (or, if the OTHER statement in ROUTES also references the missing
+    node directly, as the status="error" the empty-frame branch below already
+    produces).
 
 THE rtr-us5 FIXTURES DO NOT WORK FOR THIS CHECK
     Both existing rtr-us5 fixtures (tests/fixtures/rtr-us5-secure,
@@ -34,28 +52,37 @@ THE rtr-us5 FIXTURES DO NOT WORK FOR THIS CHECK
     router itself. Measured: traceroute to 10.20.0.5 from either fixture
     reports NO_ROUTE regardless of what the ACL says, because there is
     nothing past the router to route to. A routing check that ran only
-    against those fixtures could never demonstrate a genuine ACCEPTED
+    against those fixtures could never demonstrate a genuine successful
     result, so this check uses a dedicated fixture pair instead:
     tests/fixtures/routing-secure (both directions reachable) and
     tests/fixtures/routing-missing-route (one direction broken by a missing
     static route). See those fixtures' own comments for the topology.
 
 HOW IT DECIDES WHAT TO REPORT
-    For each route statement:
-      - every trace disposition is a success disposition -> nothing to report
-      - the destination is expected reachable but at least one trace is not
-        -> status="found", a real routing defect (missing or wrong route)
-      - Batfish could not answer                          -> status="error"
-    If every statement was checked and all held -> a single status="none".
+    Each statement declares "expected": "REACHABLE" or "UNREACHABLE". Both
+    are implemented -- an earlier version of this module documented
+    UNREACHABLE as the way to express a deliberately isolated segment but
+    never actually handled it, which meant using it silently produced a
+    false status="none" instead of evaluating anything. Fixed: see
+    _evaluate() below, and tests/test_routing_classification.py, which
+    regression-tests both this and the EXITS_NETWORK case directly.
 
+      - "REACHABLE"   holds only if EVERY trace succeeds. A flow can take
+                       more than one path (equal-cost routes), and a real
+                       packet could take any of them, so one failing path
+                       among several is a genuine partial defect.
+      - "UNREACHABLE" holds only if EVERY trace fails. Mirrors searchFilters'
+                       "no packet in this whole space" reasoning in
+                       policy_compliance.py: even one path getting through
+                       when none should is a leak, not noise.
+      - Batfish could not answer at all -> status="error", we are blind here.
+
+    If every statement was checked and all held -> a single status="none".
     NO_ROUTE is not automatically a finding and an empty query result is not
-    automatically "clean" -- see F-4 in docs/finding-format.md. A route that
-    is genuinely absent by design (a deliberately isolated segment) would
-    need its own statement with "expected": "UNREACHABLE" rather than being
-    inferred from silence.
+    automatically "clean" -- see F-4 in docs/finding-format.md.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Sequence
 
 from pybatfish.client.session import Session
 from pybatfish.datamodel.flow import HeaderConstraints
@@ -65,10 +92,9 @@ from analysis import findings
 # The name this check is registered under, and the value in every "check" field.
 CHECK_NAME = "routing"
 
-# Batfish's own notion of a successful delivery, taken from
-# pybatfish.datamodel.flow._get_color_for_disposition, which pybatfish itself
-# uses to decide whether to render a trace green (success) or red (failure).
-SUCCESS_DISPOSITIONS = {"ACCEPTED", "DELIVERED_TO_SUBNET", "EXITS_NETWORK"}
+# See the "WHAT COUNTS AS REACHABLE" section of the module docstring for why
+# this is NOT the same set pybatfish's own tooling treats as success.
+SUCCESS_DISPOSITIONS = {"ACCEPTED", "DELIVERED_TO_SUBNET"}
 
 # --- The reachability policy being asserted ---------------------------------
 #
@@ -105,6 +131,50 @@ ROUTES: List[Dict[str, Any]] = [
         "violation_severity": "high",
     },
 ]
+
+
+def _evaluate(expected: str, traces: Sequence[Any]) -> Optional[str]:
+    """Classify one route statement's traces against what was expected.
+
+    Returns None if the statement holds, or a one-line description of the
+    violation if it does not.
+
+    A PURE function on purpose: it takes plain disposition-and-hops objects,
+    not a live Batfish session, so it can be unit tested directly without
+    Docker or Batfish. See tests/test_routing_classification.py, which
+    exercises both branches and specifically regression-tests the
+    EXITS_NETWORK case described in the module docstring.
+    """
+    successes = [t for t in traces if t.disposition in SUCCESS_DISPOSITIONS]
+    failures = [t for t in traces if t.disposition not in SUCCESS_DISPOSITIONS]
+    multi = len(traces) > 1
+
+    if expected == "REACHABLE":
+        if not failures:
+            return None
+        bad = failures[0]
+        hops = " -> ".join(hop.node for hop in bad.hops) or "?"
+        detail = f"traceroute ended in {bad.disposition}. Path: {hops}"
+        if multi:
+            detail += f" ({len(failures)} of {len(traces)} paths failed)"
+        return detail
+
+    if expected == "UNREACHABLE":
+        if not successes:
+            return None
+        bad = successes[0]
+        hops = " -> ".join(hop.node for hop in bad.hops) or "?"
+        detail = f"traceroute unexpectedly succeeded: {bad.disposition}. Path: {hops}"
+        if multi:
+            detail += f" ({len(successes)} of {len(traces)} paths succeeded)"
+        return detail
+
+    # A statement with anything else in "expected" is a bug in ROUTES, not a
+    # runtime condition -- raising here means run() surfaces it through the
+    # pipeline's own crash-isolation as a status="error" finding (see
+    # run_check() in analysis/pipeline.py) rather than silently doing nothing,
+    # which is exactly the failure this function exists to replace.
+    raise ValueError(f"route 'expected' must be REACHABLE or UNREACHABLE, got {expected!r}")
 
 
 def run(bf: Session) -> List[Dict[str, Any]]:
@@ -168,46 +238,31 @@ def run(bf: Session) -> List[Dict[str, Any]]:
             continue
 
         row = frame.iloc[0]
-        traces = row["Traces"]
+        violation = _evaluate(route["expected"], row["Traces"])
 
-        # A flow can take more than one path (e.g. equal-cost routes), and
-        # TraceCount reflects that. A real packet could take any of them, so
-        # "reachable" means EVERY trace succeeds, not just the first one --
-        # one broken path among several is a genuine, if partial, defect.
-        failing = [t for t in traces if t.disposition not in SUCCESS_DISPOSITIONS]
-
-        if route["expected"] == "REACHABLE" and not failing:
-            # Every path got through as expected. Nothing to report.
+        if violation is None:
+            # The statement holds. Nothing to report.
             continue
 
-        if route["expected"] == "REACHABLE" and failing:
-            bad_trace = failing[0]
-            hop_path = " -> ".join(hop.node for hop in bad_trace.hops) or node
-            results.append(
-                findings.make_finding(
-                    check=CHECK_NAME,
-                    severity=route["violation_severity"],
-                    device=node,
-                    summary=route["violation_summary"],
-                    # The evidence is Batfish's own words -- the disposition
-                    # it actually reached and the path it took to get there.
-                    # We never paraphrase it here; the AI layer does that,
-                    # grounded in this string.
-                    detail=(
-                        f"Expected {route['expected']} but traceroute from "
-                        f"{route['src_ip']} to {route['dst_ip']} ended in "
-                        f"{bad_trace.disposition}. Path: {hop_path}"
-                        + (
-                            f" ({len(failing)} of {len(traces)} paths failed)"
-                            if len(traces) > 1
-                            else ""
-                        )
-                    ),
-                    source=f"{node}:{route['dst_ip']}",
-                    status="found",
-                    number=route["number"],
-                )
+        results.append(
+            findings.make_finding(
+                check=CHECK_NAME,
+                severity=route["violation_severity"],
+                device=node,
+                summary=route["violation_summary"],
+                # The evidence is Batfish's own words -- the disposition it
+                # actually reached and the path it took to get there. We
+                # never paraphrase it here; the AI layer does that, grounded
+                # in this string.
+                detail=(
+                    f"Expected {route['expected']} for a flow from "
+                    f"{route['src_ip']} to {route['dst_ip']}, but {violation}"
+                ),
+                source=f"{node}:{route['dst_ip']}",
+                status="found",
+                number=route["number"],
             )
+        )
 
     # Only claim "all clear" if we actually checked everything successfully.
     if not results:
