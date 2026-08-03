@@ -19,3 +19,8 @@ pandas>=2.0
 
 # --- Layer 3: Web interface ------------------------------------------------
 # TODO: add fastapi + uvicorn once the backend starts.
+
+# --- Testing ---------------------------------------------------------------
+# Run the suite from the repository root:  pytest tests/ -v
+# The current tests need neither Batfish nor Docker.
+pytest>=8.0

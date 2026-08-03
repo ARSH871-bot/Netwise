@@ -260,7 +260,65 @@ def analyse(
     results: List[Dict[str, Any]] = []
     for name in names:
         results.extend(run_check(bf, name))
-    return results
+
+    # --- Guard the one promise findings make about themselves ---------------
+    return results + duplicate_id_findings(results)
+
+
+def duplicate_id_findings(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Report any `id` used by more than one finding. Empty list means all unique.
+
+    WHY THIS EXISTS
+        docs/finding-format.md calls `id` a "unique identifier", and anything
+        downstream is entitled to believe it -- a dashboard keying findings by
+        id, the AI layer referring to one, a diff between two runs. Nothing
+        currently enforces it, and it is genuinely easy to break: two checks can
+        share an ID prefix (policy_compliance and change_impact both map to
+        "PC"), and every check picks its own numbers.
+
+        The failure is silent and it is the F-4 failure wearing a different hat.
+        If a consumer keys by id, one of a colliding pair disappears -- and if
+        the one that disappears is a status="error", the user reads "all clear"
+        with no sign that a check never ran. Same lie, reached through `id`
+        instead of through `status`.
+
+    WHAT IT DOES NOT DO
+        It does not renumber anything. Silently disambiguating would hide the
+        defect, which is the behaviour we are trying to prevent. Both findings
+        stay in the list exactly as their checks produced them, and this adds a
+        loud error finding on top saying the contract was broken.
+
+    Attribution: the finding is filed against the FIRST check involved in the
+    collision -- an arbitrary but stable choice, since the fault is really the
+    pipeline's to report and F-1 requires a real check name.
+    """
+    seen: Dict[str, List[str]] = {}
+    for finding in results:
+        seen.setdefault(finding["id"], []).append(finding["check"])
+
+    collisions = {fid: checks for fid, checks in seen.items() if len(checks) > 1}
+    if not collisions:
+        return []
+
+    described = "; ".join(
+        f"{fid} used by {', '.join(checks)}" for fid, checks in sorted(collisions.items())
+    )
+    first_check = sorted(collisions.items())[0][1][0]
+    return [
+        findings.error_finding(
+            check=first_check,
+            summary="Internal error: two findings share an id",
+            detail=(
+                f"docs/finding-format.md requires ids to be unique. Duplicates: "
+                f"{described}. Every finding is still listed below, but anything "
+                "keying by id would silently drop one of each pair."
+            ),
+            source="analysis/pipeline.py",
+            # 999 keeps this clear of the sentinels (000) and of any real
+            # finding numbering, so the guard cannot collide with what it guards.
+            number=999,
+        )
+    ]
 
 
 # ---------------------------------------------------------------------------
