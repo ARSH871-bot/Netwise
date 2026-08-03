@@ -166,3 +166,28 @@ about code that does not exist, which is the best kind.
    annotating.
 4. **Does the post-processor run when a producer errored?** Proposed: yes, but it
    must not downgrade `error` findings — see the carve-out above.
+
+---
+
+## 7. Sign-off
+
+Added at Ankeet's suggestion on review of #20: `docs/policy-rules.md` records
+agreement explicitly, and this proposal gates Samika's work, so "adopted"
+should be a recorded fact rather than something inferred from the PR having
+been merged quietly.
+
+**Merging this PR means "this document is worth having in the repo". It does
+NOT mean the proposal is adopted.** Adoption is the table below. Do not build
+against these shapes until every row is ticked.
+
+| Member | Stake in this decision | Agreed |
+|---|---|---|
+| **Arsh** | Author; owns `pipeline.py`, implements the post-processor stage and the `analyse_change` entry point | ⬜ |
+| **Ankeet** | `routing` stays a producer, unaffected — confirmed on review of #20 | ✅ |
+| **Shubham** | `change_impact` becomes a separate entry point rather than a `CHECKS` entry | ⬜ |
+| **Samika** | `risk` becomes a post-processor; **this currently blocks the severity ruleset** | ⬜ |
+
+Adopting this also implies one wording change to `docs/finding-format.md:36`
+(severity set by the check as a default, re-ratable by risk, never by the AI).
+That is an F-1 edit and needs all four members separately — ticking a row here
+is not a substitute for it.
