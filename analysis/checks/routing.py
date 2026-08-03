@@ -113,4 +113,112 @@ def run(bf: Session) -> List[Dict[str, Any]]:
     The pipeline has already connected to Batfish and loaded the snapshot, so
     this function only has to ask questions and shape the answers.
     """
-    raise NotImplementedError("query logic lands in the next commit")
+    results: List[Dict[str, Any]] = []
+
+    for route in ROUTES:
+        node = route["start_node"]
+
+        # traceroute answers: starting from THIS node, with THESE headers,
+        # where does the packet end up, hop by hop? Unlike testFilters it
+        # does not need a filter name -- it walks the whole path, ACLs
+        # included, and reports how the flow was finally disposed of.
+        try:
+            frame = (
+                bf.q.traceroute(
+                    startLocation=node,
+                    headers=HeaderConstraints(
+                        srcIps=route["src_ip"], dstIps=route["dst_ip"]
+                    ),
+                )
+                .answer()
+                .frame()
+            )
+        except Exception as error:
+            # Could not ask the question at all -- a bad node name, a
+            # malformed header. We are blind for this statement, so it is an
+            # error, NOT a clean result.
+            results.append(
+                findings.error_finding(
+                    check=CHECK_NAME,
+                    device=node,
+                    summary=f"Could not check: {route['description'].lower()}",
+                    detail=findings.describe_error(error),
+                    source=f"{node}:{route['dst_ip']}",
+                    number=route["number"],
+                )
+            )
+            continue
+
+        if frame.empty:
+            # The query ran but matched nothing -- usually the node does not
+            # exist in this snapshot. Blind, not clean.
+            results.append(
+                findings.error_finding(
+                    check=CHECK_NAME,
+                    device=node,
+                    summary=f"Could not check: {route['description'].lower()}",
+                    detail=(
+                        f"Batfish returned no result starting from node "
+                        f"{node!r}. Does it exist in this config?"
+                    ),
+                    source=f"{node}:{route['dst_ip']}",
+                    number=route["number"],
+                )
+            )
+            continue
+
+        row = frame.iloc[0]
+        traces = row["Traces"]
+
+        # A flow can take more than one path (e.g. equal-cost routes), and
+        # TraceCount reflects that. A real packet could take any of them, so
+        # "reachable" means EVERY trace succeeds, not just the first one --
+        # one broken path among several is a genuine, if partial, defect.
+        failing = [t for t in traces if t.disposition not in SUCCESS_DISPOSITIONS]
+
+        if route["expected"] == "REACHABLE" and not failing:
+            # Every path got through as expected. Nothing to report.
+            continue
+
+        if route["expected"] == "REACHABLE" and failing:
+            bad_trace = failing[0]
+            hop_path = " -> ".join(hop.node for hop in bad_trace.hops) or node
+            results.append(
+                findings.make_finding(
+                    check=CHECK_NAME,
+                    severity=route["violation_severity"],
+                    device=node,
+                    summary=route["violation_summary"],
+                    # The evidence is Batfish's own words -- the disposition
+                    # it actually reached and the path it took to get there.
+                    # We never paraphrase it here; the AI layer does that,
+                    # grounded in this string.
+                    detail=(
+                        f"Expected {route['expected']} but traceroute from "
+                        f"{route['src_ip']} to {route['dst_ip']} ended in "
+                        f"{bad_trace.disposition}. Path: {hop_path}"
+                        + (
+                            f" ({len(failing)} of {len(traces)} paths failed)"
+                            if len(traces) > 1
+                            else ""
+                        )
+                    ),
+                    source=f"{node}:{route['dst_ip']}",
+                    status="found",
+                    number=route["number"],
+                )
+            )
+
+    # Only claim "all clear" if we actually checked everything successfully.
+    if not results:
+        return [
+            findings.no_issues_finding(
+                check=CHECK_NAME,
+                device=ROUTES[0]["start_node"] if ROUTES else "unknown",
+                summary="No issues found by routing",
+                detail=f"All {len(ROUTES)} route assertion(s) hold",
+                source=", ".join(sorted({r["start_node"] for r in ROUTES})),
+            )
+        ]
+
+    return results
