@@ -38,6 +38,19 @@ snapshots/
 !tests/fixtures/**/*.cfg
 !tests/fixtures/**/*.conf
 
+# --- Office documents ------------------------------------------------------
+# Briefs, meeting notes and marking rubrics handed round as .docx/.xlsx tend to
+# land in the working tree and get swept up by `git add .`. They are binary, so
+# git cannot diff or merge them, and they are the most likely place for a
+# client detail to reach the repo inside a file nobody thought to read.
+#
+# This is a default, not a ban. If the team decides a document genuinely
+# belongs in the repo, force it in deliberately:
+#     git add -f docs/whatever.docx
+*.docx
+*.xlsx
+*.pptx
+
 # --- Secrets ---------------------------------------------------------------
 .env
 .env.*
