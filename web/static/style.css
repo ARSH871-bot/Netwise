@@ -1,0 +1,418 @@
+/*
+  Netwise dashboard styles.
+
+  THE ONE THING THIS STYLESHEET EXISTS TO GET RIGHT
+      A finding with status="none" ("we checked, nothing found") and one with
+      status="error" ("we could not check") must never look alike. See F-4 in
+      docs/finding-format.md. If they blur together, the tool tells someone
+      they are safe when nobody looked.
+
+      So the two are separated by four independent signals, not one:
+        1. different SECTIONS, with headings that say which is which
+        2. different ICONS            -- checkmark vs warning triangle
+        3. different CARD SHAPE       -- outlined vs filled
+        4. different COLOUR           -- green vs amber
+
+      Colour is last on that list on purpose. It is the signal a colour-blind
+      user may not receive, so it never carries the meaning by itself.
+
+  WHY SEVERITY COLOUR IS NOT APPLIED TO none/error CARDS
+      Every finding has a severity, including those two -- the F-1 helpers pin
+      "none" to low and "error" to high. Those values are contract plumbing,
+      not judgements about the network. Painting an error card red-for-high
+      would say "serious network problem" when it means "we are blind here",
+      and painting a clean card in low-severity blue would say "minor issue"
+      when it means "all good". Severity colour is used only inside the
+      "problems found" section, where it is a real judgement.
+*/
+
+/* --- Palette ------------------------------------------------------------- */
+:root {
+  --ink: #1f2933;
+  --ink-soft: #52606d;
+  --line: #d9e2ec;
+  --page: #f5f7fa;
+  --card: #ffffff;
+
+  /* Severity -- a heat scale, used only for status="found". */
+  --high: #dc2626;
+  --high-ink: #991b1b;
+  --medium: #ea580c;
+  --medium-ink: #9a3412;
+  --low: #2563eb;
+  --low-ink: #1e40af;
+
+  /* Status -- a different axis entirely. */
+  --clean: #16a34a;
+  --clean-ink: #14532d;
+  --clean-fill: #f0fdf4;
+  --blind: #d97706;
+  --blind-ink: #92400e;
+  --blind-fill: #fef3c7;
+}
+
+/* --- Page ---------------------------------------------------------------- */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--ink);
+  background: var(--page);
+  line-height: 1.5;
+}
+
+.masthead {
+  padding: 1rem 1.5rem;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  letter-spacing: -0.01em;
+}
+
+.tagline {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+/* --- The two panes -------------------------------------------------------
+   Results on the left, chat on the right. Stacks to one column on a narrow
+   screen so the dashboard stays usable on a laptop beside a projector. */
+.panes {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 1.25rem;
+  padding: 1.25rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .panes {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pane h2 {
+  font-size: 1rem;
+  margin: 0 0 0.4rem;
+}
+
+.hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+
+/* --- Upload -------------------------------------------------------------- */
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.upload {
+  margin-bottom: 1.25rem;
+}
+
+.file-picker input[type="file"] {
+  display: block;
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.upload-message {
+  margin: 0.75rem 0 0;
+  font-size: 0.85rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 6px;
+  display: none; /* shown by app.js once there is something to say */
+}
+
+.upload-message.ok {
+  display: block;
+  background: var(--clean-fill);
+  color: var(--clean-ink);
+  border: 1px solid var(--clean);
+}
+
+.upload-message.bad {
+  display: block;
+  background: #fef2f2;
+  color: var(--high-ink);
+  border: 1px solid var(--high);
+}
+
+/* --- Coverage summary ----------------------------------------------------
+   Three separate tiles. There is deliberately no combined "N checks passed"
+   number, because any such number would have to decide whether an errored
+   check counts as passing, and neither answer is honest. */
+.summary {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.tile {
+  flex: 1 1 8rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--line);
+  border-radius: 6px;
+  padding: 0.55rem 0.75rem;
+}
+
+.tile .count {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.tile .label {
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+
+.tile.problems {
+  border-left-color: var(--high);
+}
+.tile.problems .count {
+  color: var(--high-ink);
+}
+.tile.clean {
+  border-left-color: var(--clean);
+}
+.tile.clean .count {
+  color: var(--clean-ink);
+}
+.tile.blind {
+  border-left-color: var(--blind);
+}
+.tile.blind .count {
+  color: var(--blind-ink);
+}
+
+/* --- Finding sections ---------------------------------------------------- */
+.section {
+  margin-bottom: 1.5rem;
+}
+
+.section-heading {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  margin: 0 0 0.15rem;
+}
+
+.section-note {
+  margin: 0 0 0.6rem;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
+/* --- A finding card ------------------------------------------------------ */
+.finding {
+  border: 1px solid var(--line);
+  border-left-width: 6px;
+  border-radius: 6px;
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 0.6rem;
+  background: var(--card);
+}
+
+.finding-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.1rem 0.45rem;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.finding-summary {
+  font-weight: 600;
+  margin: 0.35rem 0 0.3rem;
+}
+
+.finding-meta {
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  margin: 0 0 0.4rem;
+}
+
+/* The evidence -- Batfish's own words. Monospace because it is quoted config
+   and output, not prose, and the AI layer is grounded in exactly this text. */
+.evidence {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 0.78rem;
+  background: var(--page);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.45rem 0.6rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.evidence .source {
+  display: block;
+  margin-top: 0.3rem;
+  color: var(--ink-soft);
+}
+
+/* --- Severity variants: status="found" ONLY ------------------------------ */
+.finding.high {
+  border-left-color: var(--high);
+}
+.finding.high .badge {
+  background: var(--high);
+  color: #fff;
+}
+.finding.medium {
+  border-left-color: var(--medium);
+}
+.finding.medium .badge {
+  background: var(--medium);
+  color: #fff;
+}
+.finding.low {
+  border-left-color: var(--low);
+}
+.finding.low .badge {
+  background: var(--low);
+  color: #fff;
+}
+
+/* --- status="none": we checked, nothing found ---------------------------
+   Outlined, green, checkmark. */
+.finding.clean {
+  border-color: var(--clean);
+  border-left-color: var(--clean);
+  background: var(--clean-fill);
+}
+.finding.clean .badge {
+  background: var(--clean);
+  color: #fff;
+}
+
+/* --- status="error": we could NOT check ---------------------------------
+   FILLED amber, warning triangle, and a sentence spelling out that this is
+   not a clean result. The filled background is the structural difference --
+   it reads as a different KIND of card at a glance, before any colour is
+   interpreted. */
+.finding.blind {
+  border-color: var(--blind);
+  border-left-color: var(--blind);
+  background: var(--blind-fill);
+}
+.finding.blind .badge {
+  background: var(--blind);
+  color: #fff;
+}
+
+.blind-warning {
+  margin: 0.4rem 0 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--blind-ink);
+}
+
+.icon {
+  font-size: 0.95rem;
+}
+
+/* --- Empty / failed states ----------------------------------------------- */
+.notice {
+  padding: 0.8rem 1rem;
+  border-radius: 6px;
+  font-size: 0.88rem;
+  background: var(--blind-fill);
+  border: 1px solid var(--blind);
+  color: var(--blind-ink);
+}
+
+/* --- Chat ---------------------------------------------------------------- */
+.pane-chat {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1rem;
+  position: sticky;
+  top: 1.25rem;
+}
+
+.chat-log {
+  min-height: 12rem;
+  max-height: 24rem;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.6rem;
+  background: var(--page);
+  margin-bottom: 0.6rem;
+}
+
+.message {
+  font-size: 0.85rem;
+  margin-bottom: 0.55rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  max-width: 90%;
+}
+
+.message.user {
+  background: #e0e7ff;
+  margin-left: auto;
+}
+
+.message.system {
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+
+.chat-form {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.chat-form input {
+  flex: 1;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.chat-form button {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.chat-form button:hover {
+  background: var(--ink-soft);
+}
