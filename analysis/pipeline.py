@@ -202,69 +202,155 @@ def analyse(
     try:
         bf = connect(host)
     except Exception as error:
-        # Nothing can run. Report it once per requested check, so every feature
-        # shows as errored in the dashboard rather than silently missing.
-        return [
-            findings.error_finding(
-                check=name,
-                summary="Analysis could not run: Batfish is not reachable",
-                detail=(
-                    f"Could not connect to Batfish at {host}: {error}. "
-                    "Is Docker running, and the batfish container started?"
-                ),
-                source=str(config_dir),
-            )
-            for name in names
-        ]
+        return _every_check_failed(
+            names,
+            summary="Analysis could not run: Batfish is not reachable",
+            detail=(
+                f"Could not connect to Batfish at {host}: "
+                f"{findings.describe_error(error)}. "
+                "Is Docker running, and the batfish container started?"
+            ),
+            source=str(config_dir),
+        )
 
     # --- Load the config ----------------------------------------------------
     try:
         load_snapshot(bf, config_dir, network_name, snapshot_name)
     except Exception as error:
-        return [
-            findings.error_finding(
-                check=name,
-                summary="Analysis could not run: the config could not be loaded",
-                detail=str(error),
-                source=str(config_dir),
-            )
-            for name in names
-        ]
+        return _every_check_failed(
+            names,
+            summary="Analysis could not run: the config could not be loaded",
+            detail=findings.describe_error(error),
+            source=str(config_dir),
+        )
 
     # --- Confirm Batfish understood it --------------------------------------
     try:
         problems = find_parse_problems(bf)
     except Exception as error:
-        return [
-            findings.error_finding(
-                check=name,
-                summary="Analysis could not run: parse status could not be read",
-                detail=str(error),
-                source=str(config_dir),
-            )
-            for name in names
-        ]
+        return _every_check_failed(
+            names,
+            summary="Analysis could not run: parse status could not be read",
+            detail=findings.describe_error(error),
+            source=str(config_dir),
+        )
 
     if problems:
-        return [
-            findings.error_finding(
-                check=name,
-                summary="Analysis could not run: the config did not fully parse",
-                detail=(
-                    "Batfish could not fully read: "
-                    + "; ".join(problems)
-                    + ". Any rule it did not parse is a rule we cannot analyse."
-                ),
-                source=str(config_dir),
-            )
-            for name in names
-        ]
+        return _every_check_failed(
+            names,
+            summary="Analysis could not run: the config did not fully parse",
+            detail=(
+                "Batfish could not fully read: "
+                + "; ".join(problems)
+                + ". Any rule it did not parse is a rule we cannot analyse."
+            ),
+            source=str(config_dir),
+        )
 
     # --- Run the checks -----------------------------------------------------
     results: List[Dict[str, Any]] = []
     for name in names:
         results.extend(run_check(bf, name))
-    return results
+
+    return _finalise(results)
+
+
+def _finalise(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The ONE exit from analyse(). Every return path must go through here.
+
+    Its whole job is to make sure the duplicate-id guard cannot be bypassed.
+
+    This is not theoretical caution. The guard was originally applied only at
+    the end of the happy path, and the four early returns above skipped it --
+    which meant the ONE case it did not cover was "Batfish is down", by far the
+    most common operational failure. Those paths emit one sentinel error per
+    registered check, and two of our checks share the "PC" prefix:
+
+        AC-000 access_control | RT-000 routing | PC-000 policy_compliance
+        PC-000 change_impact  | RK-000 risk            ^^^^^^ collision
+
+    A consumer keying by id would then show four checks instead of five, with
+    change_impact simply absent -- not errored, not clean, gone. That is F-4 in
+    its purest form on the likeliest failure path.
+
+    So: if you add a return to analyse(), route it through this function.
+    """
+    return results + duplicate_id_findings(results)
+
+
+def _every_check_failed(
+    names: Sequence[str], *, summary: str, detail: str, source: str
+) -> List[Dict[str, Any]]:
+    """Nothing could run: report it once per requested check.
+
+    One finding per check rather than one overall, so every feature shows as
+    errored in the dashboard instead of silently missing. A check that is absent
+    from the results looks identical to one that passed.
+    """
+    return _finalise(
+        [
+            findings.error_finding(
+                check=name, summary=summary, detail=detail, source=source
+            )
+            for name in names
+        ]
+    )
+
+
+def duplicate_id_findings(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Report any `id` used by more than one finding. Empty list means all unique.
+
+    WHY THIS EXISTS
+        docs/finding-format.md calls `id` a "unique identifier", and anything
+        downstream is entitled to believe it -- a dashboard keying findings by
+        id, the AI layer referring to one, a diff between two runs. Nothing
+        currently enforces it, and it is genuinely easy to break: two checks can
+        share an ID prefix (policy_compliance and change_impact both map to
+        "PC"), and every check picks its own numbers.
+
+        The failure is silent and it is the F-4 failure wearing a different hat.
+        If a consumer keys by id, one of a colliding pair disappears -- and if
+        the one that disappears is a status="error", the user reads "all clear"
+        with no sign that a check never ran. Same lie, reached through `id`
+        instead of through `status`.
+
+    WHAT IT DOES NOT DO
+        It does not renumber anything. Silently disambiguating would hide the
+        defect, which is the behaviour we are trying to prevent. Both findings
+        stay in the list exactly as their checks produced them, and this adds a
+        loud error finding on top saying the contract was broken.
+
+    Attribution: the finding is filed against the FIRST check involved in the
+    collision -- an arbitrary but stable choice, since the fault is really the
+    pipeline's to report and F-1 requires a real check name.
+    """
+    seen: Dict[str, List[str]] = {}
+    for finding in results:
+        seen.setdefault(finding["id"], []).append(finding["check"])
+
+    collisions = {fid: checks for fid, checks in seen.items() if len(checks) > 1}
+    if not collisions:
+        return []
+
+    described = "; ".join(
+        f"{fid} used by {', '.join(checks)}" for fid, checks in sorted(collisions.items())
+    )
+    first_check = sorted(collisions.items())[0][1][0]
+    return [
+        findings.error_finding(
+            check=first_check,
+            summary="Internal error: two findings share an id",
+            detail=(
+                f"docs/finding-format.md requires ids to be unique. Duplicates: "
+                f"{described}. Every finding is still listed below, but anything "
+                "keying by id would silently drop one of each pair."
+            ),
+            source="analysis/pipeline.py",
+            # 999 keeps this clear of the sentinels (000) and of any real
+            # finding numbering, so the guard cannot collide with what it guards.
+            number=999,
+        )
+    ]
 
 
 # ---------------------------------------------------------------------------
