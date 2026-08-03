@@ -194,8 +194,15 @@ def error_finding(
 
     `number` defaults to the 000 sentinel, which suits the common case of one
     error per check. If a single check can fail in several independent ways at
-    once, number them 1, 2, 3 ... so the IDs stay unique -- the dashboard uses
-    `id` as a key.
+    once, number them 1, 2, 3 ... so the ids stay unique.
+
+    Why unique matters: docs/finding-format.md calls `id` a "unique identifier",
+    so anything downstream is entitled to rely on it -- a diff between two runs,
+    the AI layer referring to one finding, a consumer keying by id. The
+    dashboard deliberately does NOT key by id today, precisely because ids were
+    found to collide; that is a defensive choice on its part, not permission for
+    ids to be duplicated. analysis.pipeline.duplicate_id_findings() reports any
+    that slip through.
     """
     return make_finding(
         check=check,

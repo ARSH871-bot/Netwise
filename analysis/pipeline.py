@@ -198,71 +198,99 @@ def analyse(
     try:
         bf = connect(host)
     except Exception as error:
-        # Nothing can run. Report it once per requested check, so every feature
-        # shows as errored in the dashboard rather than silently missing.
-        return [
-            findings.error_finding(
-                check=name,
-                summary="Analysis could not run: Batfish is not reachable",
-                detail=(
-                    f"Could not connect to Batfish at {host}: {error}. "
-                    "Is Docker running, and the batfish container started?"
-                ),
-                source=str(config_dir),
-            )
-            for name in names
-        ]
+        return _every_check_failed(
+            names,
+            summary="Analysis could not run: Batfish is not reachable",
+            detail=(
+                f"Could not connect to Batfish at {host}: "
+                f"{findings.describe_error(error)}. "
+                "Is Docker running, and the batfish container started?"
+            ),
+            source=str(config_dir),
+        )
 
     # --- Load the config ----------------------------------------------------
     try:
         load_snapshot(bf, config_dir, network_name, snapshot_name)
     except Exception as error:
-        return [
-            findings.error_finding(
-                check=name,
-                summary="Analysis could not run: the config could not be loaded",
-                detail=str(error),
-                source=str(config_dir),
-            )
-            for name in names
-        ]
+        return _every_check_failed(
+            names,
+            summary="Analysis could not run: the config could not be loaded",
+            detail=findings.describe_error(error),
+            source=str(config_dir),
+        )
 
     # --- Confirm Batfish understood it --------------------------------------
     try:
         problems = find_parse_problems(bf)
     except Exception as error:
-        return [
-            findings.error_finding(
-                check=name,
-                summary="Analysis could not run: parse status could not be read",
-                detail=str(error),
-                source=str(config_dir),
-            )
-            for name in names
-        ]
+        return _every_check_failed(
+            names,
+            summary="Analysis could not run: parse status could not be read",
+            detail=findings.describe_error(error),
+            source=str(config_dir),
+        )
 
     if problems:
-        return [
-            findings.error_finding(
-                check=name,
-                summary="Analysis could not run: the config did not fully parse",
-                detail=(
-                    "Batfish could not fully read: "
-                    + "; ".join(problems)
-                    + ". Any rule it did not parse is a rule we cannot analyse."
-                ),
-                source=str(config_dir),
-            )
-            for name in names
-        ]
+        return _every_check_failed(
+            names,
+            summary="Analysis could not run: the config did not fully parse",
+            detail=(
+                "Batfish could not fully read: "
+                + "; ".join(problems)
+                + ". Any rule it did not parse is a rule we cannot analyse."
+            ),
+            source=str(config_dir),
+        )
 
     # --- Run the checks -----------------------------------------------------
     results: List[Dict[str, Any]] = []
     for name in names:
         results.extend(run_check(bf, name))
 
-    # --- Guard the one promise findings make about themselves ---------------
+    return _finalise(results)
+
+
+def _finalise(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The ONE exit from analyse(). Every return path must go through here.
+
+    Its whole job is to make sure the duplicate-id guard cannot be bypassed.
+
+    This is not theoretical caution. The guard was originally applied only at
+    the end of the happy path, and the four early returns above skipped it --
+    which meant the ONE case it did not cover was "Batfish is down", by far the
+    most common operational failure. Those paths emit one sentinel error per
+    registered check, and two of our checks share the "PC" prefix:
+
+        AC-000 access_control | RT-000 routing | PC-000 policy_compliance
+        PC-000 change_impact  | RK-000 risk            ^^^^^^ collision
+
+    A consumer keying by id would then show four checks instead of five, with
+    change_impact simply absent -- not errored, not clean, gone. That is F-4 in
+    its purest form on the likeliest failure path.
+
+    So: if you add a return to analyse(), route it through this function.
+    """
     return results + duplicate_id_findings(results)
+
+
+def _every_check_failed(
+    names: Sequence[str], *, summary: str, detail: str, source: str
+) -> List[Dict[str, Any]]:
+    """Nothing could run: report it once per requested check.
+
+    One finding per check rather than one overall, so every feature shows as
+    errored in the dashboard instead of silently missing. A check that is absent
+    from the results looks identical to one that passed.
+    """
+    return _finalise(
+        [
+            findings.error_finding(
+                check=name, summary=summary, detail=detail, source=source
+            )
+            for name in names
+        ]
+    )
 
 
 def duplicate_id_findings(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

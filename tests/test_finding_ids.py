@@ -145,3 +145,61 @@ def test_guard_output_is_a_valid_f1_finding():
     assert complaint["check"] in findings.VALID_CHECKS
     assert complaint["severity"] in findings.VALID_SEVERITIES
     assert complaint["status"] in findings.VALID_STATUSES
+
+
+# ---------------------------------------------------------------------------
+# The early-return paths of analyse().
+#
+# These matter more than they look. When Batfish is unreachable -- the single
+# most common operational failure -- analyse() returns one sentinel error per
+# registered check WITHOUT running any of them. The duplicate-id guard was
+# originally only applied to the happy path, so this, the likeliest failure,
+# was the one case it did not cover.
+# ---------------------------------------------------------------------------
+
+
+def test_batfish_unreachable_still_guards_ids(monkeypatch):
+    """All five checks registered + Batfish down -> the PC-000 pair is reported."""
+    from analysis import pipeline
+
+    # Register every check name. The functions are never called on this path,
+    # because connect() fails first.
+    monkeypatch.setattr(
+        pipeline, "CHECKS", {name: (lambda bf: []) for name in findings.VALID_CHECKS}
+    )
+
+    # Simulate the failure rather than pointing at an unroutable address. Using
+    # a real dead host makes this test wait out a TCP timeout -- measured at
+    # ~80 seconds, which is how test suites stop being run.
+    def refuse(host="localhost"):
+        raise ConnectionError("Max retries exceeded: connection refused")
+
+    monkeypatch.setattr(pipeline, "connect", refuse)
+    results = pipeline.analyse("tests/fixtures/rtr-us5-secure")
+
+    per_check = [f for f in results if f["summary"].startswith("Analysis could not run")]
+    assert len(per_check) == len(findings.VALID_CHECKS), "one error per check"
+    assert all(f["status"] == "error" for f in per_check)
+
+    # The collision is present in the raw output...
+    assert sorted(f["id"] for f in per_check).count("PC-000") == 2
+    # ...and the guard reported it rather than letting it pass silently.
+    complaints = [f for f in results if f["summary"].startswith("Internal error")]
+    assert len(complaints) == 1
+    assert "PC-000" in complaints[0]["evidence"]["detail"]
+
+
+def test_unloadable_config_still_guards_ids(monkeypatch):
+    """Same for the snapshot-load failure path, which also returns early."""
+    from analysis import pipeline
+
+    monkeypatch.setattr(
+        pipeline, "CHECKS", {name: (lambda bf: []) for name in findings.VALID_CHECKS}
+    )
+    monkeypatch.setattr(pipeline, "connect", lambda host="localhost": object())
+
+    results = pipeline.analyse("tests/fixtures/does-not-exist")
+
+    assert any(f["summary"].startswith("Internal error") for f in results), (
+        "the duplicate-id guard must run on this early-return path too"
+    )
