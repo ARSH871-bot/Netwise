@@ -46,6 +46,34 @@ WHAT COUNTS AS "REACHABLE" -- and why EXITS_NETWORK is deliberately excluded
     node directly, as the status="error" the empty-frame branch below already
     produces).
 
+DOES THIS CHECK HAVE THE SAME TRAP policy_compliance.py DOCUMENTS?
+    policy_compliance.py's docstring warns that reachability/traceroute-style
+    questions can give a false "policy holds" reading: rtr-us5 has no route to
+    10.20.0.5, so `reachability` reports zero successful flows for a ROUTING
+    reason, not a policy one, and a check reading "empty means clean" would
+    put a green tick on a config that permits everything. Raised as a
+    question worth checking here too, since this module is traceroute-based.
+
+    Checked directly: no, not the same way, because this check's whole
+    purpose is routing correctness itself, so NO_ROUTE is never read as
+    success here -- it is excluded from SUCCESS_DISPOSITIONS deliberately
+    (see above), and a REACHABLE statement that hits it is reported as
+    status="found", not "none". There is no false "all clear" in that
+    direction.
+
+    Checking it did surface a smaller, related issue, fixed in the same
+    session it was raised: each ROUTES statement's violation_summary
+    originally asserted a specific cause ("a route appears to be missing")
+    regardless of what actually went wrong. Verified live with a constructed
+    scenario (a route present but blocked by an outbound ACL) that traceroute
+    reports DENIED_OUT, a genuinely different disposition from NO_ROUTE --
+    both are correctly classified as failures by SUCCESS_DISPOSITIONS, so the
+    status is never wrong, but the old summary text would have blamed a
+    missing route even when the real cause was a deny rule. Fixed by making
+    violation_summary state the observed effect ("cannot reach") rather than
+    an assumed cause; evidence.detail already carries the real disposition
+    Batfish reported, which is where a specific cause belongs.
+
 THE rtr-us5 FIXTURES DO NOT WORK FOR THIS CHECK
     Both existing rtr-us5 fixtures (tests/fixtures/rtr-us5-secure,
     rtr-us5-insecure) have exactly one interface and no route beyond the
@@ -117,7 +145,7 @@ ROUTES: List[Dict[str, Any]] = [
         "src_ip": "10.10.10.5",
         "dst_ip": "10.20.20.5",
         "expected": "REACHABLE",
-        "violation_summary": "The HQ network cannot reach the branch network; a route appears to be missing",
+        "violation_summary": "The HQ network cannot reach the branch network",
         "violation_severity": "high",
     },
     {
@@ -127,7 +155,7 @@ ROUTES: List[Dict[str, Any]] = [
         "src_ip": "10.20.20.5",
         "dst_ip": "10.10.10.5",
         "expected": "REACHABLE",
-        "violation_summary": "The branch network cannot reach the HQ network; a route appears to be missing",
+        "violation_summary": "The branch network cannot reach the HQ network",
         "violation_severity": "high",
     },
 ]
