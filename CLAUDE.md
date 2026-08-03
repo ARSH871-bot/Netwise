@@ -233,10 +233,10 @@ is **settled**: the team agreed F-1 (see §7a). Do not reopen it casually.
 |---|---|---|
 | Shared pipeline (F-3) | Arsh | Done — connect, snapshot, parse check, dispatch, error isolation, duplicate-`id` guard |
 | F-1 format in code | team | Done — `analysis/findings.py`, validated |
-| `access_control` check | Arsh | Base merged; three more analyses in review |
+| `access_control` check | Arsh | Done — four analyses: `testFilters`, `searchFilters`, `filterLineReachability`, `undefinedReferences` |
 | `policy_compliance` check | Shubham | Done — see `docs/policy-rules.md` |
 | Dashboard + secure upload | Samika | Done, **on mock data** |
-| Test suite | Arsh | Started — `tests/test_finding_ids.py` |
+| Test suite | Arsh | Started — `tests/test_finding_ids.py`, 9 tests, no Batfish needed |
 
 ### What is NOT built
 
