@@ -190,7 +190,7 @@ def _check_policy_statements(
                     check=CHECK_NAME,
                     device=node,
                     summary=f"Could not check: {statement['description'].lower()}",
-                    detail=f"Batfish could not answer this query: {error}",
+                    detail=findings.describe_error(error),
                     source=f"{node}:{filter_name}",
                     number=next(numbering),
                 )
@@ -291,7 +291,7 @@ def _check_guarantees(bf: Session, numbering: Iterator[int]) -> List[Dict[str, A
                     check=CHECK_NAME,
                     device=node,
                     summary=f"Could not prove: {guarantee['description'].lower()}",
-                    detail=f"Batfish could not answer this query: {error}",
+                    detail=findings.describe_error(error),
                     source=f"{node}:{filter_name}",
                     number=next(numbering),
                 )
@@ -349,7 +349,7 @@ def _check_dead_rules(bf: Session, numbering: Iterator[int]) -> List[Dict[str, A
             findings.error_finding(
                 check=CHECK_NAME,
                 summary="Could not check for dead ACL rules",
-                detail=f"Batfish could not answer filterLineReachability: {error}",
+                detail=findings.describe_error(error),
                 source="filterLineReachability",
                 number=next(numbering),
             )
@@ -416,7 +416,7 @@ def _check_undefined_references(
             findings.error_finding(
                 check=CHECK_NAME,
                 summary="Could not check for undefined references",
-                detail=f"Batfish could not answer undefinedReferences: {error}",
+                detail=findings.describe_error(error),
                 source="undefinedReferences",
                 number=next(numbering),
             )
