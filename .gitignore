@@ -90,3 +90,11 @@ htmlcov/
 *.swp
 .DS_Store
 Thumbs.db
+
+# --- Personal working notes -------------------------------------------------
+# Local reference notes kept for one's own use across sessions (plans, decision
+# logs, environment notes). Not team-facing documentation, so it stays local
+# rather than going into shared git history. Same rule as feat/us17-routing-
+# check's .gitignore (PR #25, not merged yet) -- added again here because this
+# branch was cut from main directly and does not have that commit yet.
+docs/ankeet/
