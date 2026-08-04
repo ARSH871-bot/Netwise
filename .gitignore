@@ -90,3 +90,9 @@ htmlcov/
 *.swp
 .DS_Store
 Thumbs.db
+
+# --- Personal working notes -------------------------------------------------
+# Local reference notes kept for one's own use across sessions (plans, decision
+# logs, environment notes). Not team-facing documentation, so it stays local
+# rather than going into shared git history.
+docs/ankeet/
