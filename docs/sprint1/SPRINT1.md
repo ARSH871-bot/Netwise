@@ -82,6 +82,11 @@ Run and understood against the bundled example Cisco configs:
 
 ## Environment verified
 
+**Do not update this table.** It records where things stood *at the end of
+Sprint 1*, and its value is that it stays true to that moment. `pybatfish` and
+Ollama are both installed now — that is Sprint 2's story, not this one. For
+current state see `CLAUDE.md` §11, and prefer the repo over both.
+
 | Component | State at end of sprint |
 |---|---|
 | Batfish container | Running (`batfish/allinone`) |
@@ -89,18 +94,85 @@ Run and understood against the bundled example Cisco configs:
 | Host-side `pybatfish` | Not yet installed — addressed in Sprint 2 |
 | Ollama | Not yet installed — Layer 2, later sprint |
 
-## Screenshots
+## Evidence
 
-<!-- TODO: add screenshots here as evidence for the project review.
-     Suggested set:
-       - docker ps showing the batfish container running
-       - a testFilters result showing permit/deny plus the matching line
-       - a searchFilters result (both an empty "policy holds" result and a
-         violation, if one can be produced)
-       - a filterLineReachability result showing a shadowed line
-     Save images in this folder and link them below. -->
+**Captured on 2026-08-04, not during Sprint 1.** This record was written
+retrospectively (see the note at the top), and so is this evidence. It shows
+that the Sprint 1 claims hold *today*, against the same bundled example configs
+Sprint 1 used — it is not a recording of the original sessions, and should not
+be presented as one.
 
-_Screenshots to be added._
+Everything below is real terminal output, reproducible by anyone with the
+container running.
+
+### 1. Batfish running in Docker
+
+```
+NAMES: batfish
+IMAGE: batfish/allinone
+STATUS: Up 2 hours
+PORTS: 0.0.0.0:8888->8888/tcp, 0.0.0.0:9996-9997->9996-9997/tcp
+```
+
+### 2. Client and service versions match
+
+```
+pybatfish client <-> Batfish service: {'Batfish': '2025.07.07.2423'}
+```
+
+Version skew between the client and the service causes confusing failures,
+which is why `requirements.txt` pins `pybatfish` to match the image.
+
+### 3. `testFilters` — names the exact line that decided
+
+```
+        Node Filter_Name Action                                           Line_Content
+rtr-with-acl      acl_in PERMIT 80 permit tcp 11.36.216.170/32 11.36.216.169/32 eq bgp
+```
+
+The `Line_Content` column is the point. It is what lets the tool say "allowed
+*by this rule*" rather than just "allowed", and it is the grounded evidence the
+AI layer later rephrases.
+
+### 4. `searchFilters` — an empty result is a proof
+
+```
+rows returned: 0   (no UDP flow in this space is permitted)
+```
+
+This is the capability worth understanding. `testFilters` samples one packet;
+`searchFilters` searches a whole space at once, so **zero rows means no such
+packet exists** — a proof, not a spot-check that happened to pass. A returned
+row would be a concrete counter-example.
+
+### 5. `filterLineReachability` — dead rules in the bundled configs
+
+```
+unreachable lines found: 5
+
+Sources                                            Unreachable_Line
+['firewall: ~INSPECT_POLICY_MAP_ACL~policy-admin-to-z2~']
+    Inspect if matched by class-map: 'class-mysql-backup-z2-tcp-nfs'
+    Blocking_Lines: ['Inspect if matched by class-map:
+                     'class-client-backup-mnt-backup-z2-tcp-nfs'']
+```
+
+Five ACL lines in Batfish's own example configs can never match, because an
+earlier line already decides. This is the "dead rule" class of misconfiguration
+the project exists to find, present in a config nobody wrote carelessly.
+
+### 6. `undefinedReferences`
+
+```
+undefined references found: 1
+```
+
+### On images
+
+Terminal output was captured as text rather than as screenshots deliberately:
+it is reproducible, searchable, and can be diffed if the behaviour changes.
+If the final report requires images, they can be taken from these same
+commands — the evidence is the output, not the format.
 
 ## Outcome and handover to Sprint 2
 
