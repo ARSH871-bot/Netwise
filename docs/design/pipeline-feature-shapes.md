@@ -182,7 +182,7 @@ against these shapes until every row is ticked.
 
 | Member | Stake in this decision | Agreed |
 |---|---|---|
-| **Arsh** | Author; owns `pipeline.py`, implements the post-processor stage and the `analyse_change` entry point | ⬜ |
+| **Arsh** | Author; owns `pipeline.py`, implements the post-processor stage and the `analyse_change` entry point | ✅ |
 | **Ankeet** | `routing` stays a producer, unaffected — confirmed on review of #20 | ✅ |
 | **Shubham** | `change_impact` becomes a separate entry point rather than a `CHECKS` entry | ⬜ |
 | **Samika** | `risk` becomes a post-processor; **this currently blocks the severity ruleset** | ⬜ |
