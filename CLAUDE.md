@@ -175,13 +175,17 @@ them and they describe nobody's real network. Real configs stay in the ignored
 
 ## 8. Repository layout
 
+**What each folder is _for_. Deliberately no build status here** — that lives in
+§11, and duplicating it is how this section came to claim `ai/` was empty while
+§11 correctly said it was done, one screen apart. One fact, one place.
+
 ```
-analysis/   Layer 1 — Batfish orchestration (built)
+analysis/   Layer 1 — Batfish orchestration
   findings.py     the F-1 format in code, with validation
   pipeline.py     connect, load snapshot, dispatch checks, guard ids
   checks/         one module per feature
-ai/         Layer 2 — local LLM explanation and Q&A (EMPTY, not started)
-web/        Layer 3 — FastAPI backend and dashboard (built, on mock data)
+ai/         Layer 2 — local LLM explanation and Q&A
+web/        Layer 3 — FastAPI backend and dashboard
 tests/      pytest suite + synthetic fixtures (committed, see §7b)
 docs/       Sprint records, design notes, evidence for reviews
 configs/    Config files under test — GIT-IGNORED, never committed
