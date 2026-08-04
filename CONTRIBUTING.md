@@ -86,8 +86,28 @@ A check is **one file with one function**. That is the whole contract.
 ```bash
 python -m analysis.pipeline tests/fixtures/rtr-us5-secure     # clean config
 python -m analysis.pipeline tests/fixtures/rtr-us5-insecure   # has a real flaw
+python -m analysis.pipeline tests/fixtures/rtr-us5-messy      # dead rules + undefined ACL
 python -m analysis.pipeline tests/fixtures/unparseable        # fails to parse
 ```
+
+## 4a. Running the tests
+
+```bash
+pytest tests/ -v
+```
+
+They need **neither Batfish nor Docker** and finish in about a second, so
+there is no excuse for not running them before opening a PR.
+
+**Please add tests with your check.** The suite exists because a real bug —
+two findings sharing an `id` — sat in the code for days, survived a review, and
+was only caught when someone built a dashboard and looked at the data. Every
+verification before that had been done by hand.
+
+You do not need to test against Batfish. The most valuable tests are the ones
+that need nothing running: give your function a hand-built input and assert it
+returns the right findings. `tests/test_finding_ids.py` is written that way and
+is a reasonable model to copy.
 
 Run it from the repository root. Batfish must be running:
 `docker start batfish`. The first snapshot load after starting the container

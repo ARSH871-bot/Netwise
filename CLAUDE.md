@@ -175,13 +175,17 @@ them and they describe nobody's real network. Real configs stay in the ignored
 
 ## 8. Repository layout
 
+**What each folder is _for_. Deliberately no build status here** — that lives in
+§11, and duplicating it is how this section came to claim `ai/` was empty while
+§11 correctly said it was done, one screen apart. One fact, one place.
+
 ```
-analysis/   Layer 1 — Batfish orchestration (built)
+analysis/   Layer 1 — Batfish orchestration
   findings.py     the F-1 format in code, with validation
   pipeline.py     connect, load snapshot, dispatch checks, guard ids
   checks/         one module per feature
-ai/         Layer 2 — local LLM explanation and Q&A (EMPTY, not started)
-web/        Layer 3 — FastAPI backend and dashboard (built, on mock data)
+ai/         Layer 2 — local LLM explanation and Q&A
+web/        Layer 3 — FastAPI backend and dashboard
 tests/      pytest suite + synthetic fixtures (committed, see §7b)
 docs/       Sprint records, design notes, evidence for reviews
 configs/    Config files under test — GIT-IGNORED, never committed
@@ -221,6 +225,20 @@ format, to the screen. This replaced the earlier engine/frontend split.
 
 ## 11. Status — last updated 2026-08-03
 
+> **⚠️ This section goes stale faster than anything else in the file.** It has
+> already been wrong about `main` twice in one day — once caught in review
+> before merging, once caught after. If a decision depends on it, check the
+> repo rather than trusting it:
+>
+> ```bash
+> sed -n '/^CHECKS = {/,/^}/p' analysis/pipeline.py   # what actually runs
+> ls -A ai/ web/                                       # what layers exist
+> pytest tests/ -q                                     # what is tested
+> ```
+>
+> Everything above section 11 is slow-moving and can be trusted. This section
+> is a snapshot, and snapshots rot.
+
 **Sprint 1 — complete.** Batfish installed and running; the five core questions
 run and understood on bundled example configs. See `docs/sprint1/SPRINT1.md`.
 
@@ -235,17 +253,19 @@ is **settled**: the team agreed F-1 (see §7a). Do not reopen it casually.
 | F-1 format in code | team | Done — `analysis/findings.py`, validated |
 | `access_control` check | Arsh | Done — four analyses: `testFilters`, `searchFilters`, `filterLineReachability`, `undefinedReferences` |
 | `policy_compliance` check | Shubham | Done — see `docs/policy-rules.md` |
+| `routing` check | Ankeet | Done — `traceroute`-based reachability, two-router fixtures |
+| **AI explanation layer** | Ankeet | Done — `ai/explain.py` + `ai/Modelfile` (Warden, local Ollama). Explains one finding; the natural-language-question direction is not started |
 | Dashboard + secure upload | Samika | Done, **on mock data** |
-| Test suite | Arsh | Started — `tests/test_finding_ids.py`, 9 tests, no Batfish needed |
+| Test suite | team | 47 tests, needing neither Batfish nor Ollama |
 
 ### What is NOT built
 
 | Piece | Owner | Note |
 |---|---|---|
-| `routing` check | Ankeet | Not started |
-| `risk` scoring | Samika | Blocked — see the open decision below |
-| **Local AI explanation layer** | Ankeet | **Not started. `ai/` is empty, Ollama not installed.** This is the client's headline ask and the project's biggest gap. |
+| `risk` scoring | Samika | Blocked — see the open decisions below |
 | `change_impact` | Shubham | Not started, and does not fit the `run(bf)` contract |
+| AI: natural-language questions | Ankeet | Not started — the other half of Layer 2 |
+| **The wiring** | Samika + Arsh | **Not done.** See below — this is now the biggest gap. |
 
 ### The wiring gap — read this before assuming anything works end to end
 
