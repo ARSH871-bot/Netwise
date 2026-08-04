@@ -7,27 +7,50 @@ WHAT THIS DOES
     English explanation, using the local Warden model (ai/Modelfile). That
     function is the whole public surface of this module.
 
-WHY status="error" GETS A SAFETY NET, NOT JUST A CAREFUL PROMPT
-    ai/Modelfile's system prompt was tested through several rounds against
-    real findings pulled from the pipeline before landing on its current
-    shape -- see that file's own commit message for the full account. The
-    most dangerous failure -- the model stating a network result as fact
-    when the check that would have proven it never actually ran -- stopped
-    recurring across repeated testing once the prompt was tightened. But
-    repeated testing on a 3B model, run entirely on CPU, never reached
-    100%: occasional formatting drift (a stray hedge sentence, wording not
-    quite matching the required shape) still happens.
+TWO DIFFERENT KINDS OF MISTAKE, TWO DIFFERENT FIXES
+    Testing against real findings from the pipeline (see ai/Modelfile's
+    commit history) turned up two genuinely different failure modes, and
+    conflating them would mean fixing neither properly.
 
-    For a status="found" or status="none" finding, a formatting slip is
-    cosmetic. For status="error" it is not: F-4 exists specifically because
-    "we checked and found nothing" and "we could not check" must never be
-    confused, and a slip here is the one place that could still say
-    something false about the network. So error explanations are checked
-    AFTER generation, not just prompted carefully beforehand -- see
-    _looks_like_a_result_claim() below. This is not a retreat from using
-    the model: the model still writes every error explanation. It is a
-    cheap, deterministic backstop for the one case where a slip is not
-    merely cosmetic.
+    1. WORDING MISTAKES -- the model states an unconfirmed result
+       ("the network cannot reach X" for a check that only crashed), or
+       hedges an invented consequence into an otherwise fine sentence
+       ("...which could potentially cause issues"). These are caught by
+       inspecting the generated TEXT for known-bad patterns after the fact
+       -- see _looks_like_a_result_claim() and _looks_like_speculation().
+       A prompt can reduce how often this happens; it cannot promise zero
+       on a 3B model, so the check runs every time regardless.
+
+    2. REASONING MISTAKES -- the model gets an actual TECHNICAL FACT
+       backwards. Measured directly: for a dead ACL rule (an unreachable
+       PERMIT, shadowed by an earlier DENY), the model once said matching
+       traffic "should be blocked... which is not happening" -- backwards.
+       The traffic IS blocked; that is the whole finding. No amount of text
+       scanning catches this, because the sentence contains no banned word,
+       it is simply wrong about what the shadowing rule decides.
+
+       Shadowing logic has one correct answer, computable from the finding
+       text alone (which rule wins, and what that rule's own action is).
+       That is a job for deterministic code, not a probabilistic model --
+       the same principle CLAUDE.md's constraint 2 already applies project-
+       wide, extended here to one more place it turned out to matter.
+       _compute_dead_rule_outcome() computes the real answer in Python and
+       hands it to the model as an already-verified fact to STATE, not a
+       question to REASON about. This only fires for the exact evidence
+       shape access_control.py's dead-rule check produces, and only when
+       every blocking line agrees on the same action -- anything it is not
+       fully confident about, it leaves alone rather than guessing.
+
+WHY status="error" ALSO GETS ITS OWN CHECK
+    For "found"/"none", a wording slip is undesirable but not dangerous --
+    the underlying fact was still real, the phrasing was just off. For
+    "error", it is dangerous: F-4 exists specifically because "we checked
+    and found nothing" and "we could not check" must never be confused, and
+    a slip here is the one place a sentence could still assert something
+    false about the network. So error responses ALSO reject any wording
+    that claims a result, not just speculation, and fall back to a fixed,
+    non-generated sentence if two attempts both fail -- see
+    _fallback_error_explanation().
 
 RUN IT BY HAND
     python -m ai.explain
@@ -44,7 +67,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import ollama
 
@@ -54,13 +77,80 @@ import ollama
 # there is one place to look, not two.
 MODEL_NAME = "netwise-warden"
 
+# ------------------------------------------------------------------------------
+# 1. Deterministic dead-rule outcome computation
+# ------------------------------------------------------------------------------
+
+# Matches evidence.detail EXACTLY as produced by
+# analysis.checks.access_control._check_dead_rules:
+#   "Unreachable line: <line> (action PERMIT|DENY). Blocked by: <lines>. Reason: <reason>"
+# Deliberately narrow -- this must only match the one shape it is confident
+# about, never a loose approximation of it.
+_DEAD_RULE_DETAIL_PATTERN = re.compile(
+    r"Unreachable line: .+?\(action (?P<dead_action>PERMIT|DENY)\)\. "
+    r"Blocked by: (?P<blocking>.+?)\. Reason:"
+)
+
+
+def _compute_dead_rule_outcome(detail: str) -> Optional[str]:
+    """For a dead-ACL-rule finding, compute what actually happens to
+    traffic matching the dead line -- rather than asking the model to
+    infer it from the raw text, which measurably goes wrong sometimes.
+
+    The rule: whichever line SHADOWS the dead one decides the outcome for
+    matching traffic, because it is evaluated first. A dead line's own
+    action never takes effect, regardless of what it says.
+
+    Returns a plain-English statement of the real outcome, or None if:
+      - `detail` is not in the exact shape access_control.py's dead-rule
+        check produces (nothing to compute from), or
+      - more than one blocking line is named and they do not all agree on
+        the same action (ambiguous -- do not guess which one actually
+        decides), or
+      - a blocking line's text does not start with a recognisable
+        permit/deny keyword (unfamiliar syntax -- do not guess).
+
+    None means "give the model no extra help here" -- explain() still
+    generates an explanation from the raw finding either way. This function
+    only ever ADDS confidence; it never blocks a finding from being
+    explained.
+    """
+    match = _DEAD_RULE_DETAIL_PATTERN.search(detail)
+    if not match:
+        return None
+
+    blocking_lines = [line.strip().lower() for line in match.group("blocking").split(",")]
+    outcomes = set()
+    for line in blocking_lines:
+        if line.startswith("permit"):
+            outcomes.add("permitted")
+        elif line.startswith("deny"):
+            outcomes.add("denied")
+        else:
+            return None  # unrecognised syntax -- do not guess
+
+    if len(outcomes) != 1:
+        return None  # blocking lines disagree -- not confident enough to state one outcome
+
+    outcome = outcomes.pop()
+    return (
+        f"traffic matching the unreachable line's pattern is actually "
+        f"{outcome}, because the blocking rule is evaluated first and "
+        f"decides instead. The unreachable line's own action never takes "
+        f"effect, regardless of what it says."
+    )
+
+
+# ------------------------------------------------------------------------------
+# 2. Post-generation validation
+# ------------------------------------------------------------------------------
+
 # Words that only belong in a response CONFIRMING something about the
 # network. Per ai/Modelfile rule 4, an "error" finding earns neither a
 # positive nor a negative claim about the network -- so none of these
-# should appear anywhere in an error explanation. Matched as whole words,
-# case-insensitively, with a trailing \w* so "reach" also catches
-# "reaches"/"reachable" without matching an unrelated word that merely
-# contains the same letters.
+# should appear anywhere in an error explanation. Checked ONLY for
+# status="error"; a "found" explanation legitimately needs words like
+# "blocked" or "reach" to describe the confirmed fact.
 _RESULT_CLAIM_WORDS = (
     "reach",
     "reachable",
@@ -77,21 +167,39 @@ _RESULT_CLAIM_PATTERN = re.compile(
     r"\b(" + "|".join(_RESULT_CLAIM_WORDS) + r")\w*\b", re.IGNORECASE
 )
 
+# Hedge words that let an invented consequence sneak past a plain "do not
+# invent" rule -- measured directly: "...which could potentially cause
+# issues" passed a first round of prompt tuning by hedging instead of
+# asserting outright. Checked for EVERY status, not just "error": an
+# invented consequence is CLAUDE.md constraint 2's concern regardless of
+# what the finding's status is.
+_SPECULATION_PATTERN = re.compile(
+    r"\b(may|might|could|potentially|possibly)\b", re.IGNORECASE
+)
+_LEAD_TO_PATTERN = re.compile(r"\bcan\s+lead\s+to\b", re.IGNORECASE)
+
 
 def _looks_like_a_result_claim(text: str) -> bool:
-    """True if `text` uses language that asserts something about the network.
-
-    Used only for status="error" responses -- see the module docstring for
-    why. Deliberately errs toward flagging too much rather than too little:
-    a false positive here costs one retry or a safe fallback sentence; a
-    false negative lets a wrong claim through to whoever reads it.
+    """True if `text` uses language that asserts something about the
+    network. Used only for status="error" responses -- see the module
+    docstring for why. Errs toward flagging too much rather than too
+    little: a false positive costs one retry or a safe fallback sentence;
+    a false negative lets a wrong claim through to whoever reads it.
     """
     return bool(_RESULT_CLAIM_PATTERN.search(text))
 
 
+def _looks_like_speculation(text: str) -> bool:
+    """True if `text` hedges toward an unconfirmed consequence rather than
+    stating a plain fact. Checked for every status -- see the module
+    docstring's "wording mistakes" section.
+    """
+    return bool(_SPECULATION_PATTERN.search(text) or _LEAD_TO_PATTERN.search(text))
+
+
 def _fallback_error_explanation(finding: Dict[str, Any]) -> str:
     """The deterministic last resort for status="error", used only if the
-    model fails the check above twice in a row.
+    model fails validation twice in a row.
 
     Always correct, because it is not generated -- it states only the two
     facts actually known: the check did not complete, and (if given) the
@@ -104,24 +212,67 @@ def _fallback_error_explanation(finding: Dict[str, Any]) -> str:
     )
 
 
-def _build_prompt(finding: Dict[str, Any]) -> str:
-    """Wrap the finding so the model cannot mistake it for one of the
-    worked examples baked into ai/Modelfile's system prompt.
+def _fallback_plain_restatement(finding: Dict[str, Any]) -> str:
+    """The deterministic last resort for status="found"/"none", used only
+    if the model fails validation twice in a row.
 
-    WHY THIS WRAPPING EXISTS: measured directly while building the prompt.
-    Without it, the model sometimes reproduced a worked example's answer
-    almost verbatim for an unrelated finding, rather than reasoning about
-    the finding it was actually given -- see ai/Modelfile's commit message
-    for the full account of that failure and the fix.
+    Not polished plain English -- it is the check's own summary and
+    evidence, stated together with no elaboration. Guaranteed grounded,
+    because nothing here is generated: a plain but honest answer beats a
+    fluent one that might still be speculating.
     """
-    finding_json = json.dumps(finding, indent=2)
-    return (
+    summary = (finding.get("summary") or "").strip()
+    detail = (finding.get("evidence") or {}).get("detail", "").strip()
+    if detail:
+        return f"{summary}. Technical detail: {detail}"
+    return summary or "No explanation is available for this finding."
+
+
+def _build_prompt(finding: Dict[str, Any]) -> str:
+    """Wrap the finding for the model, adding two things beyond the raw F-1
+    fields:
+
+    1. An instruction not to reuse the worked examples baked into
+       ai/Modelfile's system prompt. WHY: measured directly while building
+       the prompt -- without this, the model sometimes reproduced a worked
+       example's answer almost verbatim for an unrelated finding, rather
+       than reasoning about the finding it was actually given.
+
+    2. If _compute_dead_rule_outcome() can determine the real outcome of a
+       dead-ACL-rule finding, that computed fact, labelled as
+       already-verified. See that function's docstring for why this exists
+       and how confident it has to be before it says anything at all.
+    """
+    parts = [
         "Explain ONLY the finding below. Do not reuse any wording from the "
         "worked examples in your instructions above -- those show STYLE "
         "only, never content to repeat. This finding is a different, "
-        "unrelated case; read its actual fields before answering.\n\n"
-        "Finding to explain:\n" + finding_json
-    )
+        "unrelated case; read its actual fields before answering."
+    ]
+
+    detail = (finding.get("evidence") or {}).get("detail", "")
+    computed_outcome = _compute_dead_rule_outcome(detail)
+    if computed_outcome is not None:
+        # Deliberately NOT a distinctive, quotable label like "IMPORTANT
+        # FACT:" -- measured directly that the model would echo a label
+        # like that verbatim as its own paragraph instead of folding the
+        # fact into its prose. Phrased as a passing instruction instead, and
+        # told explicitly not to output any heading of its own.
+        parts.append(
+            "One more thing, already verified by code and certain, not "
+            "something to re-derive, hedge, or contradict: "
+            + computed_outcome
+            + " Work this into your explanation using your own words, as "
+            "part of the same flowing sentences as everything else -- do "
+            "not quote it, label it, or set it apart as its own paragraph. "
+            "You also do not need to interpret the raw 'Reason:' code in "
+            "evidence.detail yourself (e.g. 'BLOCKING_LINES' is an internal "
+            "code naming why the line is unreachable, not a rule or a "
+            "device) -- the fact above already accounts for it."
+        )
+
+    parts.append("Finding to explain:\n" + json.dumps(finding, indent=2))
+    return "\n\n".join(parts)
 
 
 def _generate(finding: Dict[str, Any]) -> str:
@@ -131,30 +282,41 @@ def _generate(finding: Dict[str, Any]) -> str:
     return response["response"].strip()
 
 
+def _is_unacceptable(text: str, *, is_error: bool) -> bool:
+    """One check, used for every status. status="error" additionally
+    rejects any claimed result about the network; every status rejects
+    hedged speculation. See the module docstring's two-failure-modes
+    section for why these are checked separately from each other."""
+    if is_error and _looks_like_a_result_claim(text):
+        return True
+    return _looks_like_speculation(text)
+
+
 def explain(finding: Dict[str, Any]) -> str:
     """Return a plain-English explanation of ONE F-1 finding.
 
     Grounded strictly in `finding` -- CLAUDE.md constraint 2. This function
     never receives, and the model never sees, anything beyond the single
     finding passed in: no other findings, no wider network context.
+
+    Generates, validates, and retries once if the first attempt is
+    unacceptable; falls back to a fixed, non-generated sentence if the
+    second attempt is unacceptable too, rather than ever showing an
+    unvalidated response.
     """
-    if finding.get("status") != "error":
-        return _generate(finding)
+    is_error = finding.get("status") == "error"
 
-    # status="error": generate, then verify before trusting it. Retry once
-    # if the first attempt slips into asserting a result about the network;
-    # fall back to the fixed, always-correct sentence if the second attempt
-    # does too, rather than ever showing an unverified response for the one
-    # status where a slip is not just cosmetic.
     explanation = _generate(finding)
-    if not _looks_like_a_result_claim(explanation):
+    if not _is_unacceptable(explanation, is_error=is_error):
         return explanation
 
     explanation = _generate(finding)
-    if not _looks_like_a_result_claim(explanation):
+    if not _is_unacceptable(explanation, is_error=is_error):
         return explanation
 
-    return _fallback_error_explanation(finding)
+    if is_error:
+        return _fallback_error_explanation(finding)
+    return _fallback_plain_restatement(finding)
 
 
 if __name__ == "__main__":

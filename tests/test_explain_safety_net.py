@@ -1,17 +1,16 @@
 """
-Netwise -- tests for ai/explain.py's error-case safety net.
+Netwise -- tests for ai/explain.py's two lines of defence.
 
 WHY THIS FILE EXISTS
-    ai/explain.py's module docstring explains why status="error" findings
-    get a post-generation check rather than trusting the prompt alone:
-    repeated live testing showed the model occasionally (not usually, but
-    occasionally) slips a result claim into an error explanation even with
-    a carefully tuned prompt. _looks_like_a_result_claim() is what catches
-    that before anyone sees it, and _fallback_error_explanation() is the
-    deterministic sentence used if it happens twice in a row.
+    ai/explain.py's module docstring explains the difference between two
+    kinds of mistake found during live testing: wording mistakes (caught
+    after generation, by _looks_like_a_result_claim() and
+    _looks_like_speculation()) and reasoning mistakes about ACL shadowing
+    (prevented before generation, by computing the real answer in
+    _compute_dead_rule_outcome() rather than asking the model to derive it).
 
-    These are pure functions -- no Ollama, no network call -- so they run
-    in milliseconds and can be tested directly, the same reasoning
+    These are all pure functions -- no Ollama, no network call -- so they
+    run in milliseconds and can be tested directly, the same reasoning
     test_finding_ids.py and test_routing_classification.py give for testing
     pure logic without needing the real system running.
 
@@ -21,8 +20,11 @@ RUN
 
 from ai.explain import (
     _build_prompt,
+    _compute_dead_rule_outcome,
     _fallback_error_explanation,
+    _fallback_plain_restatement,
     _looks_like_a_result_claim,
+    _looks_like_speculation,
 )
 
 # --- _looks_like_a_result_claim ----------------------------------------------
@@ -78,6 +80,130 @@ def test_catches_each_banned_word_family():
         assert _looks_like_a_result_claim(sentence) is True, f"did not flag {word!r}"
 
 
+# --- _looks_like_speculation --------------------------------------------------
+
+
+def test_plain_grounded_sentence_is_not_flagged():
+    text = (
+        "The device's rule set allows all traffic through with no "
+        "restriction, which is what let unencrypted web traffic reach the "
+        "internal server."
+    )
+    assert _looks_like_speculation(text) is False
+
+
+def test_flags_the_real_failure_found_during_live_testing():
+    """The exact wording that slipped past a first round of prompt tuning:
+    hedged instead of asserted, so it dodged a simpler word ban."""
+    text = (
+        "This means the network's traffic filtering rules are incomplete "
+        "and may allow unwanted traffic through, which could potentially "
+        "cause issues."
+    )
+    assert _looks_like_speculation(text) is True
+
+
+def test_catches_each_hedge_word_family():
+    cases = {
+        "may": "This may cause a problem.",
+        "might": "This might be an issue.",
+        "could": "This could be a problem.",
+        "potentially": "This is potentially a problem.",
+        "possibly": "This is possibly relevant.",
+        "can lead to": "This can lead to a problem.",
+    }
+    for word, sentence in cases.items():
+        assert _looks_like_speculation(sentence) is True, f"did not flag {word!r}"
+
+
+def test_speculation_check_is_case_insensitive():
+    assert _looks_like_speculation("This COULD be a problem.") is True
+
+
+# --- _compute_dead_rule_outcome -------------------------------------------------
+# Regression coverage for the reasoning mistake found during live testing on a
+# real finding: the model once stated ICMP traffic "should be blocked...
+# which is not happening", backwards -- the traffic IS blocked, that is the
+# whole finding. Shadowing logic has one correct answer, so it is computed
+# here rather than left for the model to derive.
+
+
+def test_dead_deny_shadowed_by_permit_means_traffic_is_permitted():
+    """Real evidence.detail from access_control._check_dead_rules, pulled
+    from Batfish's own bundled 'example' network (device as2dept1)."""
+    detail = (
+        "Unreachable line: deny   ip 1.128.0.0 0.0.255.255 2.128.0.0 "
+        "0.0.255.255 (action DENY). Blocked by: permit ip any "
+        "2.128.0.0 0.0.255.255. Reason: BLOCKING_LINES"
+    )
+    outcome = _compute_dead_rule_outcome(detail)
+    assert outcome is not None
+    assert "permitted" in outcome
+    assert "denied" not in outcome
+
+
+def test_dead_permit_shadowed_by_deny_means_traffic_is_denied():
+    """Real evidence.detail, same network, device as2dept1 -- this is the
+    exact case the model got backwards before this function existed."""
+    detail = (
+        "Unreachable line: permit icmp any any (action PERMIT). "
+        "Blocked by: deny   ip any any. Reason: BLOCKING_LINES"
+    )
+    outcome = _compute_dead_rule_outcome(detail)
+    assert outcome is not None
+    assert "denied" in outcome
+    assert "permitted" not in outcome
+
+
+def test_returns_none_for_a_finding_that_is_not_a_dead_rule():
+    detail = "BatfishException: Work terminated abnormally"
+    assert _compute_dead_rule_outcome(detail) is None
+
+
+def test_returns_none_when_blocking_lines_disagree():
+    """Two blocking lines named, one permit and one deny -- not confident
+    enough to state a single outcome, so this must refuse to guess rather
+    than pick one arbitrarily."""
+    detail = (
+        "Unreachable line: permit tcp any any eq 80 (action PERMIT). "
+        "Blocked by: deny ip any any, permit tcp any any eq 443. "
+        "Reason: BLOCKING_LINES"
+    )
+    assert _compute_dead_rule_outcome(detail) is None
+
+
+def test_returns_none_for_unrecognised_blocking_line_syntax():
+    detail = (
+        "Unreachable line: permit tcp any any eq 80 (action PERMIT). "
+        "Blocked by: remark this is a comment. Reason: BLOCKING_LINES"
+    )
+    assert _compute_dead_rule_outcome(detail) is None
+
+
+# --- _fallback_plain_restatement -----------------------------------------------
+
+
+def test_plain_restatement_includes_summary_and_detail():
+    finding = {
+        "summary": "No issues found by access control",
+        "evidence": {"detail": "2 policy statement(s) hold"},
+    }
+    result = _fallback_plain_restatement(finding)
+    assert "No issues found by access control" in result
+    assert "2 policy statement(s) hold" in result
+
+
+def test_plain_restatement_never_contains_speculation():
+    """Same reasoning as the error fallback: this IS the last resort, so it
+    must not be able to trip the check it exists to back up."""
+    finding = {"summary": "A finding", "evidence": {"detail": "some detail"}}
+    assert _looks_like_speculation(_fallback_plain_restatement(finding)) is False
+
+
+def test_plain_restatement_handles_missing_fields_gracefully():
+    assert _fallback_plain_restatement({}) != ""
+
+
 # --- _fallback_error_explanation ----------------------------------------------
 
 
@@ -112,6 +238,48 @@ def test_prompt_contains_the_actual_finding_as_json():
     prompt = _build_prompt(finding)
     assert '"id": "AC-001"' in prompt
     assert '"status": "found"' in prompt
+
+
+def test_prompt_includes_the_computed_outcome_for_a_dead_rule_finding():
+    finding = {
+        "id": "AC-002",
+        "evidence": {
+            "detail": (
+                "Unreachable line: permit icmp any any (action PERMIT). "
+                "Blocked by: deny   ip any any. Reason: BLOCKING_LINES"
+            )
+        },
+    }
+    prompt = _build_prompt(finding)
+    assert "denied" in prompt
+    assert "already verified" in prompt.lower()
+
+
+def test_prompt_omits_the_computed_outcome_for_an_unrelated_finding():
+    """The injected fact block must only appear when the deterministic
+    computation is actually confident -- otherwise the model is told
+    nothing extra and reasons from the raw finding alone, same as any
+    other finding shape."""
+    finding = {"id": "RT-001", "evidence": {"detail": "BatfishException: Work terminated abnormally"}}
+    prompt = _build_prompt(finding)
+    assert "already verified" not in prompt.lower()
+
+
+def test_prompt_tells_the_model_not_to_echo_the_computed_fact_as_a_label():
+    """Regression coverage for a real failure: the model echoed the label
+    on the injected fact verbatim as its own paragraph instead of folding
+    it into the explanation's prose."""
+    finding = {
+        "id": "AC-001",
+        "evidence": {
+            "detail": (
+                "Unreachable line: deny ip any any (action DENY). "
+                "Blocked by: permit ip any any. Reason: BLOCKING_LINES"
+            )
+        },
+    }
+    prompt = _build_prompt(finding)
+    assert "do not quote it, label it" in prompt.lower()
 
 
 def test_prompt_tells_the_model_not_to_copy_the_examples():
