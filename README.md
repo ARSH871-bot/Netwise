@@ -66,7 +66,10 @@ See [`docs/sprint1/SPRINT1.md`](docs/sprint1/SPRINT1.md) for the Sprint 1 record
 
 - Docker (for the Batfish container)
 - Python 3.11+
-- Ollama (for the local LLM — not yet used)
+- Ollama, for the local LLM that writes the plain-English explanations. Build
+  the model once with `ollama create netwise-warden -f ai/Modelfile`. Only the
+  explanation layer needs it — the analysis pipeline and the test suite both
+  run without it.
 
 ## Getting started
 
@@ -111,7 +114,7 @@ pytest tests/ -v
 | Path | Contents |
 |---|---|
 | `analysis/` | Batfish orchestration — the pipeline, the finding format, one module per check |
-| `ai/` | Local LLM explanation and Q&A layer — not started |
+| `ai/` | Local LLM layer — `explain.py` turns a finding into plain English; `Modelfile` defines the model it calls |
 | `web/` | FastAPI backend and dashboard frontend |
 | `tests/` | Test suite, plus synthetic configs used as fixtures |
 | `docs/` | Sprint records, the finding contract, design notes |
