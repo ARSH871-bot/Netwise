@@ -1,0 +1,73 @@
+# Netwise -- run the test suite on every pull request.
+#
+# WHY THIS IS WORTH HAVING
+#   Every verification in this project used to be done by hand. That is how the
+#   duplicate-`id` defect survived days in the code and a code review: it was
+#   only found when someone built a dashboard and looked at real data. The test
+#   that covers it now exists, but a test nobody runs is a test that does not
+#   protect anyone.
+#
+# WHAT IT RUNS
+#   pytest tests/ -- currently 47 tests. They need NEITHER Batfish NOR Ollama,
+#   which is what makes this cheap enough to run on every push. Keeping the
+#   suite free of those dependencies is worth protecting; if a test ever needs
+#   a live service, put it behind a separate, manually-triggered workflow
+#   rather than slowing this one down.
+#
+# WHAT IT DOES NOT DO
+#   It cannot BLOCK a merge. Required status checks need branch protection,
+#   which needs GitHub Pro or a public repo, and we are deliberately private so
+#   client configs stay protected (see CONTRIBUTING.md section 6). So a red
+#   cross here is a signal, not a gate -- the same standing as our branching
+#   convention. Please treat it as one.
+
+name: tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Do not cancel the 3.13 job because 3.12 failed -- when a failure is
+      # version-specific, seeing both results is the whole point.
+      fail-fast: false
+      matrix:
+        # The versions the team actually uses. Samika is on 3.12, Arsh on 3.13.
+        # A dependency that breaks on one and not the other is exactly the kind
+        # of problem that wastes an afternoon before anyone suspects Python.
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          # Cache pip downloads between runs. pybatfish and its dependencies
+          # are the slow part of the install, and they rarely change.
+          cache: pip
+
+      - name: Install dependencies
+        # Installing the full requirements.txt rather than just pytest is
+        # deliberate: it means CI also proves that a clean machine can install
+        # this project from the file we tell people to use. A broken
+        # requirements.txt is a real failure and should be caught here.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest tests/ -v
+
+      - name: Check the package imports on a clean machine
+        # Catches a missing dependency that the tests happen not to exercise.
+        # `web.main` in particular pulls in fastapi and python-multipart, which
+        # nothing in tests/ imports directly.
+        run: python -c "import analysis.pipeline, ai.explain, web.main; print('imports OK')"
