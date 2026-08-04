@@ -49,10 +49,11 @@ invents network behaviour.
 | Backend analysis pipeline | **Built** — loads configs, runs checks, returns structured findings |
 | Access-control analysis | **Built** — four analyses |
 | Policy-compliance analysis | **Built** |
-| Routing analysis | Not started |
-| Risk prioritisation | Not started |
-| AI explanation layer | Not started |
+| Routing analysis | **Built** |
+| AI explanation layer | **Built** — explains a finding in plain English; answering typed questions is still to come |
 | Web dashboard + upload | **Built**, running on sample data |
+| Risk prioritisation | Not started |
+| Change-impact analysis | Not started |
 
 **The layers are not yet joined.** Each part works and is tested on its own, but
 a configuration file has not yet travelled the whole way through to a result on
