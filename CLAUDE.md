@@ -176,11 +176,21 @@ them and they describe nobody's real network. Real configs stay in the ignored
 ## 8. Repository layout
 
 ```
-analysis/   Layer 1 — Batfish orchestration (snapshots, questions, results)
-ai/         Layer 2 — local LLM explanation and Q&A
-web/        Layer 3 — FastAPI backend and dashboard frontend
+analysis/   Layer 1 — Batfish orchestration (built)
+  findings.py     the F-1 format in code, with validation
+  pipeline.py     connect, load snapshot, dispatch checks, guard ids
+  checks/         one module per feature
+ai/         Layer 2 — local LLM explanation and Q&A (EMPTY, not started)
+web/        Layer 3 — FastAPI backend and dashboard (built, on mock data)
+tests/      pytest suite + synthetic fixtures (committed, see §7b)
 docs/       Sprint records, design notes, evidence for reviews
 configs/    Config files under test — GIT-IGNORED, never committed
+```
+
+Run the tests from the repository root — they need neither Batfish nor Docker:
+
+```bash
+pytest tests/ -v
 ```
 
 ## 9. Tech stack
@@ -198,19 +208,75 @@ International Campus. Delivered in weekly SCRUM sprints.
 
 - **Client / sponsor:** Senaka Amarakeerthi (Senior Lecturer) — uses their own
   network as the test case.
-- **Arsh** — engine/backend, SCRUM Master
-- **Ankeet** — engine/backend
-- **Shubham** — frontend/dashboard
-- **Samika** — frontend/dashboard
 
-## 11. Status
+Each member owns a **vertical slice**: their own analysis, through the shared
+format, to the screen. This replaced the earlier engine/frontend split.
 
-- **Sprint 1 — complete.** Batfish installed and running; the five core
-  questions above run and understood on bundled example configs. See
-  `docs/sprint1/SPRINT1.md`.
-- **Sprint 2 — in progress.** Build the backend pipeline: load a chosen config
-  folder as a snapshot, run the key analyses, return results as structured data
-  (dicts/JSON) rather than printed tables, ready for the AI layer to consume.
+| Member | Owns |
+|---|---|
+| **Arsh** | Access-control analysis + the shared pipeline + SCRUM Master |
+| **Ankeet** | Routing analysis + the local AI assistant (Ollama) |
+| **Shubham** | Policy-compliance + change-impact analysis |
+| **Samika** | Risk prioritisation + the interface + secure upload |
 
-The structured output schema is a **pending team decision** — do not finalise it
-unilaterally. The dashboard has to live with whatever shape is chosen.
+## 11. Status — last updated 2026-08-03
+
+**Sprint 1 — complete.** Batfish installed and running; the five core questions
+run and understood on bundled example configs. See `docs/sprint1/SPRINT1.md`.
+
+**Sprint 2 — in progress.** The output-schema question that once blocked this
+is **settled**: the team agreed F-1 (see §7a). Do not reopen it casually.
+
+### What is built and on `main`
+
+| Piece | Owner | State |
+|---|---|---|
+| Shared pipeline (F-3) | Arsh | Done — connect, snapshot, parse check, dispatch, error isolation, duplicate-`id` guard |
+| F-1 format in code | team | Done — `analysis/findings.py`, validated |
+| `access_control` check | Arsh | Done — four analyses: `testFilters`, `searchFilters`, `filterLineReachability`, `undefinedReferences` |
+| `policy_compliance` check | Shubham | Done — see `docs/policy-rules.md` |
+| Dashboard + secure upload | Samika | Done, **on mock data** |
+| Test suite | Arsh | Started — `tests/test_finding_ids.py`, 9 tests, no Batfish needed |
+
+### What is NOT built
+
+| Piece | Owner | Note |
+|---|---|---|
+| `routing` check | Ankeet | Not started |
+| `risk` scoring | Samika | Blocked — see the open decision below |
+| **Local AI explanation layer** | Ankeet | **Not started. `ai/` is empty, Ollama not installed.** This is the client's headline ask and the project's biggest gap. |
+| `change_impact` | Shubham | Not started, and does not fit the `run(bf)` contract |
+
+### The wiring gap — read this before assuming anything works end to end
+
+**No real config has ever produced a finding that reached the screen.** The
+pieces work individually and are tested individually, but they are not joined:
+
+- `web/main.py` serves `web/mock_findings.py`, **not** the pipeline. There is a
+  single `TODO` marking where `analysis.pipeline.analyse()` goes.
+- Config upload validates a file and then stops. It does not trigger analysis.
+- The AI layer the dashboard is supposed to read through does not exist.
+
+Wiring it up is a substitution rather than a redesign — `analyse()` already
+returns the exact F-1 list the frontend renders, including `status="error"`
+findings when it cannot run at all. But until that happens, "it works" means
+"each part works", not "the product runs".
+
+### Open decisions — do not settle these alone
+
+1. **Producer vs post-processor** (`docs/design/pipeline-feature-shapes.md`).
+   Two features cannot honour `run(bf) -> list[dict]`: `change_impact` needs
+   two snapshots, `risk` needs the combined findings list. Proposal is three
+   shapes. **This blocks Samika's severity ruleset.**
+2. **`change_impact` needs its own ID prefix.** It shares `PC` with
+   `policy_compliance`, so their findings collide.
+   `pipeline.duplicate_id_findings()` detects it; only a distinct prefix makes
+   it impossible. Amending F-1 needs all four members.
+3. **Severity ownership.** `docs/finding-format.md` says severity is set by
+   Samika's rules; the checks currently set it themselves. Proposed resolution:
+   checks set a default, risk may re-rate, and **`risk` must never downgrade a
+   `status="error"`** — an unrunnable check is a blind spot regardless of policy.
+4. **Parse strictness.** `find_parse_problems()` currently treats any status
+   other than `PASSED` as fatal, including `PARTIALLY_UNRECOGNIZED`. Safe for
+   test configs, likely too strict for real ones. The fix is to run the checks
+   and attach a loud "results may be incomplete" finding — never to ignore it.

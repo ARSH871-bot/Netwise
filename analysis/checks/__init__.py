@@ -3,8 +3,8 @@
 Each module here is owned by one team member:
 
     access_control.py    Arsh      (written -- use it as the template)
-    routing.py           Ankeet    (to do)
-    policy_compliance.py Shubham   (to do)
+    routing.py           Ankeet    (written)
+    policy_compliance.py Shubham   (written)
     change_impact.py     Shubham   (to do)
     risk.py              Samika    (to do)
 

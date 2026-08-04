@@ -48,7 +48,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from pybatfish.client.session import Session
 
 from analysis import findings
-from analysis.checks import access_control, policy_compliance
+from analysis.checks import access_control, policy_compliance, routing
 
 # --- The check registry -----------------------------------------------------
 #
@@ -57,7 +57,7 @@ from analysis.checks import access_control, policy_compliance
 CHECKS = {
     "access_control": access_control.run,
     "policy_compliance": policy_compliance.run,
-    # "routing":           routing.run,             # Ankeet
+    "routing": routing.run,
     # "risk":              risk.run,                # Samika
     #
     # change_impact is deliberately NOT here. It compares two snapshots, which
