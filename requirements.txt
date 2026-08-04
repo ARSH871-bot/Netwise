@@ -15,7 +15,10 @@ pybatfish==2025.7.7.2423
 pandas>=2.0
 
 # --- Layer 2: AI explanation layer -----------------------------------------
-# TODO: add the Ollama client once the AI layer starts.
+# Official client for talking to a local Ollama server. Requires Ollama
+# installed and running separately (not a pip package) -- see ai/Modelfile
+# for the model this project builds and calls: netwise-warden.
+ollama>=0.4
 
 # --- Layer 3: Web interface ------------------------------------------------
 # Chosen over Flask for the auto-generated API docs at /docs (useful evidence
