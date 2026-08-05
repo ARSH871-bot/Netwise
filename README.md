@@ -51,14 +51,15 @@ invents network behaviour.
 | Policy-compliance analysis | **Built** |
 | Routing analysis | **Built** |
 | AI explanation layer | **Built** — explains a finding in plain English; answering typed questions is still to come |
-| Web dashboard + upload | **Built**, running on sample data |
+| Web dashboard + upload | **Built** — upload a config, get real findings |
+| PF Sense conversion | **Built** — interfaces and filter rules; see the caveat in `analysis/pfsense_convert.py` |
 | Risk prioritisation | Not started |
 | Change-impact analysis | Not started |
 
-**The layers are not yet joined.** Each part works and is tested on its own, but
-a configuration file has not yet travelled the whole way through to a result on
-screen — the dashboard currently shows sample findings. Connecting them is the
-next piece of work.
+**Upload a config and you get real findings.** The one link still open is the
+AI explanation: the dashboard reserves a place for it and labels it *"not
+generated yet"*, so a placeholder is never mistaken for something the model
+produced. Connecting `explain()` to that slot is the next piece of work.
 
 See [`docs/sprint1/SPRINT1.md`](docs/sprint1/SPRINT1.md) for the Sprint 1 record.
 
@@ -113,7 +114,7 @@ pytest tests/ -v
 
 | Path | Contents |
 |---|---|
-| `analysis/` | Batfish orchestration — the pipeline, the finding format, one module per check |
+| `analysis/` | Batfish orchestration — the pipeline, the finding format, one module per check, and the PF Sense converter |
 | `ai/` | Local LLM layer — `explain.py` turns a finding into plain English; `Modelfile` defines the model it calls |
 | `web/` | FastAPI backend and dashboard frontend |
 | `tests/` | Test suite, plus synthetic configs used as fixtures |
@@ -135,13 +136,20 @@ python -m analysis.pipeline <folder>
 ```
 
 The folder is the snapshot root; device files live one level down, in a
-`configs/` subfolder inside it. Three synthetic examples are included:
+`configs/` subfolder inside it. Seven synthetic examples are included, each
+demonstrating something different:
 
 | Fixture | What it demonstrates |
 |---|---|
-| `tests/fixtures/rtr-us5-secure` | A clean config — reports no issues |
-| `tests/fixtures/rtr-us5-insecure` | A blanket `permit ip any any` — reports real findings |
-| `tests/fixtures/unparseable` | A file Batfish cannot read — reports an error, not a clean result |
+| `rtr-us5-secure` | A clean config — reports no issues |
+| `rtr-us5-insecure` | A blanket `permit ip any any` — reports real findings |
+| `rtr-us5-messy` | Dead ACL rules and a reference to an ACL that does not exist |
+| `routing-secure` | Two routers with a working route between them |
+| `routing-missing-route` | The same pair with the route removed |
+| `unparseable` | A file Batfish cannot read — reports an error, not a clean result |
+| `pfsense-source` | A PF Sense `config.xml`, for the converter rather than the pipeline |
+
+All live under `tests/fixtures/`.
 
 **From Python:**
 

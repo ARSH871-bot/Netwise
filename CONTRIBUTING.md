@@ -113,6 +113,28 @@ Run it from the repository root. Batfish must be running:
 `docker start batfish`. The first snapshot load after starting the container
 takes a few minutes while its JVM warms up — that is normal, not a hang.
 
+## 4b. CI runs your tests automatically
+
+Every pull request runs the suite on Python **3.12 and 3.13** — see
+`.github/workflows/tests.yml`. You will see a green tick or a red cross on your
+PR without doing anything.
+
+**It cannot block a merge.** Required status checks need branch protection,
+which needs GitHub Pro or a public repo, and we are deliberately private so
+client configs stay protected (§6). So a red cross is a *signal*, not a gate —
+the same standing as everything else in this document. Please treat it as one.
+
+**If a test ever needs a live Batfish or Ollama, put it behind a separate,
+manually-triggered workflow** rather than adding it here. The first snapshot
+load against a cold container takes minutes and the service went down three
+times during development. Flaky CI gets ignored, which is worse than no CI.
+
+CI earned its place on its very first run: it caught that `pytest tests/` — the
+command this document tells you to use — failed on a clean machine, because
+`python -m pytest` puts the repo root on `sys.path` and the bare command does
+not. Nobody would have found that locally, because the thing that made it work
+was the thing we all did without thinking.
+
 ## 5. Config files
 
 Real network configs **never** go in git. Only synthetic fixtures we invented

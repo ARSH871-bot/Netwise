@@ -114,10 +114,21 @@ Batfish runs in Docker container `batfish` (image `batfish/allinone`), exposing
 
 - Start with **Cisco IOS** — natively supported, and Batfish ships example
   networks with ready-to-use Cisco configs for development.
-- The client's real firewall is **PF Sense**, which exports XML. Batfish does
-  not support PF Sense XML natively, so those configs need converting. This is
-  a known hard problem — **timebox it** and fall back to supported-vendor
-  sample configs if it stalls.
+- The client's real firewall is **PF Sense**, which exports XML that Batfish
+  cannot read at all. `analysis/pfsense_convert.py` translates it into Cisco
+  IOS text, so a converted config re-enters the same `analyse()` as everything
+  else. Interfaces and filter rules are covered; NAT, aliases, DHCP, VPN, IPv6
+  and combined `tcp/udp` rules are not, and each raises rather than guessing.
+
+  **Read this before showing the client their own config.** PF Sense evaluates
+  rules *last-match-wins* unless a rule is marked "quick"; the converter treats
+  them as *first-match-wins*, like a Cisco ACL. Our fixture is written so both
+  models agree, so the tests cannot catch the difference. A real export that
+  relies on last-match semantics between overlapping rules **converts to
+  something that parses cleanly and decides differently from the real
+  firewall** — findings would be confidently wrong about a network that does
+  not behave that way. Tracked as an open risk, not a bug: see the module
+  docstring and the linked issue.
 
 ## 7a. The finding format (F-1) — the one contract
 
@@ -149,14 +160,12 @@ rather than quietly downstream.
 
 `analysis/pipeline.py` is the shared backbone. It connects to Batfish, loads a
 snapshot, runs the registered checks, and returns one combined list of
-findings. Each team member owns one check:
+findings. The checks — the features that fit this contract — are:
 
 ```
 analysis/checks/access_control.py     Arsh     (written — the template)
-analysis/checks/routing.py            Ankeet
-analysis/checks/policy_compliance.py  Shubham
-analysis/checks/change_impact.py      Shubham
-analysis/checks/risk.py               Samika
+analysis/checks/routing.py            Ankeet   (written)
+analysis/checks/policy_compliance.py  Shubham  (written)
 ```
 
 A check is one file with one function, `run(bf: Session) -> list[dict]`, plus
@@ -172,6 +181,15 @@ Synthetic test configs live in `tests/fixtures/` and **are** committed — they
 are the single exception to the no-configs-in-git rule, because we invented
 them and they describe nobody's real network. Real configs stay in the ignored
 `configs/` folder.
+
+**Two features are NOT checks**, and `analysis/checks/` says so too:
+`change_impact` needs two snapshots and becomes `analyse_change(before, after)`;
+`risk` needs the combined findings and becomes a post-processor. Neither goes
+in `CHECKS`. See `docs/design/pipeline-feature-shapes.md`.
+
+CI (`.github/workflows/tests.yml`) runs the suite on every pull request, on
+Python 3.12 and 3.13. It cannot block a merge — branch protection needs GitHub
+Pro or a public repo — so a red cross is a signal rather than a gate.
 
 ## 8. Repository layout
 
@@ -255,8 +273,9 @@ is **settled**: the team agreed F-1 (see §7a). Do not reopen it casually.
 | `policy_compliance` check | Shubham | Done — see `docs/policy-rules.md` |
 | `routing` check | Ankeet | Done — `traceroute`-based reachability, two-router fixtures |
 | **AI explanation layer** | Ankeet | Done — `ai/explain.py` + `ai/Modelfile` (Warden, local Ollama). Explains one finding; the natural-language-question direction is not started |
-| Dashboard + secure upload | Samika | Done, **on mock data** |
-| Test suite | team | 47 tests, needing neither Batfish nor Ollama |
+| Dashboard + secure upload | Samika | Done — real findings on screen since #39 |
+| PF Sense conversion | Ankeet | Done — `analysis/pfsense_convert.py`. **Read the rule-order caveat in §7** before using it on a real export |
+| Test suite | team | Needs neither Batfish nor Ollama. For the count, run it — a number written here rots the next time anyone adds a test |
 
 ### What is NOT built
 
@@ -265,22 +284,24 @@ is **settled**: the team agreed F-1 (see §7a). Do not reopen it casually.
 | `risk` scoring | Samika | Blocked — see the open decisions below |
 | `change_impact` | Shubham | Not started, and does not fit the `run(bf)` contract |
 | AI: natural-language questions | Ankeet | Not started — the other half of Layer 2 |
-| **The wiring** | Samika + Arsh | **Not done.** See below — this is now the biggest gap. |
+| AI explanation on screen | Samika + Ankeet | Slot built (#40); `explain()` not yet called — #31 |
 
-### The wiring gap — read this before assuming anything works end to end
+### End to end — what is joined, and what is not
 
-**No real config has ever produced a finding that reached the screen.** The
-pieces work individually and are tested individually, but they are not joined:
+**The product runs.** Uploading a config produces real findings on screen, as
+of 5 August (#39). `web/main.py` stages the upload and calls
+`analysis.pipeline.analyse()` on it; mocks are served only until the first
+upload. Verified against opposite fixtures:
 
-- `web/main.py` serves `web/mock_findings.py`, **not** the pipeline. There is a
-  single `TODO` marking where `analysis.pipeline.analyse()` goes.
-- Config upload validates a file and then stops. It does not trigger analysis.
-- The AI layer the dashboard is supposed to read through does not exist.
+```
+upload rtr-us5-insecure  ->  5 problems found, 2 could not check
+upload rtr-us5-secure    ->  0 problems, 2 checked clean, 2 could not check
+```
 
-Wiring it up is a substitution rather than a redesign — `analyse()` already
-returns the exact F-1 list the frontend renders, including `status="error"`
-findings when it cannot run at all. But until that happens, "it works" means
-"each part works", not "the product runs".
+**One link is still open: the AI explanation does not render.** `ai/explain.py`
+works and the dashboard has a slot for it (#40), deliberately marked *"not
+generated yet"* so a placeholder can never be mistaken for model output. Joining
+those two is #31, and it is now a small job rather than a redesign.
 
 ### Open decisions — do not settle these alone
 
