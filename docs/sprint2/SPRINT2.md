@@ -17,8 +17,9 @@ key analyses, and return the results as structured data rather than printed
 tables, so a later component can feed them to the AI layer.
 
 **Met, and exceeded.** The AI layer and the dashboard were not in this sprint's
-scope and both exist. What did *not* happen is the integration — see
-"Carried into Sprint 3".
+scope, and both exist. **The integration landed on the final day**: a real
+config now produces real findings on screen, which had been the headline gap
+right up until 5 August.
 
 ## What was delivered
 
@@ -33,10 +34,12 @@ Eleven pull requests merged between 30 July and 5 August.
 | **`routing` check** | Ankeet | `traceroute` reachability, two-router fixtures (#25) |
 | **AI explanation layer** | Ankeet | `ai/explain.py` + `ai/Modelfile`, local Ollama (#26) |
 | **Dashboard + secure upload** | Samika | two-pane UI, server-side validation (#21) |
+| **Upload → pipeline wiring** | Samika | a real config produces real findings on screen (#39) |
+| **AI explanation slot** | Samika | the place the explanation will render, honestly marked as not yet generated (#40) |
 | **Test suite** | Arsh | 47 tests, needing neither Batfish nor Ollama |
 | **CI** | Arsh | `pytest` on 3.12 and 3.13, every PR (#32) |
 
-**Stories delivered this sprint:** US-5, US-7, US-8, US-9.
+**Stories delivered this sprint:** US-4, US-5, US-7, US-8, US-9, US-10.
 
 **Also closed during the sprint, but Sprint 1 work:** US-2 and US-3 were
 completed in Sprint 1 and left open; they were closed here as tidy-up. Counting
@@ -84,15 +87,22 @@ code depending on something about our own machines nobody noticed we relied on.
 Normal sprint carry-over, not failure. Recorded plainly so Sprint 3 planning
 starts from fact.
 
-**The integration gap is the important one.** Every piece works and is tested
-individually, but nothing is joined: `web/main.py` still serves mock findings
-with a single `TODO` where `analyse()` belongs. **No real config has produced a
-finding that reached the screen.** That is US-10, and it is the single thing
-between five working parts and a demonstrable product.
+**The integration gap closed on the last day of the sprint.** It had been the
+headline carry-over in every draft of this record until 5 August, when #39
+landed. `web/main.py` now calls `analyse()` on the uploaded snapshot, and the
+same dashboard shows genuinely different results for a secure and an insecure
+config:
+
+```
+upload rtr-us5-insecure  ->  5 problems found, 2 could not check
+upload rtr-us5-secure    ->  0 problems, 2 checked clean, 2 could not check
+```
+
+That is the product running end to end for the first time. What remains is
+features, not plumbing.
 
 | Carried | Story | Note |
 |---|---|---|
-| Upload triggers analysis | #10 | the integration gap above |
 | Risk prioritisation | #12 | shape agreed; ruleset not written |
 | Change-impact analysis | #30 | shape agreed; not started |
 | Explanations on screen | #31 | depends on #10 |
@@ -105,10 +115,17 @@ on the shapes proposal.
 
 ## Known limitations, stated rather than discovered later
 
-1. **Checks hardcode device names.** Every check names `rtr-us5`, `rtr-hq` or
-   `rtr-branch`. A genuinely new device produces `status="error"` for every
-   check — correct under F-4, but it means the first real config anyone uploads
-   yields no analysis. #29.
+1. **Policy-based analyses hardcode device names.** Every policy statement,
+   guarantee and route assertion names `rtr-us5`, `rtr-hq` or `rtr-branch`, so
+   an unfamiliar snapshot reports `status="error"` for each — correct under
+   F-4, but measured at 8 of 9 findings on `routing-secure` and 10 of 10 on a
+   converted PF Sense config.
+
+   **The universal analyses are unaffected.** `filterLineReachability` and
+   `undefinedReferences` need no policy and work on any config today; they
+   found five dead rules in Batfish's own example network. So an unknown
+   upload is not producing nothing — it is producing something real, buried
+   under "could not check" cards. #29.
 2. **Parse strictness is absolute.** Any status other than `PASSED` stops the
    run. Safe for test configs; likely too strict for real ones. It is also
    currently the only thing catching a mis-converted PF Sense config.
@@ -120,7 +137,8 @@ on the shapes proposal.
 ## Numbers
 
 ```
-11 pull requests merged        53 commits on main
+14 pull requests merged        59 commits on main
 47 tests, ~1.5s, no Batfish or Ollama needed
 3 of 5 checks registered       CI green on 3.12 and 3.13
+6 stories delivered            the product runs end to end
 ```
