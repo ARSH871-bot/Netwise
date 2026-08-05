@@ -20,6 +20,13 @@ snapshots/
 *.xml            # PF Sense exports
 *.pfsense
 
+# US-10 stages an uploaded config here so Batfish can read it. The extension
+# rules above cover .cfg/.conf, but .txt is also an accepted upload type and is
+# NOT matched by anything else -- a real client config saved as .txt would
+# otherwise sit untracked in the working tree waiting for `git add .`.
+# Anchored to web/ because that is the only place the app writes.
+/web/uploaded_configs/
+
 # --- Test fixtures: the ONE allowed exception ------------------------------
 # Synthetic configs WE invented, used to test our own code. These are not
 # client data -- nobody's real network is described by them -- so committing
