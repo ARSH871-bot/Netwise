@@ -7,21 +7,23 @@ RUN IT
 
 Run from the repository root, so `analysis` and `web` both import.
 
-WHAT THIS SERVES TODAY
-    Mock F-1 findings, from web/mock_findings.py. The analysis pipeline is NOT
-    wired in yet -- that is deliberate, and marked with a single TODO below.
-    The dashboard is being built first, against the shape the pipeline already
-    returns, so the two can be joined by changing one function.
+WHAT THIS SERVES (US-10)
+    Before any upload: mock F-1 findings from web/mock_findings.py, so the
+    dashboard has something to render on a fresh start.
+    After an upload:  real findings from analysis.pipeline.analyse().
+
+    The shape is identical either way, which is why the frontend needed no
+    changes when the pipeline was wired in.
 
 THE SEAM
-    analysis.pipeline.analyse(config_dir) -> list[dict] is the whole backend
-    API. It already returns the F-1 list this file hands to the frontend, and
-    it does not raise for operational failures -- an unreachable Batfish or an
-    unparseable config come back AS findings with status="error". So wiring it
-    up is a substitution, not a redesign, and the error path needs no extra
-    code here: it is already findings the dashboard knows how to render.
+    analysis.pipeline.analyse(snapshot_dir) -> list[dict] is the whole backend
+    API. It does not raise for operational failures -- an unreachable Batfish
+    or an unparseable config come back AS findings with status="error". So the
+    error path needs no extra code here: it is already findings the dashboard
+    knows how to render, which is exactly the F-4 guarantee end to end.
 """
 
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -29,6 +31,7 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from analysis import pipeline as analysis_pipeline
 from web import mock_findings
 
 # --- Upload validation rules ------------------------------------------------
@@ -76,6 +79,33 @@ CHUNK_BYTES = 64 * 1024
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+# --- Where an uploaded config is staged for analysis ------------------------
+#
+# The layout matters, and getting it wrong is the single most common way to end
+# up with a silently empty snapshot. Batfish wants the device files one level
+# down from the snapshot root, in a `configs/` subfolder:
+#
+#     uploaded_configs/          <- CONFIG_ROOT
+#       current/                 <- SNAPSHOT_DIR   ** this is what analyse() gets **
+#         configs/               <- CONFIGS_DIR
+#           device.cfg           <- the uploaded file
+#
+# analysis.pipeline.load_snapshot checks for that `configs/` subfolder and
+# raises if it is missing, so passing the wrong level fails loudly rather than
+# analysing nothing and reporting all clear.
+CONFIG_ROOT = Path(__file__).parent / "uploaded_configs"
+SNAPSHOT_NAME = "current"
+SNAPSHOT_DIR = CONFIG_ROOT / SNAPSHOT_NAME
+CONFIGS_DIR = SNAPSHOT_DIR / "configs"
+
+# Has a config been uploaded in this process? Until one has, /api/findings
+# serves mock data, because there is genuinely nothing to analyse yet.
+#
+# Module-level state is only defensible because this is a single-user local
+# tool. Two people uploading at once would overwrite each other's snapshot.
+# If Netwise ever serves more than one user, this becomes per-session state.
+_uploaded: bool = False
+
 app = FastAPI(
     title="Netwise",
     description=(
@@ -97,15 +127,16 @@ def index() -> FileResponse:
 def get_findings() -> List[Dict[str, Any]]:
     """Return the current findings, in the F-1 format.
 
-    Today these are mocks. The response SHAPE is the real contract, so the
-    frontend built against it will not change when the pipeline is wired in.
+    Serves mock data until a config has been uploaded, then calls the real
+    pipeline. The response shape is identical either way, including
+    status="error" findings when analysis cannot run at all.
 
-    TODO (wire-up story): replace the return below with
-        return analysis.pipeline.analyse(uploaded_config_dir)
-    That function already returns this exact shape, including status="error"
-    findings when it cannot run at all.
+    Note SNAPSHOT_DIR, not CONFIG_ROOT: analyse() wants the snapshot root, the
+    folder that CONTAINS `configs/`. See the layout diagram at the top.
     """
-    return mock_findings.get_mock_findings()
+    if not _uploaded:
+        return mock_findings.get_mock_findings()
+    return analysis_pipeline.analyse(SNAPSHOT_DIR, snapshot_name=SNAPSHOT_NAME)
 
 
 @app.post("/api/upload")
@@ -159,8 +190,11 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
         )
 
     # Read in chunks and stop as soon as the limit is passed, rather than
-    # trusting a Content-Length header the client controls.
+    # trusting a Content-Length header the client controls. The bytes are
+    # accumulated as we go so the file can be staged once it has passed every
+    # check -- nothing touches disk until we know we want it.
     size = 0
+    contents = bytearray()
     while chunk := await file.read(CHUNK_BYTES):
         size += len(chunk)
         if size > MAX_UPLOAD_BYTES:
@@ -173,20 +207,39 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
                     "is this definitely a config file?"
                 ),
             )
+        contents.extend(chunk)
 
     if size == 0:
         raise HTTPException(
             status_code=400, detail=f"'{display_name}' is empty."
         )
 
+    # --- Stage the file for analysis ---------------------------------------
+    #
+    # The previous upload is removed first, so a snapshot only ever contains
+    # the config currently being analysed. Leaving an old device file behind
+    # would silently mix two networks into one model.
+    #
+    # The filename is OURS ("device" plus the validated extension), never the
+    # client's. display_name was already reduced to a basename above; this
+    # means the client's string never reaches the filesystem at all.
+    if CONFIGS_DIR.exists():
+        shutil.rmtree(CONFIGS_DIR)
+    CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
+
+    staged_path = CONFIGS_DIR / f"device{extension}"
+    staged_path.write_bytes(bytes(contents))
+
+    global _uploaded
+    _uploaded = True
+
     return {
         "filename": display_name,
         "size_bytes": size,
         "accepted": True,
-        # Said plainly so the dashboard never implies an analysis has happened.
         "message": (
-            f"'{display_name}' accepted ({size:,} bytes). Analysis is not "
-            "connected yet -- the findings below are sample data."
+            f"'{display_name}' accepted ({size:,} bytes) and staged for "
+            "analysis. Refresh findings to see real results."
         ),
     }
 
