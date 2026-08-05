@@ -54,6 +54,29 @@ FINDING IDS (agreed -- see docs/policy-rules.md §4)
     POL-1 is always PC-001, POL-2 always PC-002. So a given id means the same
     thing on every run, which is what will let the dashboard show what changed
     since the previous upload. A retired rule's number is never reused.
+
+    ONE RULE CAN PRODUCE TWO FINDINGS, so it needs two numbers. A rule with
+    several query arms can have one arm prove a violation while another fails
+    to run -- both facts are true and both are reported (see PARTIAL CHECKS).
+    They cannot share an id: `duplicate_id_findings()` in the pipeline would
+    correctly flag that as a broken contract. So each rule owns two slots:
+
+        violation   -> PC-00n              (n = rule number)
+        check error -> PC-0(n + 50)        ERROR_NUMBER_OFFSET
+
+    POL-2 violated and partly unchecked therefore gives PC-002 and PC-052.
+    The offset caps the policy at 49 rules, which is far more than we have.
+
+PARTIAL CHECKS -- why a rule reports a violation AND an error (issue #22)
+    The first version wrapped a rule's whole query loop in one try, so if arm A
+    proved a violation and arm B then raised, the proven violation was thrown
+    away and the user saw only "could not check".
+
+    That is the wrong trade for a security tool. A PROVEN finding outranks the
+    fact that a second query failed, and replacing it with "we don't know"
+    reads as LESS alarming than the truth -- the same class of mistake as
+    confusing `none` with `error`. Each arm is now isolated, so what was proved
+    is reported as proved, and what could not be reached is reported separately.
 """
 
 from typing import Any, Dict, List
@@ -71,6 +94,12 @@ ACTION_BY_KIND = {
     "prohibition": "permit",  # find forbidden traffic that IS allowed
     "requirement": "deny",  # find required traffic that IS blocked
 }
+
+# A rule that both proves a violation and fails to run one of its query arms
+# emits TWO findings, which need two ids. Errors sit in their own band, offset
+# from the rule number: POL-2 -> PC-002 for the violation, PC-052 for the error.
+# See the FINDING IDS section of the module docstring.
+ERROR_NUMBER_OFFSET = 50
 
 # --- The policy being asserted ----------------------------------------------
 #
@@ -238,49 +267,75 @@ def run(bf: Session) -> List[Dict[str, Any]]:
         filter_name = rule["filter"]
         action = ACTION_BY_KIND[rule["kind"]]
 
-        try:
-            # Every query for this rule. They describe one space between them,
-            # so their results are pooled: a hit in any arm violates the rule.
-            hits: List[Any] = []
-            for headers in rule["queries"]:
+        # Each arm is isolated. The arms describe ONE space between them, so a
+        # hit in any of them violates the rule -- but a failure in one must not
+        # discard what another one proved. See issue #22 and the PARTIAL CHECKS
+        # note in the module docstring.
+        hits: List[Any] = []
+        failures: List[Exception] = []
+        for headers in rule["queries"]:
+            try:
                 hits.extend(_search(bf, node, filter_name, action, headers))
-        except Exception as error:
-            # We could not ask -- a renamed ACL, a missing node, a malformed
-            # header. We are blind for this rule, so it is an error, NOT a pass.
+            except Exception as error:
+                failures.append(error)
+
+        if hits:
+            results.append(
+                findings.make_finding(
+                    check=CHECK_NAME,
+                    severity=rule["severity"],
+                    device=node,
+                    summary=rule["violation_summary"],
+                    detail=_describe(rule, hits),
+                    # searchFilters names the matching LINE but not its line
+                    # NUMBER, so device:filter is the most precise source it can
+                    # give us. (definedStructures does return real file:line
+                    # locations; using it would mean a second query per finding,
+                    # and was left out to keep this readable.)
+                    source=f"{node}:{filter_name}",
+                    status="found",
+                    number=rule["number"],
+                )
+            )
+
+        if failures:
+            # We could not ask one of the questions -- a renamed ACL, a missing
+            # node, a malformed header. We are blind for that part of the rule,
+            # so it is an error, NOT a pass, whether or not the arms that DID
+            # run found anything.
+            #
+            # The wording distinguishes the two cases deliberately. "Partly
+            # unchecked" alongside a violation is a different claim from "could
+            # not check" on its own, and a user who reads only the summary
+            # should not have to infer which one they are looking at.
+            if hits:
+                summary = f"Policy rule only partly checked: {rule['description'].lower()}"
+            else:
+                summary = f"Could not check policy rule: {rule['description'].lower()}"
+
+            detail = findings.describe_error(failures[0])
+            if len(rule["queries"]) > 1:
+                detail = (
+                    f"{len(failures)} of {len(rule['queries'])} queries for this "
+                    f"rule could not run. First failure: {detail}"
+                )
+
             results.append(
                 findings.error_finding(
                     check=CHECK_NAME,
                     device=node,
-                    summary=f"Could not check policy rule: {rule['description'].lower()}",
-                    detail=findings.describe_error(error),
+                    summary=summary,
+                    detail=detail,
                     source=f"{node}:{filter_name}",
-                    number=rule["number"],
+                    # Its own id band, so a rule reporting BOTH findings cannot
+                    # collide with itself. See ERROR_NUMBER_OFFSET.
+                    number=rule["number"] + ERROR_NUMBER_OFFSET,
                 )
             )
-            continue
 
-        if not hits:
-            # Nothing anywhere in the searched space behaves the forbidden way.
-            # The rule holds. Nothing to report.
-            continue
-
-        results.append(
-            findings.make_finding(
-                check=CHECK_NAME,
-                severity=rule["severity"],
-                device=node,
-                summary=rule["violation_summary"],
-                detail=_describe(rule, hits),
-                # searchFilters names the matching LINE but not its line NUMBER,
-                # so device:filter is the most precise source it can give us.
-                # (definedStructures does return real file:line locations; using
-                # it would mean a second query per finding, and was left out to
-                # keep this readable. Noted as a possible improvement.)
-                source=f"{node}:{filter_name}",
-                status="found",
-                number=rule["number"],
-            )
-        )
+        # Neither hits nor failures means every arm ran and nothing in the
+        # searched space behaves the forbidden way. The rule holds; report
+        # nothing, and the all-clear below covers it.
 
     # Only claim "all clear" if every rule was actually checked and held. If any
     # rule errored, results is non-empty and the error is what the user sees.
