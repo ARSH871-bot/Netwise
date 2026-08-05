@@ -262,3 +262,114 @@ def test_a_crashing_check_does_not_leak_the_server_log(monkeypatch):
     assert results[0]["status"] == "error"
     assert len(detail) <= 200, f"evidence.detail is {len(detail)} chars"
     assert "NetworkSnapshot" not in detail
+
+
+# ---------------------------------------------------------------------------
+# The post-processor stage.
+#
+# A post-processor sees the combined findings rather than a Batfish session --
+# the second of the three shapes in docs/design/pipeline-feature-shapes.md.
+# It may re-rate, re-order and annotate. It may NOT bury a blind spot or drop
+# a finding, and those two limits were conditions of adopting the shape.
+#
+# They are tested rather than trusted. A rule that lives only in a document is
+# a rule that holds until someone is in a hurry.
+# ---------------------------------------------------------------------------
+
+
+def _mixed_results():
+    return [
+        a_finding("access_control", 1),                      # AC-001 found/high
+        a_finding("routing", 0, status="error"),             # RT-000 error/high
+    ]
+
+
+def test_no_post_processors_leaves_findings_untouched(monkeypatch):
+    from analysis import pipeline
+
+    monkeypatch.setattr(pipeline, "POST_PROCESSORS", {})
+    results = _mixed_results()
+    assert pipeline.run_post_processors([dict(f) for f in results]) == results
+
+
+def test_a_post_processor_may_rerate_a_found_finding(monkeypatch):
+    """Re-rating a real problem is exactly what risk prioritisation is for."""
+    from analysis import pipeline
+
+    def demote_found(results):
+        for f in results:
+            if f["status"] == "found":
+                f["severity"] = "low"
+        return results
+
+    monkeypatch.setattr(pipeline, "POST_PROCESSORS", {"risk": demote_found})
+    out = pipeline.run_post_processors(_mixed_results())
+
+    ac = next(f for f in out if f["id"] == "AC-001")
+    assert ac["severity"] == "low", "a found finding may be re-rated freely"
+    assert not any("downgraded" in f["summary"] for f in out)
+
+
+def test_downgrading_an_error_finding_is_undone_and_reported(monkeypatch):
+    """The carve-out: a blind spot must not be quietly filed below the fold."""
+    from analysis import pipeline
+
+    def bury_the_error(results):
+        for f in results:
+            if f["status"] == "error":
+                f["severity"] = "low"
+        return results
+
+    monkeypatch.setattr(pipeline, "POST_PROCESSORS", {"risk": bury_the_error})
+    out = pipeline.run_post_processors(_mixed_results())
+
+    rt = next(f for f in out if f["id"] == "RT-000")
+    assert rt["severity"] == "high", "the error finding's severity must be restored"
+
+    complaints = [f for f in out if "downgraded a blind spot" in f["summary"]]
+    assert len(complaints) == 1
+    assert complaints[0]["status"] == "error"
+    assert "RT-000" in complaints[0]["evidence"]["detail"]
+
+
+def test_dropping_a_finding_is_undone_and_reported(monkeypatch):
+    """Removing a finding is the same lie as never producing it."""
+    from analysis import pipeline
+
+    monkeypatch.setattr(
+        pipeline, "POST_PROCESSORS",
+        {"risk": lambda results: [f for f in results if f["status"] != "error"]},
+    )
+    out = pipeline.run_post_processors(_mixed_results())
+
+    assert any(f["id"] == "RT-000" for f in out), "the dropped finding must be restored"
+    complaints = [f for f in out if "dropped a finding" in f["summary"]]
+    assert len(complaints) == 1
+    assert "RT-000" in complaints[0]["evidence"]["detail"]
+
+
+def test_a_crashing_post_processor_becomes_an_error_finding(monkeypatch):
+    """Same isolation the checks get: one stage failing must not lose the rest."""
+    from analysis import pipeline
+
+    def explodes(results):
+        raise RuntimeError("boom\n" + "noise\n" * 50)
+
+    monkeypatch.setattr(pipeline, "POST_PROCESSORS", {"risk": explodes})
+    out = pipeline.run_post_processors(_mixed_results())
+
+    assert any(f["id"] == "AC-001" for f in out), "original findings survive"
+    failure = next(f for f in out if "failed to run" in f["summary"])
+    assert failure["status"] == "error"
+    assert len(failure["evidence"]["detail"]) <= 200, "no server log in evidence.detail"
+
+
+def test_a_post_processor_may_add_findings(monkeypatch):
+    from analysis import pipeline
+
+    def annotate(results):
+        return results + [a_finding("risk", 1)]
+
+    monkeypatch.setattr(pipeline, "POST_PROCESSORS", {"risk": annotate})
+    out = pipeline.run_post_processors(_mixed_results())
+    assert any(f["id"] == "RK-001" for f in out)
