@@ -25,27 +25,40 @@ WHAT THIS IS NOT
     makes the current design usable in the meantime; it does not fix it.
 """
 
-from typing import Any, Set
+from typing import Any, Optional, Set
 
 from pybatfish.client.session import Session
 
 
-def device_names(bf: Session) -> Set[str]:
-    """Every device Batfish found in the loaded snapshot.
+def device_names(bf: Session) -> Optional[Set[str]]:
+    """Every device Batfish found in the loaded snapshot, or None if unknown.
 
     Read from `fileParseStatus`, which lists the nodes each config file
     defined. That is the same source `access_control` already uses to map a
     file back to a device, so it adds no new dependency.
 
-    Returns an empty set if the question cannot be answered. Callers must treat
-    "I do not know what is here" the same as "the device is absent" -- reporting
-    that a check could not run. Guessing the other way would let a real blind
-    spot pass as a clean result.
+    RETURNS None -- NOT AN EMPTY SET -- WHEN THE QUESTION CANNOT BE ANSWERED
+        These are different facts, and a caller must be able to tell them
+        apart:
+
+            set()   we know what is in this snapshot, and it is nothing
+            None    we could not find out what is in this snapshot
+
+        Both must lead to reporting that a check could not run, so the SAFETY
+        outcome is identical either way. What differs is what a caller may then
+        SAY. "rtr-us5 is not in this snapshot" is a claim ABOUT the snapshot,
+        and making it after this function failed asserts something nobody
+        observed -- sending a reader to look for a missing device when the real
+        fault was a broken Batfish query.
+
+        An earlier version of this returned an empty set for both cases and
+        produced exactly that false message. Caught in review of #45,
+        independently, by two people.
     """
     try:
         frame = bf.q.fileParseStatus().answer().frame()
     except Exception:
-        return set()
+        return None
 
     names: Set[str] = set()
     for _, row in frame.iterrows():

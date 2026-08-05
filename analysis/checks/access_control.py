@@ -144,37 +144,68 @@ def run(bf: Session) -> List[Dict[str, Any]]:
     # F-4 exists to prevent, and a device may be absent because someone forgot
     # to upload it.
     present = snapshot.device_names(bf)
-    policy = [s for s in POLICY if s["node"] in present]
-    guarantees = [g for g in GUARANTEES if g["node"] in present]
-    absent = sorted(
-        {s["node"] for s in POLICY if s["node"] not in present}
-        | {g["node"] for g in GUARANTEES if g["node"] not in present}
-    )
-
+    total = len(POLICY) + len(GUARANTEES)
     results: List[Dict[str, Any]] = []
-    if absent:
-        skipped = (len(POLICY) - len(policy)) + (len(GUARANTEES) - len(guarantees))
+
+    if present is None:
+        # We could not find out what is in this snapshot. Note what this does
+        # NOT say: it does not claim the devices are absent, because we have
+        # not observed that. Saying so would send a reader looking for a
+        # missing device when the real fault was a broken Batfish query -- the
+        # same mistake routing.py fixed in 6d7c769, where a hardcoded summary
+        # blamed a missing route for what was actually a deny rule.
+        policy, guarantees = [], []
         results.append(
             findings.error_finding(
                 check=CHECK_NAME,
-                device=absent[0] if len(absent) == 1 else "unknown",
+                device="unknown",
                 summary=(
-                    f"{skipped} access policy statement(s) could not be checked "
+                    f"{total} access policy statement(s) could not be checked "
                     "against this config"
                 ),
                 detail=(
-                    "They are written about "
-                    + ", ".join(absent)
-                    + ", which "
-                    + ("is" if len(absent) == 1 else "are")
-                    + " not in this snapshot. Nothing is claimed about them "
-                    "either way. The analyses that need no policy -- dead rules "
-                    "and undefined references -- still ran."
+                    "The devices present in this snapshot could not be "
+                    "determined, so we cannot tell whether these statements "
+                    "apply to it. Nothing is claimed about them either way. "
+                    "The analyses that need no policy -- dead rules and "
+                    "undefined references -- still ran."
                 ),
                 source="analysis/checks/access_control.py",
                 number=next(numbering),
             )
         )
+    else:
+        policy = [s for s in POLICY if s["node"] in present]
+        guarantees = [g for g in GUARANTEES if g["node"] in present]
+        absent = sorted(
+            {s["node"] for s in POLICY if s["node"] not in present}
+            | {g["node"] for g in GUARANTEES if g["node"] not in present}
+        )
+        if absent:
+            skipped = (len(POLICY) - len(policy)) + (len(GUARANTEES) - len(guarantees))
+            results.append(
+                findings.error_finding(
+                    check=CHECK_NAME,
+                    # Safe here in a way it is not above: we know what is
+                    # present, so naming the missing device is an observation.
+                    device=absent[0] if len(absent) == 1 else "unknown",
+                    summary=(
+                        f"{skipped} access policy statement(s) could not be checked "
+                        "against this config"
+                    ),
+                    detail=(
+                        "They are written about "
+                        + ", ".join(absent)
+                        + ", which "
+                        + ("is" if len(absent) == 1 else "are")
+                        + " not in this snapshot. Nothing is claimed about them "
+                        "either way. The analyses that need no policy -- dead rules "
+                        "and undefined references -- still ran."
+                    ),
+                    source="analysis/checks/access_control.py",
+                    number=next(numbering),
+                )
+            )
 
     results.extend(_check_policy_statements(bf, numbering, policy))
     results.extend(_check_guarantees(bf, numbering, guarantees))
