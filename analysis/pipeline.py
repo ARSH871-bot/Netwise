@@ -141,7 +141,7 @@ def run_check(bf: Session, name: str) -> List[Dict[str, Any]]:
             findings.error_finding(
                 check=name,
                 summary=f"The {name.replace('_', ' ')} check failed to run",
-                detail=f"{type(error).__name__}: {error}",
+                detail=findings.describe_error(error),
                 source="analysis/checks/" + name + ".py",
             )
         ]

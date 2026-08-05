@@ -252,7 +252,7 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                     check=CHECK_NAME,
                     device=node,
                     summary=f"Could not check policy rule: {rule['description'].lower()}",
-                    detail=f"Batfish could not answer this query: {error}",
+                    detail=findings.describe_error(error),
                     source=f"{node}:{filter_name}",
                     number=rule["number"],
                 )
