@@ -114,10 +114,21 @@ Batfish runs in Docker container `batfish` (image `batfish/allinone`), exposing
 
 - Start with **Cisco IOS** — natively supported, and Batfish ships example
   networks with ready-to-use Cisco configs for development.
-- The client's real firewall is **PF Sense**, which exports XML. Batfish does
-  not support PF Sense XML natively, so those configs need converting. This is
-  a known hard problem — **timebox it** and fall back to supported-vendor
-  sample configs if it stalls.
+- The client's real firewall is **PF Sense**, which exports XML that Batfish
+  cannot read at all. `analysis/pfsense_convert.py` translates it into Cisco
+  IOS text, so a converted config re-enters the same `analyse()` as everything
+  else. Interfaces and filter rules are covered; NAT, aliases, DHCP, VPN, IPv6
+  and combined `tcp/udp` rules are not, and each raises rather than guessing.
+
+  **Read this before showing the client their own config.** PF Sense evaluates
+  rules *last-match-wins* unless a rule is marked "quick"; the converter treats
+  them as *first-match-wins*, like a Cisco ACL. Our fixture is written so both
+  models agree, so the tests cannot catch the difference. A real export that
+  relies on last-match semantics between overlapping rules **converts to
+  something that parses cleanly and decides differently from the real
+  firewall** — findings would be confidently wrong about a network that does
+  not behave that way. Tracked as an open risk, not a bug: see the module
+  docstring and the linked issue.
 
 ## 7a. The finding format (F-1) — the one contract
 

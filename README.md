@@ -52,6 +52,7 @@ invents network behaviour.
 | Routing analysis | **Built** |
 | AI explanation layer | **Built** — explains a finding in plain English; answering typed questions is still to come |
 | Web dashboard + upload | **Built** — upload a config, get real findings |
+| PF Sense conversion | **Built** — interfaces and filter rules; see the caveat in `analysis/pfsense_convert.py` |
 | Risk prioritisation | Not started |
 | Change-impact analysis | Not started |
 
@@ -113,7 +114,7 @@ pytest tests/ -v
 
 | Path | Contents |
 |---|---|
-| `analysis/` | Batfish orchestration — the pipeline, the finding format, one module per check |
+| `analysis/` | Batfish orchestration — the pipeline, the finding format, one module per check, and the PF Sense converter |
 | `ai/` | Local LLM layer — `explain.py` turns a finding into plain English; `Modelfile` defines the model it calls |
 | `web/` | FastAPI backend and dashboard frontend |
 | `tests/` | Test suite, plus synthetic configs used as fixtures |
@@ -135,7 +136,7 @@ python -m analysis.pipeline <folder>
 ```
 
 The folder is the snapshot root; device files live one level down, in a
-`configs/` subfolder inside it. Six synthetic examples are included, each
+`configs/` subfolder inside it. Seven synthetic examples are included, each
 demonstrating something different:
 
 | Fixture | What it demonstrates |
@@ -146,6 +147,7 @@ demonstrating something different:
 | `routing-secure` | Two routers with a working route between them |
 | `routing-missing-route` | The same pair with the route removed |
 | `unparseable` | A file Batfish cannot read — reports an error, not a clean result |
+| `pfsense-source` | A PF Sense `config.xml`, for the converter rather than the pipeline |
 
 All live under `tests/fixtures/`.
 
