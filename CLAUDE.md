@@ -274,7 +274,8 @@ is **settled**: the team agreed F-1 (see §7a). Do not reopen it casually.
 | `routing` check | Ankeet | Done — `traceroute`-based reachability, two-router fixtures |
 | **AI explanation layer** | Ankeet | Done — `ai/explain.py` + `ai/Modelfile` (Warden, local Ollama). Explains one finding; the natural-language-question direction is not started |
 | Dashboard + secure upload | Samika | Done — real findings on screen since #39 |
-| Test suite | team | 47 tests, needing neither Batfish nor Ollama |
+| PF Sense conversion | Ankeet | Done — `analysis/pfsense_convert.py`. **Read the rule-order caveat in §7** before using it on a real export |
+| Test suite | team | Needs neither Batfish nor Ollama. For the count, run it — a number written here rots the next time anyone adds a test |
 
 ### What is NOT built
 
