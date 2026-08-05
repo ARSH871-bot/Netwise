@@ -191,5 +191,37 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     }
 
 
+class NoCacheStatic(StaticFiles):
+    """Serve static files with `Cache-Control: no-cache`, so browsers revalidate.
+
+    WHY THIS EXISTS
+        Starlette's StaticFiles sends ETag and Last-Modified but no
+        Cache-Control. With no explicit directive a browser falls back to
+        HEURISTIC freshness -- roughly 10% of the age since Last-Modified --
+        and serves the file from cache WITHOUT revalidating. The ETag is never
+        checked, so an edited app.js or style.css simply does not arrive.
+
+        We lost real time to this. A change to the finding-card renderer was
+        correct on disk, correct in the served bytes, and correct in a fresh
+        browser, while the developer's browser kept running the previous
+        script. A stale asset presents exactly like a bug in code that has
+        nothing wrong with it, and there is no message anywhere saying so.
+
+    WHY no-cache AND NOT no-store
+        "no-cache" means "you may keep it, but revalidate before using it". The
+        ETag above then makes revalidation cheap: unchanged files come back 304
+        with no body. "no-store" would forbid caching entirely and re-download
+        every asset on every request, which is slower for no added safety.
+
+    NOTE the args passthrough: file_response()'s signature has changed between
+    Starlette releases, so this deliberately does not restate it.
+    """
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Any:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 # Mounted last so it cannot shadow the API routes above.
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/static", NoCacheStatic(directory=STATIC_DIR), name="static")
