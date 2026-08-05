@@ -159,7 +159,15 @@ def test_guard_output_is_a_valid_f1_finding():
 
 
 def test_batfish_unreachable_still_guards_ids(monkeypatch):
-    """All five checks registered + Batfish down -> the PC-000 pair is reported."""
+    """Every check name in play + Batfish down -> the PC-000 pair is reported.
+
+    Registers all five names from VALID_CHECKS to force the collision. That is
+    test setup, not a claim about the architecture: `change_impact` will never
+    be a CHECKS entry (see docs/design/pipeline-feature-shapes.md). The
+    collision it exercises is still real, because change_impact findings still
+    carry the `PC-` prefix and will meet policy_compliance findings wherever
+    the two lists are shown together.
+    """
     from analysis import pipeline
 
     # Register every check name. The functions are never called on this path,

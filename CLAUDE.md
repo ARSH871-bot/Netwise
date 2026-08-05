@@ -173,6 +173,15 @@ are the single exception to the no-configs-in-git rule, because we invented
 them and they describe nobody's real network. Real configs stay in the ignored
 `configs/` folder.
 
+**Two features are NOT checks**, and `analysis/checks/` says so too:
+`change_impact` needs two snapshots and becomes `analyse_change(before, after)`;
+`risk` needs the combined findings and becomes a post-processor. Neither goes
+in `CHECKS`. See `docs/design/pipeline-feature-shapes.md`.
+
+CI (`.github/workflows/tests.yml`) runs the suite on every pull request, on
+Python 3.12 and 3.13. It cannot block a merge — branch protection needs GitHub
+Pro or a public repo — so a red cross is a signal rather than a gate.
+
 ## 8. Repository layout
 
 **What each folder is _for_. Deliberately no build status here** — that lives in

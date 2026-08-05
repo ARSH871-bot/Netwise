@@ -1,9 +1,11 @@
 # Proposal: three shapes for pipeline features
 
-**Status:** PROPOSAL — for team decision. Nothing is built against this yet.
+**Status:** Agreed by three of four members — see the sign-off table in §7.
 **Raised by:** Arsh (pipeline owner)
 **Needs:** all four, because it changes what "add your check" means.
-**Blocking:** Samika's severity ruleset cannot be written until this is settled.
+**Outstanding:** Shubham's signature. Until it lands, this is not adopted, and
+that one row is what blocks `change_impact` (#30), `risk` (#12), and the
+post-processor stage in `pipeline.py`.
 
 ---
 
