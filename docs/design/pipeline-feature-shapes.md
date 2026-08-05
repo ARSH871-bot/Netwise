@@ -1,11 +1,14 @@
 # Proposal: three shapes for pipeline features
 
-**Status:** Agreed by three of four members — see the sign-off table in §7.
+**Status:** **ADOPTED** — all four rows in §7 are ticked. Build against these shapes.
 **Raised by:** Arsh (pipeline owner)
-**Needs:** all four, because it changes what "add your check" means.
-**Outstanding:** Shubham's signature. Until it lands, this is not adopted, and
-that one row is what blocks `change_impact` (#30), `risk` (#12), and the
-post-processor stage in `pipeline.py`.
+**Needed:** all four, because it changes what "add your check" means.
+**Was blocking:** Samika's severity ruleset, `change_impact`, and the
+post-processor stage. All three are now unblocked.
+
+> Adoption settles the three *shapes*. It does **not** answer the four open
+> questions in §6, and it does not make the `docs/finding-format.md:36` wording
+> change — that is an F-1 edit still needing all four members separately.
 
 ---
 
@@ -186,7 +189,7 @@ against these shapes until every row is ticked.
 |---|---|---|
 | **Arsh** | Author; owns `pipeline.py`, implements the post-processor stage and the `analyse_change` entry point | ✅ |
 | **Ankeet** | `routing` stays a producer, unaffected — confirmed on review of #20 | ✅ |
-| **Shubham** | `change_impact` becomes a separate entry point rather than a `CHECKS` entry | ⬜ |
+| **Shubham** | `change_impact` becomes a separate entry point rather than a `CHECKS` entry | ✅ |
 | **Samika** | `risk` becomes a post-processor; unblocks her severity ruleset | ✅ |
 
 Adopting this also implies one wording change to `docs/finding-format.md:36`
