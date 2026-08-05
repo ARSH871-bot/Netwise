@@ -136,6 +136,17 @@ AI layer later rephrases.
 
 ### 4. `searchFilters` — an empty result is a proof
 
+The query, so this is reproducible rather than just reported:
+
+```python
+bf.q.searchFilters(
+    nodes="rtr-with-acl", filters="acl_in", action="permit",
+    headers=HeaderConstraints(srcIps="11.36.216.170",
+                              dstIps="11.36.216.169",
+                              ipProtocols=["udp"]),
+).answer().frame()
+```
+
 ```
 rows returned: 0   (no UDP flow in this space is permitted)
 ```
