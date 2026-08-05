@@ -1,0 +1,87 @@
+<?xml version="1.0"?>
+<!--
+Netwise test fixture: SYNTHETIC. Not a real client export.
+
+Note for anyone editing this file: XML comments cannot contain a double
+hyphen anywhere in their text, only at the delimiters, so this file uses a
+colon or comma instead of the double hyphen used elsewhere in this codebase.
+
+A minimal PF Sense config.xml, shaped to match real PF Sense's actual export
+schema (interfaces keyed by role, filter rules with pass/block, source and
+destination each expressed as a network reference, a host address, or "any").
+
+Deliberately describes the SAME policy as tests/fixtures/rtr-us5-secure's
+Cisco config: the LAN may look up DNS on one approved server and reach one
+internal server over HTTPS, everything else is denied. That overlap is
+intentional, it means analysis/pfsense_convert.py's output can be checked
+against a scenario every existing check (access_control, policy_compliance)
+already has a documented, verified opinion about, rather than inventing a
+new policy nobody has reasoned about before.
+-->
+<pfsense>
+  <version>21.05</version>
+  <system>
+    <hostname>pfsense-us5</hostname>
+    <domain>netwise.local</domain>
+  </system>
+  <interfaces>
+    <wan>
+      <if>em0</if>
+      <descr>WAN</descr>
+      <ipaddr>203.0.113.1</ipaddr>
+      <subnet>29</subnet>
+    </wan>
+    <lan>
+      <if>em1</if>
+      <descr>LAN</descr>
+      <ipaddr>10.10.10.1</ipaddr>
+      <subnet>24</subnet>
+    </lan>
+  </interfaces>
+  <filter>
+    <rule>
+      <tracker>1000000001</tracker>
+      <type>pass</type>
+      <interface>lan</interface>
+      <ipprotocol>inet</ipprotocol>
+      <protocol>udp</protocol>
+      <source>
+        <network>lan</network>
+      </source>
+      <destination>
+        <address>218.8.104.58</address>
+        <port>53</port>
+      </destination>
+      <descr>Allow DNS to the approved resolver</descr>
+    </rule>
+    <rule>
+      <tracker>1000000002</tracker>
+      <type>pass</type>
+      <interface>lan</interface>
+      <ipprotocol>inet</ipprotocol>
+      <protocol>tcp</protocol>
+      <source>
+        <network>lan</network>
+      </source>
+      <destination>
+        <address>10.20.0.5</address>
+        <port>443</port>
+      </destination>
+      <descr>Allow HTTPS to the internal server</descr>
+    </rule>
+    <rule>
+      <tracker>1000000003</tracker>
+      <type>block</type>
+      <interface>lan</interface>
+      <ipprotocol>inet</ipprotocol>
+      <protocol>any</protocol>
+      <source>
+        <any/>
+      </source>
+      <destination>
+        <any/>
+      </destination>
+      <descr>Default deny -- everything else</descr>
+    </rule>
+  </filter>
+</pfsense>
