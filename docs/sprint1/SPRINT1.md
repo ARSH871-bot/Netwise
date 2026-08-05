@@ -2,8 +2,7 @@
 
 **Status:** Complete
 **Record written:** 2026-07-29
-**Sprint started:** 23 July 2026
-**Sprint ended:** <!-- TODO: end date still needed -->
+**Sprint dates:** 23–29 July 2026
 
 > This record was written retrospectively to bring Sprint 1 into version
 > control. The work itself was done before the repository was populated, using
