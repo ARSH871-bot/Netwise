@@ -49,6 +49,13 @@
   --blind: #d97706;
   --blind-ink: #92400e;
   --blind-fill: #fef3c7;
+
+  /* The AI layer's voice. Violet is deliberately a hue used by NOTHING else
+     here -- not a severity, not a status -- so an explanation can never be
+     misread as a red-high finding or an amber could-not-check. */
+  --ai: #8b5cf6;
+  --ai-ink: #5b21b6;
+  --ai-fill: #f5f3ff;
 }
 
 /* --- Page ---------------------------------------------------------------- */
@@ -332,6 +339,77 @@ body {
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--blind-ink);
+}
+
+/* --- The AI layer's plain-English explanation ----------------------------
+   Sits directly under .evidence, and must not be mistaken for it. Evidence is
+   Batfish's own words -- fact, quoted verbatim. This is a model's paraphrase
+   of those words. Two different kinds of claim, so two different looks:
+
+     .evidence         monospace, tinted PANEL, full border   -- machine output
+     .ai-explanation   proportional prose, left ACCENT only   -- someone talking
+
+   It is also not a warning. .blind-warning is bold amber text with no
+   container; this is regular-weight text in a violet-accented block, so it
+   reads as commentary rather than alarm.
+
+   The ::before label is the important part. Every card already carries
+   Batfish's own evidence; without an explicit byline a reader has no way to
+   tell where the prose came from. Doing it in CSS keeps app.js building
+   exactly one element, so the label can never drift out of sync with the
+   styling that marks this block as AI-authored. */
+.ai-explanation {
+  margin: 0.55rem 0 0;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.83rem;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--ai-fill);
+  border-left: 3px solid var(--ai);
+  border-radius: 0 4px 4px 0;
+}
+
+.ai-explanation::before {
+  content: "AI explanation";
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ai-ink);
+  margin-bottom: 0.15rem;
+}
+
+/* --- The unwired state ---------------------------------------------------
+   THIS MODIFIER IS NOT DECORATION.
+
+   "The model has not run yet" and "the model said this" are different claims,
+   and a dashboard that renders them identically is telling the reader
+   something untrue. It is the same failure as showing status="none" and
+   status="error" the same way, one layer up: an empty slot dressed as a
+   filled one.
+
+   It matters most in the room where it is least checked. In a demo, a solid
+   violet block of confident prose reads as output the system produced. If
+   that prose is in fact a hard-coded string nothing generated, everyone
+   watching has been told the AI layer works.
+
+   So the placeholder is deliberately unfinished-looking: dashed rather than
+   solid, no fill, muted text, and a label that says outright it has not run.
+   Removing this class is the last step of wiring the AI layer up -- if the
+   dashed border is still on screen, the explanation is not real yet. */
+.ai-explanation.placeholder {
+  background: transparent;
+  border-left-style: dashed;
+  border-left-color: var(--line);
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+.ai-explanation.placeholder::before {
+  content: "AI explanation — not generated yet";
+  color: var(--ink-soft);
+  font-style: normal;
 }
 
 .icon {

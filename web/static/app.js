@@ -87,6 +87,32 @@ function renderFinding(finding, variant, icon, badgeText) {
   evidence.appendChild(el("span", "source", finding.evidence.source));
   card.appendChild(evidence);
 
+  // Where the AI layer's plain-English explanation will go, once it exists.
+  //
+  // Gated to status="found" cards on purpose. A status="none" card has nothing
+  // to explain, and a status="error" card has no Batfish output to ground an
+  // explanation IN -- asking a model to write prose about a check that never
+  // ran is exactly the invented-network-behaviour failure constraint 2 forbids.
+  // So the slot only appears where real evidence exists directly above it.
+  //
+  // The "placeholder" modifier is doing real work, not decoration. Once the AI
+  // layer lands, "the model has not run yet" and "the model said this" are two
+  // different claims, and they must not look alike -- the same reasoning that
+  // keeps status="none" and status="error" visually distinct. So the unwired
+  // state is dashed and muted, and wiring it up means dropping the modifier
+  // (and this literal string) rather than restyling anything.
+  if (variant !== "blind" && variant !== "clean") {
+    const explanation = el(
+      "div",
+      "ai-explanation placeholder",
+      "This is a placeholder for the plain-English explanation the AI layer " +
+        "will generate here once it's wired in. Example length: a sentence or " +
+        "two describing what the finding means and why it matters, grounded " +
+        "in the evidence above."
+    );
+    card.appendChild(explanation);
+  }
+
   // Spell it out in words as well as colour. An amber card is a signal; a
   // sentence saying "this is not a clean result" cannot be misread.
   if (variant === "blind") {
