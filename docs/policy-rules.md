@@ -360,29 +360,60 @@ reviewer knows a shared file changed.
 
 ## 5. Verified behaviour against the fixtures
 
-Measured against the live Batfish container, both fixtures loaded as snapshots.
+Measured against the live Batfish container, each fixture loaded as a snapshot.
 
-| Rule | `rtr-us5-secure` | `rtr-us5-insecure` | Matched line (insecure) |
+| Rule | `rtr-us5-secure` | `rtr-us5-insecure` | `rtr-us5-messy` |
 |---|---|---|---|
-| POL-1 | 0 rows → `none` | 1 row → `found` | `permit ip any any` |
-| POL-2 arm A | 0 rows → `none` | 1 row → `found` | `permit ip any any` (UDP flow) |
-| POL-2 arm B | 0 rows → `none` | 1 row → `found` | `permit ip any any` (TCP/80 flow) |
-| POL-3 | 0 rows → `none` | 1 row → `found` | `permit ip any any` |
-| POL-4 | 0 rows → `none` | 0 rows → `none` | — |
-| POL-5 | 0 rows → `none` | 0 rows → `none` | — |
+| POL-1 | `none` | **`found`** | `none` |
+| POL-2 arm A | `none` | **`found`** | `none` |
+| POL-2 arm B | `none` | **`found`** | `none` |
+| POL-3 | `none` | **`found`** | `none` |
+| POL-4 | `none` | `none` | **`found`** |
+| POL-5 | `none` | `none` | **`found`** |
 
-This satisfies the definition of done: the insecure fixture produces `PC-`
+The two insecure columns fail in *opposite directions*, which is the point of
+having both kinds of rule:
+
+- `rtr-us5-insecure` is too **open** — `permit ip any any` — so the three
+  prohibitions fire and the two requirements are satisfied.
+- `rtr-us5-messy` is too **closed** — a blanket `deny ip 10.10.10.0 0.0.0.255
+  any` at the top of the ACL — so the two requirements fire and the three
+  prohibitions correctly stay quiet.
+
+Neither config produces a false positive in the other direction.
+
+This satisfies the definition of done: an insecure fixture produces `PC-`
 findings with `status="found"`, and the secure fixture produces `status="none"`.
 The `unparseable` fixture never reaches the check — `pipeline.py` stops at
 `fileParseStatus` and returns `status="error"` for every registered check.
 
-### Known limitation — the requirement rules are untested in the failing direction
+### Closed — the requirement rules are now proven to fail when they should
 
-POL-4 and POL-5 hold on *both* fixtures, so neither fixture demonstrates that
-they can actually fail. A third fixture — an over-tightened ACL that blocks DNS
-— would prove it. Agreed with Arsh that this is **not needed for US-17**, and
-recorded here deliberately: it belongs in the evaluation report as an honest
-limitation rather than going unmentioned.
+This section previously recorded a limitation: POL-4 and POL-5 held on both
+fixtures, so nothing demonstrated they could actually fire. An assertion never
+observed to fail is weak evidence that it works.
+
+It needed no new fixture. `rtr-us5-messy` — added for the access-control
+dead-rule analyses — puts a blanket `deny ip 10.10.10.0 0.0.0.255 any` at the
+top of `acl_in`, which is exactly the over-tightened config the requirement
+rules exist to catch. Measured:
+
+```
+PC-004  found  DNS to the approved resolver is blocked, so name lookups fail
+        Flow 10.10.10.0:49152->218.8.104.58:53 UDP is denied but policy
+        requires it. Decided by: deny   ip 10.10.10.0 0.0.0.255 any
+
+PC-005  found  HTTPS to the internal server is blocked, so the service is unreachable
+        Flow 10.10.10.0:49152->10.20.0.5:443 TCP (SYN) is denied but policy
+        requires it. Decided by: deny   ip 10.10.10.0 0.0.0.255 any
+```
+
+Both name the exact line responsible. The three prohibitions stay `none` on the
+same config, so tightening the ACL produces no false "too open" report.
+
+That closes the last open question about this check: it is now demonstrated to
+detect a config that is too open *and* one that is too closed, on real
+configs rather than by argument.
 
 ### Note on duplicate findings
 
