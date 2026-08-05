@@ -252,7 +252,146 @@ def analyse(
     for name in names:
         results.extend(run_check(bf, name))
 
+    # --- Then let the post-processors refine the combined list ---------------
+    results = run_post_processors(results)
+
     return _finalise(results)
+
+
+# ---------------------------------------------------------------------------
+# The post-processor stage
+#
+# A post-processor is the second of the three shapes in
+# docs/design/pipeline-feature-shapes.md (adopted, all four signatures). Unlike
+# a check, it does not get a Batfish session -- it gets the COMBINED findings
+# from every check that ran:
+#
+#     def refine(results: list[dict]) -> list[dict]
+#
+# `risk` is the reason this exists. Prioritisation has to see every finding to
+# order them; as a registered check it would receive a Batfish session and be
+# the one check unable to see what it is meant to prioritise.
+#
+# HOW TO ADD ONE (Samika: this is you)
+#     1. Write   def refine(results: list[dict]) -> list[dict]   in your module
+#     2. Add one line to POST_PROCESSORS below
+#     3. Return the full list. Re-rate, re-order and annotate freely --
+#        but read the two guarantees below before you do.
+# ---------------------------------------------------------------------------
+
+POST_PROCESSORS = {
+    # "risk": risk.refine,   # Samika
+}
+
+# Ranked worst-first, so a HIGHER index is a LOWER severity.
+_SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
+
+
+def run_post_processors(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Run each post-processor over the combined findings, enforcing F-4.
+
+    TWO GUARANTEES, ENFORCED HERE RATHER THAN DOCUMENTED
+        A post-processor may re-rate, re-order and annotate. It may NOT:
+
+        1. Downgrade a `status="error"` finding. An unrunnable check is a blind
+           spot regardless of what any policy says about the device. Letting a
+           scoring rule quietly file it below the fold re-creates the F-4
+           failure by another route -- the user stops seeing that nobody
+           looked.
+
+        2. Drop a finding. Removing one is the same lie as never producing it:
+           a missing check is indistinguishable from a clean one.
+
+        Both were agreed as conditions of adopting this shape. They are checked
+        here instead of trusted, because a rule that only exists in a document
+        is a rule that holds until someone is in a hurry.
+
+    A violation is not silently corrected. The original finding is restored AND
+    an error finding is added saying what was attempted, because a
+    post-processor trying to bury a blind spot is itself worth seeing.
+    """
+    for name, refine in POST_PROCESSORS.items():
+        before = {f["id"]: f for f in results}
+
+        try:
+            # Hand over copies. A post-processor that mutates in place cannot
+            # then be compared against what it started with.
+            refined = refine([dict(f) for f in results])
+        except Exception as error:
+            results = results + [
+                findings.error_finding(
+                    check=name,
+                    summary=f"The {name.replace('_', ' ')} stage failed to run",
+                    detail=findings.describe_error(error),
+                    source=f"analysis/checks/{name}.py",
+                )
+            ]
+            continue
+
+        results, complaints = _restore_protected_findings(name, before, refined)
+        results.extend(complaints)
+
+    return results
+
+
+def _restore_protected_findings(
+    name: str,
+    before: Dict[str, Dict[str, Any]],
+    refined: List[Dict[str, Any]],
+) -> tuple:
+    """Undo anything a post-processor was not allowed to do, and report it."""
+    kept = {f["id"]: f for f in refined}
+    complaints: List[Dict[str, Any]] = []
+    number = 800  # clear of check numbering and of the duplicate-id guard's 999
+
+    for fid, original in before.items():
+        current = kept.get(fid)
+
+        if current is None:
+            refined.append(original)
+            number += 1
+            complaints.append(
+                findings.error_finding(
+                    check=name,
+                    device=original.get("device", "unknown"),
+                    summary=f"The {name.replace('_', ' ')} stage dropped a finding",
+                    detail=(
+                        f"{fid} was removed and has been restored. A "
+                        "post-processor may re-rate and re-order, never remove: "
+                        "a missing finding is indistinguishable from one that "
+                        "was never a problem."
+                    ),
+                    source="analysis/pipeline.py",
+                    number=number,
+                )
+            )
+            continue
+
+        if original.get("status") != "error":
+            continue
+
+        was = _SEVERITY_RANK.get(original.get("severity", ""), 0)
+        now = _SEVERITY_RANK.get(current.get("severity", ""), 0)
+        if now > was:  # a higher rank index means it was downgraded
+            current["severity"] = original["severity"]
+            number += 1
+            complaints.append(
+                findings.error_finding(
+                    check=name,
+                    device=original.get("device", "unknown"),
+                    summary=f"The {name.replace('_', ' ')} stage downgraded a blind spot",
+                    detail=(
+                        f"{fid} has status=error and its severity was lowered from "
+                        f"{original['severity']} to {current.get('severity')}. "
+                        "Restored. An unrunnable check is a blind spot whatever "
+                        "the policy says about the device."
+                    ),
+                    source="analysis/pipeline.py",
+                    number=number,
+                )
+            )
+
+    return refined, complaints
 
 
 def _finalise(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
