@@ -185,7 +185,7 @@ against these shapes until every row is ticked.
 | **Arsh** | Author; owns `pipeline.py`, implements the post-processor stage and the `analyse_change` entry point | ✅ |
 | **Ankeet** | `routing` stays a producer, unaffected — confirmed on review of #20 | ✅ |
 | **Shubham** | `change_impact` becomes a separate entry point rather than a `CHECKS` entry | ⬜ |
-| **Samika** | `risk` becomes a post-processor; **this currently blocks the severity ruleset** | ⬜ |
+| **Samika** | `risk` becomes a post-processor; unblocks her severity ruleset | ✅ |
 
 Adopting this also implies one wording change to `docs/finding-format.md:36`
 (severity set by the check as a default, re-ratable by risk, never by the AI).
