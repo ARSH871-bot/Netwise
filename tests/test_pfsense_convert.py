@@ -223,6 +223,50 @@ def test_port_is_not_emitted_for_protocol_any():
     assert "eq" not in output
 
 
+def test_a_named_alias_in_address_raises_rather_than_being_emitted_as_a_host():
+    """Regression coverage for the review finding: PF Sense's <address> can
+    hold a named alias (e.g. "TRUSTED_HOSTS") instead of a literal IP.
+    Without validation this became "host TRUSTED_HOSTS" -- not valid Cisco
+    syntax, and measured to NOT make Batfish reject the file outright:
+    fileParseStatus reports PARTIALLY_UNRECOGNIZED and Batfish silently drops
+    just that line. Must raise here, at the layer that knows what went
+    wrong, rather than depend on analysis.pipeline's parse strictness (which
+    is itself under proposal to relax for real-world configs) as the only
+    thing catching it."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>pass</type><interface>lan</interface><protocol>udp</protocol>
+        <source><address>TRUSTED_HOSTS</address></source><destination><any/></destination></rule>
+    """)
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
+def test_a_named_alias_in_port_raises_rather_than_being_emitted_literally():
+    """Same class of gap as the <address> case above, found by auditing the
+    rest of the module for the identical pattern once the review pointed
+    out the first instance: PF Sense's <port> can hold a named alias (e.g.
+    "HTTPS_ALT") instead of a number, which would otherwise become the
+    equally invalid "eq HTTPS_ALT"."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/></source><destination><address>10.0.0.5</address><port>HTTPS_ALT</port></destination></rule>
+    """)
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
+def test_port_zero_and_out_of_range_also_raise():
+    """Boundary check for the same validation -- a port must be in the
+    valid 1-65535 range, not merely 'looks like digits'."""
+    for bad_port in ("0", "65536", "999999"):
+        xml_text = _minimal_xml(rules_xml=f"""
+            <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><address>10.0.0.5</address><port>{bad_port}</port></destination></rule>
+        """)
+        with pytest.raises(PfSenseConversionError):
+            _convert_string(xml_text)
+
+
 def test_unresolvable_network_reference_raises():
     """A network alias this converter does not resolve (e.g. PF Sense's
     'lanip', meaning the interface's own address rather than its subnet)

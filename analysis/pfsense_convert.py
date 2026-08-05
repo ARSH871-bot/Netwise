@@ -146,6 +146,27 @@ def _resolve_endpoint(el: ET.Element, interfaces: Dict[str, Dict[str, str]]) -> 
     aliases like "lanip" (the interface's own address, not its subnet) and
     named address-group aliases -- neither is handled; both raise rather
     than silently picking the nearest matching behaviour.
+
+    WHY <address> IS VALIDATED AS AN IP, NOT TRUSTED AS ONE
+        Found in review, not anticipated up front: PF Sense's <address> can
+        itself hold a named alias (e.g. "TRUSTED_HOSTS") rather than a literal
+        IP -- the same "named alias" case this docstring already calls out
+        for <network>, just reachable through a different element. Without
+        the check below, that alias name was passed straight through into
+        "host TRUSTED_HOSTS", which is not valid Cisco syntax.
+
+        Measured what Batfish actually does with that line: it does NOT
+        reject the file outright. fileParseStatus reports
+        PARTIALLY_UNRECOGNIZED, and Batfish silently drops the one bad line
+        while modelling everything else. Today, analysis.pipeline's
+        find_parse_problems() treats any non-PASSED status as fatal, so this
+        still surfaces as status="error" rather than a wrong answer -- but
+        that strictness is an open decision under active proposal to relax
+        for real-world configs (CLAUDE.md section 11). Relying on ANOTHER
+        module's current policy, one already flagged as likely to change, as
+        the only thing standing between this and a silently wrong model of a
+        client firewall is not good enough. Validated here instead, at the
+        layer that actually knows what went wrong.
     """
     if el.find("any") is not None:
         return "any"
@@ -165,6 +186,13 @@ def _resolve_endpoint(el: ET.Element, interfaces: Dict[str, Dict[str, str]]) -> 
 
     address = _text(el, "address")
     if address is not None:
+        try:
+            ipaddress.IPv4Address(address)
+        except ValueError:
+            raise PfSenseConversionError(
+                f"<address> is {address!r}, not an IP address -- likely a "
+                "named alias, which this converter does not resolve"
+            ) from None
         return f"host {address}"
 
     raise PfSenseConversionError(
@@ -200,6 +228,17 @@ def _rule_to_acl_line(rule_el: ET.Element, interfaces: Dict[str, Dict[str, str]]
     if cisco_protocol in ("tcp", "udp"):
         port = _text(destination_el, "port")
         if port is not None:
+            # Same class of gap the review found in <address>: PF Sense's
+            # <port> can hold a named alias (e.g. "HTTPS_ALT") instead of a
+            # number. Checked for the identical reason, not just because the
+            # other one was found -- an unvalidated port would produce
+            # "eq HTTPS_ALT", equally invalid Cisco syntax, equally liable to
+            # be silently dropped by Batfish's partial-recognition parsing.
+            if not port.isdigit() or not (0 < int(port) <= 65535):
+                raise PfSenseConversionError(
+                    f"<port> is {port!r}, not a single numeric port -- "
+                    "named aliases and ranges are out of scope"
+                )
             port_clause = f" eq {port}"
 
     return f"{action} {cisco_protocol} {src} {dst}{port_clause}"
