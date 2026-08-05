@@ -54,7 +54,7 @@ from typing import Any, Dict, Iterator, List
 from pybatfish.client.session import Session
 from pybatfish.datamodel.flow import HeaderConstraints
 
-from analysis import findings
+from analysis import findings, snapshot
 
 # The name this check is registered under, and the value that goes in every
 # finding's "check" field.
@@ -132,9 +132,52 @@ def run(bf: Session) -> List[Dict[str, Any]]:
     # dashboard show what changed since the previous run. Worth adopting here.
     numbering = count(1)
 
+    # Which of our statements can this snapshot actually answer?
+    #
+    # POLICY and GUARANTEES name specific devices. On a snapshot that does not
+    # contain them, every statement would report "could not check" -- correct
+    # under F-4, but measured at 8 of 9 findings on one fixture and 10 of 10 on
+    # a converted PF Sense config. Correct and unusable are not the same thing.
+    #
+    # So the inapplicable ones are reported ONCE, together, instead of one card
+    # each. They are still reported: skipping quietly is the silent omission
+    # F-4 exists to prevent, and a device may be absent because someone forgot
+    # to upload it.
+    present = snapshot.device_names(bf)
+    policy = [s for s in POLICY if s["node"] in present]
+    guarantees = [g for g in GUARANTEES if g["node"] in present]
+    absent = sorted(
+        {s["node"] for s in POLICY if s["node"] not in present}
+        | {g["node"] for g in GUARANTEES if g["node"] not in present}
+    )
+
     results: List[Dict[str, Any]] = []
-    results.extend(_check_policy_statements(bf, numbering))
-    results.extend(_check_guarantees(bf, numbering))
+    if absent:
+        skipped = (len(POLICY) - len(policy)) + (len(GUARANTEES) - len(guarantees))
+        results.append(
+            findings.error_finding(
+                check=CHECK_NAME,
+                device=absent[0] if len(absent) == 1 else "unknown",
+                summary=(
+                    f"{skipped} access policy statement(s) could not be checked "
+                    "against this config"
+                ),
+                detail=(
+                    "They are written about "
+                    + ", ".join(absent)
+                    + ", which "
+                    + ("is" if len(absent) == 1 else "are")
+                    + " not in this snapshot. Nothing is claimed about them "
+                    "either way. The analyses that need no policy -- dead rules "
+                    "and undefined references -- still ran."
+                ),
+                source="analysis/checks/access_control.py",
+                number=next(numbering),
+            )
+        )
+
+    results.extend(_check_policy_statements(bf, numbering, policy))
+    results.extend(_check_guarantees(bf, numbering, guarantees))
     results.extend(_check_dead_rules(bf, numbering))
     results.extend(_check_undefined_references(bf, numbering))
 
@@ -164,12 +207,16 @@ def run(bf: Session) -> List[Dict[str, Any]]:
 
 
 def _check_policy_statements(
-    bf: Session, numbering: Iterator[int]
+    bf: Session, numbering: Iterator[int], statements: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
-    """Check each single-flow policy statement with testFilters."""
+    """Check each single-flow policy statement with testFilters.
+
+    `statements` is the subset whose devices are in this snapshot -- run()
+    filters them, so anything reaching here is genuinely checkable.
+    """
     results: List[Dict[str, Any]] = []
 
-    for statement in POLICY:
+    for statement in statements:
         node = statement["node"]
         filter_name = statement["filter"]
 
@@ -256,7 +303,9 @@ def _check_policy_statements(
 # ---------------------------------------------------------------------------
 
 
-def _check_guarantees(bf: Session, numbering: Iterator[int]) -> List[Dict[str, Any]]:
+def _check_guarantees(
+    bf: Session, numbering: Iterator[int], guarantees: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
     """Prove that no packet in a whole space is permitted, using searchFilters.
 
     WHY THIS IS DIFFERENT FROM testFilters
@@ -273,7 +322,7 @@ def _check_guarantees(bf: Session, numbering: Iterator[int]) -> List[Dict[str, A
     """
     results: List[Dict[str, Any]] = []
 
-    for guarantee in GUARANTEES:
+    for guarantee in guarantees:
         node = guarantee["node"]
         filter_name = guarantee["filter"]
 
