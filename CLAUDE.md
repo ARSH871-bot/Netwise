@@ -149,14 +149,12 @@ rather than quietly downstream.
 
 `analysis/pipeline.py` is the shared backbone. It connects to Batfish, loads a
 snapshot, runs the registered checks, and returns one combined list of
-findings. Each team member owns one check:
+findings. The checks — the features that fit this contract — are:
 
 ```
 analysis/checks/access_control.py     Arsh     (written — the template)
-analysis/checks/routing.py            Ankeet
-analysis/checks/policy_compliance.py  Shubham
-analysis/checks/change_impact.py      Shubham
-analysis/checks/risk.py               Samika
+analysis/checks/routing.py            Ankeet   (written)
+analysis/checks/policy_compliance.py  Shubham  (written)
 ```
 
 A check is one file with one function, `run(bf: Session) -> list[dict]`, plus
