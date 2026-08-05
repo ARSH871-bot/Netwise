@@ -173,6 +173,13 @@ one line in the `CHECKS` registry in `pipeline.py`. Checks do not connect,
 load snapshots, or handle their own crashes — the pipeline isolates each one,
 so a bug in one feature cannot take down the other three.
 
+**After the checks run, post-processors refine the combined list**
+(`POST_PROCESSORS` in `pipeline.py`, `refine(results) -> results`). That is how
+`risk` sees every finding rather than a Batfish session. Two limits are
+enforced there rather than documented: a post-processor may not downgrade a
+`status="error"` finding, and may not drop one. A violation is restored *and*
+reported.
+
 ```bash
 python -m analysis.pipeline tests/fixtures/rtr-us5-secure
 ```
@@ -303,21 +310,35 @@ works and the dashboard has a slot for it (#40), deliberately marked *"not
 generated yet"* so a placeholder can never be mistaken for model output. Joining
 those two is #31, and it is now a small job rather than a redesign.
 
+### Settled — do not reopen without the team
+
+- **Three shapes for pipeline features.** `docs/design/pipeline-feature-shapes.md`,
+  **ADOPTED**, all four signatures. Producers keep `run(bf) -> list[dict]`;
+  `risk` is a post-processor; `change_impact` is a separate entry point and
+  **must not** be registered in `CHECKS`. The post-processor stage is built —
+  see §7b.
+- **Severity ownership.** Checks set a default; `risk` may re-rate; **`risk`
+  must never downgrade a `status="error"` finding, or drop one.** Both limits
+  are enforced in `pipeline.run_post_processors()` rather than trusted. Only
+  the `docs/finding-format.md:36` wording still needs changing, and that is an
+  F-1 edit needing all four — see below.
+
 ### Open decisions — do not settle these alone
 
-1. **Producer vs post-processor** (`docs/design/pipeline-feature-shapes.md`).
-   Two features cannot honour `run(bf) -> list[dict]`: `change_impact` needs
-   two snapshots, `risk` needs the combined findings list. Proposal is three
-   shapes. **This blocks Samika's severity ruleset.**
-2. **`change_impact` needs its own ID prefix.** It shares `PC` with
+1. **`change_impact` needs its own ID prefix.** It shares `PC` with
    `policy_compliance`, so their findings collide.
    `pipeline.duplicate_id_findings()` detects it; only a distinct prefix makes
    it impossible. Amending F-1 needs all four members.
-3. **Severity ownership.** `docs/finding-format.md` says severity is set by
-   Samika's rules; the checks currently set it themselves. Proposed resolution:
-   checks set a default, risk may re-rate, and **`risk` must never downgrade a
-   `status="error"`** — an unrunnable check is a blind spot regardless of policy.
-4. **Parse strictness.** `find_parse_problems()` currently treats any status
+2. **The F-1 wording on severity.** `docs/finding-format.md:36` still says
+   severity is "assigned by Samika's rules, not by the AI". The rule agreed
+   above is subtly different — checks default it, `risk` may re-rate. The
+   behaviour is settled; the sentence is not.
+3. **Parse strictness.** `find_parse_problems()` currently treats any status
    other than `PASSED` as fatal, including `PARTIALLY_UNRECOGNIZED`. Safe for
    test configs, likely too strict for real ones. The fix is to run the checks
    and attach a loud "results may be incomplete" finding — never to ignore it.
+   **This is also the only thing catching a mis-converted PF Sense config**, so
+   relaxing it has a consequence beyond convenience — see §7 and issue #47.
+4. **PF Sense rule order** (issue #47). The converter assumes first-match-wins;
+   PF Sense is last-match-wins unless a rule is marked `quick`. Our fixture is
+   correct under both, so the tests cannot catch the difference.
