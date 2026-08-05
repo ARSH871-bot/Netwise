@@ -313,6 +313,32 @@ function setUpUpload() {
       const result = await response.json();
       if (response.ok) {
         showUploadMessage(result.message, true);
+
+        // Clear the old findings BEFORE fetching the new ones.
+        //
+        // Whatever is on screen right now describes the PREVIOUS config. The
+        // upload has already been accepted, so leaving it there puts a success
+        // message above results that do not belong to the file just uploaded --
+        // and the analysis takes seconds, not milliseconds, because
+        // /api/findings runs Batfish for real. Someone reading during that gap
+        // would be looking at another network's findings under the heading of
+        // this one.
+        //
+        // The summary tiles go too. Three stale counts beside a "loading"
+        // message are the same false claim in smaller type.
+        document.getElementById("summary").replaceChildren();
+        document.getElementById("findings").replaceChildren(
+          el(
+            "div",
+            "notice loading",
+            "Analysing your upload, this can take up to 15 seconds..."
+          )
+        );
+
+        // loadFindings() replaces this message with the real results, and
+        // handles its own failure -- so a failed fetch shows its own notice
+        // rather than leaving "Analysing..." on screen forever.
+        await loadFindings();
       } else {
         showUploadMessage(result.detail, false);
         input.value = "";
