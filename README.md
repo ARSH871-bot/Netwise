@@ -114,7 +114,7 @@ pytest tests/ -v
 
 | Path | Contents |
 |---|---|
-| `analysis/` | Batfish orchestration — the pipeline, the finding format, one module per check, and the PF Sense converter |
+| `analysis/` | Batfish orchestration — the pipeline, the finding format, one module per check, the PF Sense converter, and snapshot helpers |
 | `ai/` | Local LLM layer — `explain.py` turns a finding into plain English; `Modelfile` defines the model it calls |
 | `web/` | FastAPI backend and dashboard frontend |
 | `tests/` | Test suite, plus synthetic configs used as fixtures |
