@@ -264,7 +264,7 @@ is **settled**: the team agreed F-1 (see §7a). Do not reopen it casually.
 | `policy_compliance` check | Shubham | Done — see `docs/policy-rules.md` |
 | `routing` check | Ankeet | Done — `traceroute`-based reachability, two-router fixtures |
 | **AI explanation layer** | Ankeet | Done — `ai/explain.py` + `ai/Modelfile` (Warden, local Ollama). Explains one finding; the natural-language-question direction is not started |
-| Dashboard + secure upload | Samika | Done, **on mock data** |
+| Dashboard + secure upload | Samika | Done — real findings on screen since #39 |
 | Test suite | team | 47 tests, needing neither Batfish nor Ollama |
 
 ### What is NOT built
@@ -274,22 +274,24 @@ is **settled**: the team agreed F-1 (see §7a). Do not reopen it casually.
 | `risk` scoring | Samika | Blocked — see the open decisions below |
 | `change_impact` | Shubham | Not started, and does not fit the `run(bf)` contract |
 | AI: natural-language questions | Ankeet | Not started — the other half of Layer 2 |
-| **The wiring** | Samika + Arsh | **Not done.** See below — this is now the biggest gap. |
+| AI explanation on screen | Samika + Ankeet | Slot built (#40); `explain()` not yet called — #31 |
 
-### The wiring gap — read this before assuming anything works end to end
+### End to end — what is joined, and what is not
 
-**No real config has ever produced a finding that reached the screen.** The
-pieces work individually and are tested individually, but they are not joined:
+**The product runs.** Uploading a config produces real findings on screen, as
+of 5 August (#39). `web/main.py` stages the upload and calls
+`analysis.pipeline.analyse()` on it; mocks are served only until the first
+upload. Verified against opposite fixtures:
 
-- `web/main.py` serves `web/mock_findings.py`, **not** the pipeline. There is a
-  single `TODO` marking where `analysis.pipeline.analyse()` goes.
-- Config upload validates a file and then stops. It does not trigger analysis.
-- The AI layer the dashboard is supposed to read through does not exist.
+```
+upload rtr-us5-insecure  ->  5 problems found, 2 could not check
+upload rtr-us5-secure    ->  0 problems, 2 checked clean, 2 could not check
+```
 
-Wiring it up is a substitution rather than a redesign — `analyse()` already
-returns the exact F-1 list the frontend renders, including `status="error"`
-findings when it cannot run at all. But until that happens, "it works" means
-"each part works", not "the product runs".
+**One link is still open: the AI explanation does not render.** `ai/explain.py`
+works and the dashboard has a slot for it (#40), deliberately marked *"not
+generated yet"* so a placeholder can never be mistaken for model output. Joining
+those two is #31, and it is now a small job rather than a redesign.
 
 ### Open decisions — do not settle these alone
 
