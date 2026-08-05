@@ -137,6 +137,25 @@ SUCCESS_DISPOSITIONS = {"ACCEPTED", "DELIVERED_TO_SUBNET"}
 # access_control.py's own comments flag as the better approach it doesn't yet
 # use itself -- adopted here from the start rather than copied as a known
 # weakness.
+#
+# >>> KNOWN LIMITATION, visible to users since US-10 wired up uploads <<<
+#
+# start_node names two devices that only exist in the routing fixtures:
+# rtr-hq and rtr-branch. Any snapshot without them -- which is every snapshot
+# a user uploads through the dashboard, and every single-router config --
+# makes Batfish fail the query, so BOTH statements come back status="error"
+# ("Work terminated abnormally") rather than being skipped.
+#
+# That is F-4 behaving correctly: we say "could not check" instead of implying
+# routing is fine. But it means uploading any ordinary config shows two amber
+# "could not check" cards on the dashboard that have nothing to do with that
+# config, which reads as a broken tool rather than an honest one.
+#
+# The fix is to decide what a statement means when its device is absent --
+# most likely skip it, or report it once as "not applicable to this snapshot"
+# -- rather than letting Batfish error per statement. Needs a decision on
+# whether a skipped statement counts as checked, so it is deliberately NOT
+# fixed here. See the follow-up issue.
 ROUTES: List[Dict[str, Any]] = [
     {
         "number": 1,  # RT-001
