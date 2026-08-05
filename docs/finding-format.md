@@ -1,6 +1,6 @@
 # Netwise — Finding Format (F-1)
 
-**Status:** Agreed by all four members on ______________. Do not change without full team agreement.
+**Status:** Agreed by all four members on 30 July 2026. Do not change without full team agreement.
 
 **Purpose:** Every analysis in Netwise returns findings in this exact shape, so the AI layer and the dashboard handle all four features identically.
 
