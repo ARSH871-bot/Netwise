@@ -19,7 +19,7 @@ These need neither Batfish nor Docker.
 import pytest
 
 from analysis import findings, snapshot
-from analysis.checks import access_control
+from analysis.checks import access_control, policy_compliance
 
 
 class _FakeAnswer:
@@ -180,3 +180,84 @@ def test_a_missing_device_never_becomes_a_clean_result(monkeypatch):
         "a snapshot we could not check must never report 'no issues found'"
     )
     assert any(f["status"] == "error" for f in results)
+
+
+# --- policy_compliance's use of it -------------------------------------------
+#
+# Same behaviour, one structural difference worth testing separately: this check
+# has NO analysis that works without a policy. access_control still runs dead
+# rules and undefined references when its statements do not apply; here, if
+# nothing applies, nothing runs. That makes "skip quietly" a more attractive
+# shortcut and a worse mistake, because there is no other output left to notice
+# its absence.
+
+
+def _run_policy_with_devices(monkeypatch, present):
+    """Run policy_compliance with a known device set and Batfish stubbed out."""
+    monkeypatch.setattr(policy_compliance.snapshot, "device_names", lambda bf: present)
+    # No rule may actually reach Batfish: every one that runs returns "holds".
+    monkeypatch.setattr(policy_compliance, "_search", lambda *a, **k: [])
+    return policy_compliance.run(_FakeSession())
+
+
+def test_policy_absent_devices_reported_once_not_once_per_rule(monkeypatch):
+    results = _run_policy_with_devices(monkeypatch, {"rtr-hq", "rtr-branch"})
+
+    assert len(results) == 1, f"one card, not one per rule: {[f['id'] for f in results]}"
+    assert results[0]["status"] == "error", "still an error -- we did not check"
+    assert "rtr-us5" in results[0]["evidence"]["detail"]
+    assert "not in this snapshot" in results[0]["evidence"]["detail"]
+
+
+def test_policy_skip_card_has_its_own_reserved_id(monkeypatch):
+    """PC-050 mirrors PC-000: 'the whole check could not apply'.
+
+    It cannot borrow a rule's number -- those are pinned, and reusing one would
+    make PC-002 mean two different things depending on the snapshot.
+    """
+    results = _run_policy_with_devices(monkeypatch, {"rtr-hq"})
+    assert results[0]["id"] == "PC-050"
+
+    rule_ids = {f"PC-{r['number']:03d}" for r in policy_compliance.POLICY_RULES}
+    error_ids = {
+        f"PC-{r['number'] + policy_compliance.ERROR_NUMBER_OFFSET:03d}"
+        for r in policy_compliance.POLICY_RULES
+    }
+    assert "PC-050" not in rule_ids | error_ids, "the skip id must not collide"
+
+
+def test_policy_unknown_devices_do_not_claim_the_devices_are_absent(monkeypatch):
+    """The #45 lesson, applied here: do not assert a cause we did not observe."""
+    results = _run_policy_with_devices(monkeypatch, None)
+
+    assert len(results) == 1 and results[0]["status"] == "error"
+    detail = results[0]["evidence"]["detail"]
+    assert "could not be determined" in detail
+    assert "not in this snapshot" not in detail, (
+        "we did not observe that -- fileParseStatus failed, which is a "
+        "different fact from the device being absent"
+    )
+    assert results[0]["device"] == "unknown"
+
+
+def test_policy_missing_devices_never_become_a_clean_result(monkeypatch):
+    """The failure this whole change is one careless step away from.
+
+    If the skip card were ever dropped instead of reported, a snapshot naming
+    none of our devices would come back status="none" -- a clean bill of health
+    for a config nothing was checked against. That is the F-4 lie.
+    """
+    for present in ({"rtr-hq"}, set(), None):
+        results = _run_policy_with_devices(monkeypatch, present)
+        assert results, "never return nothing"
+        assert not any(f["status"] == "none" for f in results), (
+            f"a config we could not check must never read as clean (present={present!r})"
+        )
+
+
+def test_policy_says_nothing_when_every_device_is_present(monkeypatch):
+    """The normal case must not gain a spurious card."""
+    results = _run_policy_with_devices(monkeypatch, {"rtr-us5"})
+
+    assert [f["status"] for f in results] == ["none"]
+    assert results[0]["id"] == "PC-000"
