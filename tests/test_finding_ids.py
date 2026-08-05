@@ -203,3 +203,62 @@ def test_unloadable_config_still_guards_ids(monkeypatch):
     assert any(f["summary"].startswith("Internal error") for f in results), (
         "the duplicate-id guard must run on this early-return path too"
     )
+
+
+# ---------------------------------------------------------------------------
+# evidence.detail must stay readable.
+#
+# A failed Batfish query raises an exception carrying the server's own log --
+# measured at 5241 characters of work_item JSON, internal UUIDs and repeated
+# "Loading configurations for NetworkSnapshot{...}" lines. That text is what
+# the AI layer receives as its grounding and what the dashboard shows the
+# client, so findings.describe_error() exists to condense it.
+#
+# It was applied unevenly: fixed in access_control and in analyse(), missed in
+# run_check() and in policy_compliance, and only found by running the pipeline
+# against a snapshot whose devices did not match. A grep is easy to forget; a
+# test is not.
+# ---------------------------------------------------------------------------
+
+
+class _NoisyBatfishError(Exception):
+    """Stands in for a real BatfishException, which carries the server log."""
+
+
+_NOISY = "Work terminated abnormally\n" + (
+    "Loading configurations for NetworkSnapshot{network=199dfd46}\n" * 60
+)
+
+
+def test_describe_error_keeps_the_actionable_first_line():
+    text = findings.describe_error(_NoisyBatfishError(_NOISY))
+    assert text == "_NoisyBatfishError: Work terminated abnormally"
+    assert "\n" not in text
+    assert "NetworkSnapshot" not in text
+
+
+def test_describe_error_caps_a_long_single_line():
+    text = findings.describe_error(_NoisyBatfishError("x" * 5000))
+    assert len(text) <= 200
+
+
+def test_a_crashing_check_does_not_leak_the_server_log(monkeypatch):
+    """The run_check() crash path must condense, not interpolate.
+
+    This is the exact site that was missed: analyse()'s early returns were
+    fixed and this one was not, so a check that raised still put kilobytes of
+    Java into a finding.
+    """
+    from analysis import pipeline
+
+    def explodes(bf):
+        raise _NoisyBatfishError(_NOISY)
+
+    monkeypatch.setitem(pipeline.CHECKS, "access_control", explodes)
+    results = pipeline.run_check(None, "access_control")
+
+    assert len(results) == 1
+    detail = results[0]["evidence"]["detail"]
+    assert results[0]["status"] == "error"
+    assert len(detail) <= 200, f"evidence.detail is {len(detail)} chars"
+    assert "NetworkSnapshot" not in detail
