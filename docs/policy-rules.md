@@ -317,6 +317,28 @@ Agreed with Arsh, and requiring no change to `docs/finding-format.md`:
 - **A rule's number is never reused.** If a rule is deleted, its number is
   retired rather than given to a new rule.
 
+### One rule, two findings — the error band
+
+A rule with several query arms can have one arm **prove a violation** while
+another **fails to run**. Both facts are true, and both are reported (see §3,
+POL-2, and issue #22). They cannot share an `id` — `duplicate_id_findings()` in
+the pipeline would correctly flag that as a broken contract — so every rule owns
+two slots:
+
+| | id | Meaning |
+|---|---|---|
+| Violation | `PC-00n` | rule *n* is broken by this config |
+| Check error | `PC-0(n+50)` | rule *n* could not be fully evaluated |
+
+`ERROR_NUMBER_OFFSET = 50` in `analysis/checks/policy_compliance.py`. So POL-2
+violated *and* partly unchecked yields **`PC-002` and `PC-052`**.
+
+This keeps the pinning promise intact in both directions: `PC-002` always means
+"POL-2 is violated" and `PC-052` always means "POL-2 could not be fully
+checked", on every run. The offset caps the policy at 49 rules, which is far
+more than the five we have, and a test asserts the band can never reach
+`PC-100`, which `change_impact` owns.
+
 ### Sentinel IDs — agreed fix
 
 The split above fixes the numbered findings but not the sentinels.

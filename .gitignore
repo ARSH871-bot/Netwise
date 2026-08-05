@@ -17,7 +17,13 @@
 snapshots/
 *.cfg
 *.conf
-*.xml            # PF Sense exports
+# PF Sense exports. NOTE: this must stay a comment on its OWN line -- gitignore
+# has no trailing-comment syntax, so "*.xml   # PF Sense exports" on one line
+# is parsed as a single literal pattern (matching a filename that ends in that
+# whole string) rather than "*.xml" with an explanatory comment. That exact
+# mistake was here before and silently made this rule match nothing at all --
+# verified: a plain client_export.xml at the repo root was NOT ignored by it.
+*.xml
 *.pfsense
 
 # US-10 stages an uploaded config here so Batfish can read it. The extension
@@ -44,6 +50,7 @@ snapshots/
 # It should print nothing and exit 1.
 !tests/fixtures/**/*.cfg
 !tests/fixtures/**/*.conf
+!tests/fixtures/**/*.xml
 
 # --- Office documents ------------------------------------------------------
 # Briefs, meeting notes and marking rubrics handed round as .docx/.xlsx tend to
