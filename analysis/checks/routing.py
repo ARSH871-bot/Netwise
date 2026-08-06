@@ -115,10 +115,22 @@ from typing import Any, Dict, List, Optional, Sequence
 from pybatfish.client.session import Session
 from pybatfish.datamodel.flow import HeaderConstraints
 
-from analysis import findings
+from analysis import findings, snapshot
 
 # The name this check is registered under, and the value in every "check" field.
 CHECK_NAME = "routing"
+
+# The id for the one card reported when route statements do not apply to this
+# snapshot. It needs a number of its own because ROUTES numbers are PINNED to a
+# statement (RT-001 is always the HQ -> branch assertion), so borrowing one
+# would make an id mean different things depending on what was uploaded.
+#
+# 50 deliberately matches policy_compliance.py's PC-050, so RT-050 and PC-050
+# carry the same meaning in every check that has one: "these rules do not apply
+# to this snapshot, or we could not tell". Statements are numbered from 1 and
+# there are two of them, so nothing else can land here -- asserted by
+# tests/test_device_scoping.py rather than left as an assumption.
+SKIPPED_NUMBER = 50
 
 # See the "WHAT COUNTS AS REACHABLE" section of the module docstring for why
 # this is NOT the same set pybatfish's own tooling treats as success.
@@ -138,24 +150,18 @@ SUCCESS_DISPOSITIONS = {"ACCEPTED", "DELIVERED_TO_SUBNET"}
 # use itself -- adopted here from the start rather than copied as a known
 # weakness.
 #
-# >>> KNOWN LIMITATION, visible to users since US-10 wired up uploads <<<
+# start_node names two devices that only exist in the routing fixtures: rtr-hq
+# and rtr-branch. Any snapshot without them -- every single-router config, and
+# every snapshot a user uploads through the dashboard -- used to make Batfish
+# fail the query, so BOTH statements came back status="error" ("Work terminated
+# abnormally"), one amber card each, about a config they had nothing to do with.
 #
-# start_node names two devices that only exist in the routing fixtures:
-# rtr-hq and rtr-branch. Any snapshot without them -- which is every snapshot
-# a user uploads through the dashboard, and every single-router config --
-# makes Batfish fail the query, so BOTH statements come back status="error"
-# ("Work terminated abnormally") rather than being skipped.
-#
-# That is F-4 behaving correctly: we say "could not check" instead of implying
-# routing is fine. But it means uploading any ordinary config shows two amber
-# "could not check" cards on the dashboard that have nothing to do with that
-# config, which reads as a broken tool rather than an honest one.
-#
-# The fix is to decide what a statement means when its device is absent --
-# most likely skip it, or report it once as "not applicable to this snapshot"
-# -- rather than letting Batfish error per statement. Needs a decision on
-# whether a skipped statement counts as checked, so it is deliberately NOT
-# fixed here. See the follow-up issue.
+# FIXED (#29). run() below now asks which devices are actually in the snapshot
+# and reports the inapplicable statements ONCE, together, as a single card that
+# says so plainly. The open question this module recorded -- does a skipped
+# statement count as checked? -- was answered by access_control.py (#45) and
+# policy_compliance.py (#50) while this comment sat here: it does not. It is an
+# error, never a "none". Nothing is skipped silently.
 ROUTES: List[Dict[str, Any]] = [
     {
         "number": 1,  # RT-001
@@ -232,7 +238,75 @@ def run(bf: Session) -> List[Dict[str, Any]]:
     """
     results: List[Dict[str, Any]] = []
 
-    for route in ROUTES:
+    # --- Scope the statements to the devices actually in this snapshot -------
+    #
+    # Every statement in ROUTES names a specific start_node. On a snapshot that
+    # does not contain it, Batfish fails the query and each statement returns
+    # its own "could not check" card -- correct under F-4, but on an ordinary
+    # single-router upload that was every card the routing check produced.
+    #
+    # They are still reported, once, together. Skipping quietly is the silent
+    # omission F-4 exists to prevent: a device may be absent because someone
+    # forgot to upload it, and that is worth saying out loud.
+    #
+    # This adopts the shape established in access_control.py (#45) and
+    # policy_compliance.py (#50). The question those two answered -- does a
+    # skipped statement count as checked? -- is settled the same way here: no.
+    # It is an error, never a "none".
+    present = snapshot.device_names(bf)
+
+    if present is None:
+        # We could not find out what is in this snapshot. Note what this does
+        # NOT say: it does not claim the devices are absent, because we have not
+        # observed that. Claiming it would send a reader hunting for a router
+        # that was never missing -- the same mistake this module's own
+        # violation_summary made before 6d7c769, blaming an absent route for
+        # what was actually a deny rule.
+        return [
+            findings.error_finding(
+                check=CHECK_NAME,
+                device="unknown",
+                summary=(
+                    f"{len(ROUTES)} route assertion(s) could not be checked "
+                    "against this config"
+                ),
+                detail=(
+                    "The devices present in this snapshot could not be "
+                    "determined, so we cannot tell whether these assertions "
+                    "apply to it. Nothing is claimed about them either way."
+                ),
+                source="analysis/checks/routing.py",
+                number=SKIPPED_NUMBER,
+            )
+        ]
+
+    applicable = [r for r in ROUTES if r["start_node"] in present]
+    absent = sorted({r["start_node"] for r in ROUTES if r["start_node"] not in present})
+    if absent:
+        results.append(
+            findings.error_finding(
+                check=CHECK_NAME,
+                # Safe here in a way it is not above: we know what is present,
+                # so naming what is missing is an observation, not a guess.
+                device=absent[0] if len(absent) == 1 else "unknown",
+                summary=(
+                    f"{len(ROUTES) - len(applicable)} route assertion(s) could "
+                    "not be checked against this config"
+                ),
+                detail=(
+                    "They are written about "
+                    + ", ".join(absent)
+                    + ", which "
+                    + ("is" if len(absent) == 1 else "are")
+                    + " not in this snapshot. Nothing is claimed about them "
+                    "either way."
+                ),
+                source="analysis/checks/routing.py",
+                number=SKIPPED_NUMBER,
+            )
+        )
+
+    for route in applicable:
         node = route["start_node"]
 
         # traceroute answers: starting from THIS node, with THESE headers,
@@ -312,14 +386,21 @@ def run(bf: Session) -> List[Dict[str, Any]]:
         )
 
     # Only claim "all clear" if we actually checked everything successfully.
+    #
+    # `applicable`, not ROUTES: this must count what actually ran. Any skipped
+    # statement has already put an error card in `results`, so this branch
+    # cannot currently be reached with applicable empty -- but a sentence
+    # claiming "all 2 assertions hold" when none of them ran would be wrong the
+    # day that stops being true, and it is the kind of wrong nobody re-reads.
     if not results:
         return [
             findings.no_issues_finding(
                 check=CHECK_NAME,
-                device=ROUTES[0]["start_node"] if ROUTES else "unknown",
+                device=applicable[0]["start_node"] if applicable else "unknown",
                 summary="No issues found by routing",
-                detail=f"All {len(ROUTES)} route assertion(s) hold",
-                source=", ".join(sorted({r["start_node"] for r in ROUTES})),
+                detail=f"All {len(applicable)} route assertion(s) hold",
+                source=", ".join(sorted({r["start_node"] for r in applicable}))
+                or "unknown",
             )
         ]
 
