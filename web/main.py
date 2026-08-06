@@ -161,6 +161,17 @@ def _attach_explanations(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         three, one layer further out. No explanation is attached in that
         case -- the finding still renders, just without one, matching
         #31's acceptance criterion for an unreachable Ollama exactly.
+
+    NOTE: MUTATES `results` IN PLACE
+        Flagged in review, worth stating rather than leaving implicit.
+        Safe today because `get_findings()` calls `analyse()` fresh on
+        every request and nothing re-validates or caches that list
+        afterwards -- the extra key is never observed anywhere F-1
+        validation runs. Would stop being safe the moment either of those
+        changes (a cached analyse() result, or a second consumer of the
+        same list that expects exactly the F-1 shape); switch to building
+        a new list of shallow copies at that point rather than assuming
+        this comment still holds.
     """
     for finding in results:
         if finding.get("status") != "found":
