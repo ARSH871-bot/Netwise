@@ -18,10 +18,13 @@ RUN
     pytest tests/ -v
 """
 
+import ollama
+
 from ai import explain as explain_module
 from ai.explain import (
     _build_prompt,
     _compute_dead_rule_outcome,
+    _evidence_detail,
     _fallback_error_explanation,
     _fallback_plain_restatement,
     _looks_like_a_result_claim,
@@ -307,6 +310,94 @@ def test_explain_still_retries_normally_when_ollama_is_reachable(monkeypatch):
     result = explain({"id": "AC-001", "status": "found", "summary": "x", "evidence": {"detail": "y"}})
     assert len(calls) == 2
     assert "no restriction" in result
+
+
+def test_explain_falls_back_when_the_model_is_not_built(monkeypatch):
+    """Ollama up, but nobody has run `ollama create netwise-warden -f
+    ai/Modelfile` yet -- at least as likely in practice as Ollama being
+    fully down, and missed by the first pass at this fix, which only
+    caught ConnectionError."""
+
+    def not_built(finding):
+        raise ollama.ResponseError("model 'netwise-warden' not found", 404)
+
+    monkeypatch.setattr(explain_module, "_generate", not_built)
+    result = explain({"id": "AC-001", "status": "found", "summary": "x", "evidence": {"detail": "y"}})
+    assert "x" in result
+
+
+def test_explain_falls_back_on_a_malformed_request_too(monkeypatch):
+    """The third member of the same family as ConnectionError and
+    ResponseError -- a request the client itself rejects before sending."""
+
+    def malformed(finding):
+        raise ollama.RequestError("bad request")
+
+    monkeypatch.setattr(explain_module, "_generate", malformed)
+    result = explain({"id": "RT-000", "status": "error", "evidence": {"detail": "d"}})
+    assert "d" in result
+
+
+# --- _evidence_detail ------------------------------------------------------------
+# Regression coverage for a real crash: dict.get(key, default) only falls back
+# to `default` when `key` is ABSENT, not when it is present with value None.
+# findings.make_finding() does not reject evidence={"detail": None} or
+# evidence=None outright, so this is one bug away in any check, not
+# hypothetical.
+
+
+def test_evidence_detail_handles_a_none_detail():
+    assert _evidence_detail({"evidence": {"detail": None}}) == ""
+
+
+def test_evidence_detail_handles_evidence_being_none_entirely():
+    assert _evidence_detail({"evidence": None}) == ""
+
+
+def test_evidence_detail_handles_evidence_missing_entirely():
+    assert _evidence_detail({}) == ""
+
+
+def test_evidence_detail_handles_a_non_string_detail():
+    assert _evidence_detail({"evidence": {"detail": 12345}}) == ""
+
+
+def test_evidence_detail_returns_the_real_string_when_present():
+    assert _evidence_detail({"evidence": {"detail": "the real detail"}}) == "the real detail"
+
+
+def test_build_prompt_does_not_crash_when_evidence_detail_is_none():
+    """The exact path that crashed before this fix: _build_prompt() passes
+    evidence.detail to _compute_dead_rule_outcome()'s regex .search() call,
+    which requires a string, not None. Tested at this level (not through
+    explain()) so it stays a pure, millisecond test with no model call,
+    same reasoning as every other test in this file."""
+    finding = {"id": "AC-001", "status": "found", "summary": "test", "evidence": {"detail": None}}
+    prompt = _build_prompt(finding)
+    assert '"id": "AC-001"' in prompt
+
+
+def test_explain_does_not_crash_when_evidence_detail_is_none(monkeypatch):
+    """explain() end to end, with _generate stubbed so this stays a fast,
+    deterministic test rather than depending on whether Ollama happens to
+    be running -- the crash this covers happened inside _build_prompt(),
+    before any real model call, so a stub is enough to exercise it."""
+    monkeypatch.setattr(explain_module, "_generate", lambda finding: "A grounded explanation.")
+    finding = {"id": "AC-001", "status": "found", "summary": "test", "evidence": {"detail": None}}
+    assert explain(finding) == "A grounded explanation."
+
+
+def test_fallback_error_explanation_does_not_crash_when_evidence_is_none_entirely():
+    """The deterministic last resort for status="error" -- the one place
+    that must not be able to fail -- crashed on evidence=None outright, not
+    just on evidence={"detail": None}, before this fix."""
+    result = _fallback_error_explanation({"evidence": None})
+    assert "unknown error" in result
+
+
+def test_fallback_plain_restatement_does_not_crash_when_evidence_is_none_entirely():
+    result = _fallback_plain_restatement({"summary": "x", "evidence": None})
+    assert result == "x"
 
 
 # --- _build_prompt -------------------------------------------------------------
