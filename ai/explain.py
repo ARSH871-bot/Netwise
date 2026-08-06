@@ -386,15 +386,44 @@ def explain(finding: Dict[str, Any]) -> str:
     straight to the same fallback -- it does not raise, and it does not
     waste a second attempt against a host that is already known to be
     unreachable.
+
+    If the finding carries no real evidence.detail, generation is skipped
+    entirely and this returns the deterministic fallback straight away.
+
+    WHY: found in a senior-level adversarial QA pass. Neither safety-net
+    check catches an unhedged, invented claim, because
+    _looks_like_a_result_claim() only ever runs for status="error" (a
+    "found" explanation legitimately needs words like "blocked" or "reach"
+    to describe the confirmed fact -- banning them would break the normal
+    case, not fix this one), and _looks_like_speculation() only catches
+    HEDGED claims, not confident ones. Reproduced live, 3/3, temperature
+    0.2: explain({"id": "AC-101", "status": "found", "summary": "A
+    finding"}) -- no evidence field at all -- returned "The device has a
+    rule that allows all traffic through with no restriction," a specific,
+    confident, entirely invented technical claim. This is exactly what
+    CLAUDE.md constraint 2 calls "a critical failure, not a bug": the model
+    is only ever supposed to rephrase real Batfish output, and with no
+    evidence.detail there is no real output to rephrase.
+
+    Skipping generation rather than trying to prompt or validate the
+    hallucination away, for the same reason _compute_dead_rule_outcome()
+    refuses rather than guesses when it is not confident: a rule that says
+    "do not say more than you know" is only real if it is enforced before
+    generation, not policed after it. The fallback restates only the
+    fields that are actually known (summary, and detail if present), which
+    is strictly less than what was already being shown for a validation
+    failure -- this is not a new code path, it is the existing one taken
+    one step earlier.
     """
     is_error = finding.get("status") == "error"
 
-    for _ in range(2):
-        explanation = _try_generate(finding)
-        if explanation is None:
-            break
-        if not _is_unacceptable(explanation, is_error=is_error):
-            return explanation
+    if _evidence_detail(finding):
+        for _ in range(2):
+            explanation = _try_generate(finding)
+            if explanation is None:
+                break
+            if not _is_unacceptable(explanation, is_error=is_error):
+                return explanation
 
     if is_error:
         return _fallback_error_explanation(finding)

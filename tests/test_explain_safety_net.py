@@ -312,6 +312,79 @@ def test_explain_still_retries_normally_when_ollama_is_reachable(monkeypatch):
     assert "no restriction" in result
 
 
+# --- explain() skips generation entirely when there is no real evidence to
+# ground it in -----------------------------------------------------------------
+# Regression coverage for a confirmed, reproducible hallucination found in a
+# senior-level adversarial QA pass: with live Ollama, a status="found" finding
+# with no evidence.detail at all reliably produced a specific, confident,
+# invented technical claim ("the device has a rule that allows all traffic
+# through with no restriction"), reproduced 3/3. Neither existing safety check
+# catches it -- _looks_like_a_result_claim() only runs for status="error", and
+# _looks_like_speculation() only catches HEDGED claims, not confident ones.
+# This is exactly what CLAUDE.md constraint 2 calls "a critical failure, not a
+# bug." The fix is to never call the model at all when there is nothing real
+# to rephrase, not to try to catch the hallucination after the fact.
+
+
+def test_explain_skips_generation_when_there_is_no_evidence_detail(monkeypatch):
+    calls = []
+    monkeypatch.setattr(explain_module, "_generate", lambda finding: calls.append(finding) or "unused")
+
+    finding = {"id": "AC-101", "status": "found", "summary": "A finding"}
+    result = explain(finding)
+
+    assert calls == [], "the model must not be called at all with no real evidence"
+    assert result == "A finding"
+
+
+def test_explain_skips_generation_for_status_none_with_no_evidence_too(monkeypatch):
+    """The same guard for status="none" -- this is also the exact shape that
+    reproduced the Modelfile worked-example-echo failure (a different
+    symptom of the same root cause: nothing real to ground a generated
+    answer in)."""
+    calls = []
+    monkeypatch.setattr(explain_module, "_generate", lambda finding: calls.append(finding) or "unused")
+
+    finding = {"id": "AC-201", "status": "none", "summary": "No issues found by access control"}
+    result = explain(finding)
+
+    assert calls == []
+    assert result == "No issues found by access control"
+
+
+def test_explain_skips_generation_for_status_error_with_no_evidence_too(monkeypatch):
+    calls = []
+    monkeypatch.setattr(explain_module, "_generate", lambda finding: calls.append(finding) or "unused")
+
+    finding = {"id": "RT-000", "status": "error", "summary": "Could not check"}
+    result = explain(finding)
+
+    assert calls == []
+    assert "unknown error" in result
+
+
+def test_explain_still_generates_normally_when_real_evidence_is_present(monkeypatch):
+    """The guard must not become a blanket ban on generation -- only fire
+    when there is genuinely nothing to ground an answer in."""
+    calls = []
+
+    def stub(finding):
+        calls.append(finding)
+        return "The device allows all traffic through with no restriction."
+
+    monkeypatch.setattr(explain_module, "_generate", stub)
+    finding = {
+        "id": "AC-001",
+        "status": "found",
+        "summary": "x",
+        "evidence": {"detail": "Expected DENY but got PERMIT"},
+    }
+    result = explain(finding)
+
+    assert len(calls) == 1, "generation must still happen when evidence.detail is real"
+    assert "no restriction" in result
+
+
 def test_explain_falls_back_when_the_model_is_not_built(monkeypatch):
     """Ollama up, but nobody has run `ollama create netwise-warden -f
     ai/Modelfile` yet -- at least as likely in practice as Ollama being
@@ -378,13 +451,17 @@ def test_build_prompt_does_not_crash_when_evidence_detail_is_none():
 
 
 def test_explain_does_not_crash_when_evidence_detail_is_none(monkeypatch):
-    """explain() end to end, with _generate stubbed so this stays a fast,
-    deterministic test rather than depending on whether Ollama happens to
-    be running -- the crash this covers happened inside _build_prompt(),
-    before any real model call, so a stub is enough to exercise it."""
-    monkeypatch.setattr(explain_module, "_generate", lambda finding: "A grounded explanation.")
+    """explain() end to end. evidence.detail=None means _evidence_detail()
+    returns "", which the thin-evidence guard (see explain()'s docstring)
+    now treats the same as no evidence at all -- generation is skipped, not
+    attempted and then rescued. Asserting the model is never even called is
+    the point: the crash this test used to cover doesn't need rescuing
+    anymore, because the path that crashed is no longer reached."""
+    calls = []
+    monkeypatch.setattr(explain_module, "_generate", lambda finding: calls.append(finding) or "unused")
     finding = {"id": "AC-001", "status": "found", "summary": "test", "evidence": {"detail": None}}
-    assert explain(finding) == "A grounded explanation."
+    assert explain(finding) == "test"
+    assert calls == []
 
 
 def test_fallback_error_explanation_does_not_crash_when_evidence_is_none_entirely():
