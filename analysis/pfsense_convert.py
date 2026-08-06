@@ -30,18 +30,45 @@ SCOPE -- TIMEBOXED ON PURPOSE, PER CLAUDE.md SECTION 7
     "refuse rather than guess" discipline analysis/checks/routing.py's
     _compute_dead_rule_outcome() and ai/Modelfile both already commit to.
 
-A SIMPLIFYING ASSUMPTION, STATED EXPLICITLY
+A SIMPLIFYING ASSUMPTION, NO LONGER A SILENT ONE (issue #47)
     PF Sense's real rule evaluation is "last matching rule wins" unless a
-    rule is marked "quick" (which most PF Sense-GUI-authored rules are, but
-    the XML does not guarantee it). This module instead treats rules as
+    rule is marked "quick", in which case evaluation stops there and that
+    rule's action is final. This module instead treats rules as
     first-match-wins, top to bottom -- exactly how a Cisco ACL already
     behaves, and how every existing check in this project already reasons
-    about rule order. tests/fixtures/pfsense-source/config.xml is written so
-    every rule matches a disjoint slice of traffic except the final
-    catch-all, which makes it correct under EITHER evaluation model. A real
-    PF Sense export relying on last-match-wins semantics between overlapping
-    rules would convert to something that parses cleanly but decides
-    differently than the original -- a known limitation, not a hidden one.
+    about rule order.
+
+    For two overlapping rules A (earlier) and B (later), the two models are
+    guaranteed to agree in exactly two cases: A and B have the SAME action
+    (it does not matter which one "wins"), or A is "quick" (both models
+    stop evaluating at A the moment it matches -- Cisco because first-match
+    always stops there, PF Sense because "quick" says to). B's own "quick"
+    flag does not help on its own: PF Sense has already evaluated the
+    earlier, non-quick A and moved past it before B is ever reached, so a
+    later quick rule cannot undo the disagreement A already caused.
+    Anything else -- overlapping traffic, different actions, A not quick --
+    is genuinely ambiguous.
+
+    Demonstrated, not hypothetical (issue #47's probe): a deny-then-permit
+    pair on the same host, neither marked "quick", converted cleanly and
+    reported the permit line as "unreachable, shadowed by the deny" -- while
+    the real firewall, evaluating last-match, lets that exact traffic
+    through. Confidently wrong is worse than refusing, so this module now
+    checks for that ambiguity rather than assuming it away: see
+    `_check_rule_order_is_unambiguous()`, called from `convert()` for every
+    rule pair.
+
+    tests/fixtures/pfsense-source/config.xml's two "pass" rules are both
+    marked `<quick/>`, and it is load-bearing, not decoration. The file's
+    final rule is a catch-all deny, which by definition overlaps every
+    specific rule before it -- this check caught that the fixture itself
+    would have been wrong under real PF Sense semantics without `<quick/>`
+    on the two passes, the trailing deny would have overridden both of
+    them, denying the exact traffic the file exists to show as permitted.
+    "Written so every rule matches a disjoint slice" was true of the three
+    rules' intent, not of their actual address spaces once the catch-all is
+    counted -- a distinction this check exists specifically to stop anyone
+    (human or converter) from eliding again.
 
 WHY INTERFACE NAMES ARE REWRITTEN, NOT COPIED
     PF Sense identifies interfaces with FreeBSD device names (em0, em1, igb0).
@@ -277,6 +304,144 @@ def _resolve_endpoint(el: ET.Element, interfaces: Dict[str, Dict[str, str]]) -> 
     )
 
 
+def _endpoint_network(el: ET.Element, interfaces: Dict[str, Dict[str, str]]) -> ipaddress.IPv4Network:
+    """The address space a <source>/<destination> element actually matches,
+    as an IPv4Network, for OVERLAP DETECTION only -- see
+    _check_rule_order_is_unambiguous(). The ACL line itself is still built
+    by _resolve_endpoint(), which keeps emitting the literal "any"/"host"/
+    network syntax Cisco expects; this exists only to answer "do these two
+    address spaces intersect", which a formatted string cannot answer
+    without being re-parsed.
+
+    "any" becomes 0.0.0.0/0 -- the actual universal set, not a special case,
+    so it overlaps everything through the same .overlaps() call as every
+    other shape. A single host becomes a /32.
+
+    Handles exactly the same three forms _resolve_endpoint() does, and is
+    always called after _resolve_endpoint() has already succeeded for the
+    same element (see convert()), so the validation _resolve_endpoint()
+    already performs -- unresolvable network references, non-IP <address>
+    aliases -- does not need repeating here.
+    """
+    if el.find("any") is not None:
+        return ipaddress.IPv4Network("0.0.0.0/0")
+
+    network = _text(el, "network")
+    if network is not None:
+        iface = interfaces[network]
+        return ipaddress.IPv4Network(f"{iface['ipaddr']}/{iface['subnet']}", strict=False)
+
+    address = _text(el, "address")
+    return ipaddress.IPv4Network(f"{address}/32")
+
+
+def _protocols_might_overlap(a: str, b: str) -> bool:
+    """PF Sense protocol strings ("tcp", "udp", "icmp", "any"). "any" is a
+    superset of every other protocol, so it overlaps all of them; two
+    specific protocols overlap only if they are the same one."""
+    return a == "any" or b == "any" or a == b
+
+
+def _ports_might_overlap(a: Optional[int], b: Optional[int]) -> bool:
+    """None means "no <port> element", i.e. every port -- a superset of any
+    specific port, same reasoning as "any" for protocols above."""
+    return a is None or b is None or a == b
+
+
+def _check_rule_order_is_unambiguous(
+    rule_els: List[ET.Element], interfaces: Dict[str, Dict[str, str]], acl_lines: List[str]
+) -> None:
+    """Refuse to convert if two rules could disagree about a flow that
+    matches both of them -- see the module docstring's issue #47 section
+    for the two evaluation models this reconciles.
+
+    THE EXACT CONDITION, derived rather than approximated
+        For two rules A (earlier in the file) and B (later), whose traffic
+        spaces overlap:
+
+        - If A and B have the SAME action, it does not matter which one
+          "wins" for the overlapping traffic -- the outcome is identical
+          either way, so there is nothing to disagree about even though
+          the two models might pick a different rule to credit it to.
+
+        - If A is "quick": PF Sense stops evaluating at A the instant a
+          flow matches it, so A's action is final. Cisco's first-match
+          semantics ALSO stop at A, being earlier. The two models agree on
+          A's action for every such flow, regardless of what B is or
+          whether B is also quick.
+
+        - Otherwise (actions differ, A is not quick): Cisco still stops at
+          A (first-match always does), but PF Sense keeps evaluating past
+          A and lets B's action override it (whether because B is quick
+          and matches next, or because B is simply the last matching rule
+          in a run with no quick rules at all). The two models can produce
+          different actions for the same flow. Genuinely ambiguous.
+
+        B's own "quick" flag never enters this decision -- only A's does,
+        because A is the one either model might stop at first. This is
+        narrower than "flag unless both rules are quick" would be: a
+        specific, quick, early rule followed by a broad, non-quick,
+        catch-all rule is NOT ambiguous, and the check does not spuriously
+        refuse it.
+
+    Called from convert() AFTER every rule has already been through
+    _rule_to_acl_line() successfully, passed in as `acl_lines` (same order
+    as `rule_els`) rather than rebuilt here -- so every field read here is
+    already known to be a shape this module understands, and no rule is
+    converted to an ACL line twice. This function only ever adds a refusal
+    on top of a config that would otherwise have converted, it never turns
+    an already-invalid rule into a different error.
+
+    O(n^2) in the rule count. PF Sense rule sets in scope for this converter
+    are small (single-interface, no aliases, no ranges -- see the module's
+    own SCOPE section), so this is not a performance concern; correctness
+    is what matters here, not asymptotic elegance.
+    """
+    parsed = []
+    for rule_el, line in zip(rule_els, acl_lines):
+        pf_type = _text(rule_el, "type") or ""
+        pf_protocol = _text(rule_el, "protocol", default="any") or "any"
+        destination_el = rule_el.find("destination")
+        port_text = _text(destination_el, "port") if pf_protocol in ("tcp", "udp") else None
+        parsed.append(
+            {
+                # The CISCO action, not the raw PF Sense <type> -- "block"
+                # and "reject" both become "deny", and a block/reject pair
+                # is exactly as same-action-safe as a block/block pair.
+                "action": _PFSENSE_TO_CISCO_ACTION.get(pf_type),
+                "quick": rule_el.find("quick") is not None,
+                "protocol": pf_protocol,
+                "source": _endpoint_network(rule_el.find("source"), interfaces),
+                "destination": _endpoint_network(destination_el, interfaces),
+                "port": int(port_text) if port_text is not None else None,
+                "line": line,
+            }
+        )
+
+    for i, a in enumerate(parsed):
+        for b in parsed[i + 1 :]:
+            if a["action"] == b["action"]:
+                continue
+            if a["quick"]:
+                continue
+            if not _protocols_might_overlap(a["protocol"], b["protocol"]):
+                continue
+            if not a["source"].overlaps(b["source"]):
+                continue
+            if not a["destination"].overlaps(b["destination"]):
+                continue
+            if not _ports_might_overlap(a["port"], b["port"]):
+                continue
+            raise PfSenseConversionError(
+                "rule order is ambiguous: these two rules' traffic spaces "
+                "overlap, their actions differ, and the earlier one is not "
+                "marked quick, so PF Sense's real last-match-wins "
+                "evaluation and this converter's first-match-wins model "
+                f"can disagree about which one decides -- {a['line']!r} "
+                f"(earlier) and {b['line']!r} (later)"
+            )
+
+
 def _rule_to_acl_line(rule_el: ET.Element, interfaces: Dict[str, Dict[str, str]]) -> str:
     """Convert one PF Sense <rule> element into one Cisco extended-ACL line."""
     pf_type = _text(rule_el, "type")
@@ -356,6 +521,7 @@ def convert(xml_path: Union[str, Path]) -> str:
         )
 
     acl_lines = [_rule_to_acl_line(r, interfaces) for r in rule_els]
+    _check_rule_order_is_unambiguous(rule_els, interfaces, acl_lines)
 
     lines: List[str] = [f"hostname {hostname}", "!"]
     for role, info in interfaces.items():
