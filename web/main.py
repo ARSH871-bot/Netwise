@@ -31,6 +31,7 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from ai.explain import explain
 from analysis import pipeline as analysis_pipeline
 from web import mock_findings
 
@@ -123,9 +124,58 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+def _attach_explanations(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Attach a plain-English explanation to every status="found" finding
+    (US-19 / #31).
+
+    THE SHAPE CHOSEN, AND WHY
+        The explanation is added as an extra "explanation" key on the
+        response dict, NOT a new field in the F-1 contract itself. F-1's
+        fields are defined in docs/finding-format.md and enforced by
+        analysis/findings.py -- changing THAT needs agreement from all
+        four team members (CLAUDE.md section 7a). This key is added here,
+        downstream of that validation, purely for this endpoint's JSON
+        response; analysis.pipeline.analyse() and every check still return
+        (and are still validated against) the F-1 shape unchanged. #31's
+        own text names this as the option that "avoids that entirely".
+
+    WHY ONLY status="found"
+        A "none" finding has nothing to explain beyond its own summary,
+        and an "error" finding has no real Batfish output to ground an
+        explanation in -- asking the model to write prose about a check
+        that never ran is the invented-network-behaviour failure
+        CLAUDE.md constraint 2 forbids. static/app.js's rendering already
+        encodes this same rule for which cards get the explanation slot
+        at all; this keeps the two in agreement.
+
+    WHY THE EXTRA try/except, WHEN explain() IS BUILT NOT TO RAISE
+        ai/explain.py's own module docstring guarantees explain() never
+        raises -- an unreachable Ollama, a model that was never built, or
+        a malformed finding all degrade to deterministic fallback text
+        internally (see _try_generate() and the thin-evidence guard).
+        This except is a second, independent layer at a boundary this
+        module does not own: if that guarantee is ever wrong, one
+        explanation failing must not take down the WHOLE findings
+        response. Same reasoning analysis.pipeline.run_check() already
+        applies to one check's crash not being allowed to break the other
+        three, one layer further out. No explanation is attached in that
+        case -- the finding still renders, just without one, matching
+        #31's acceptance criterion for an unreachable Ollama exactly.
+    """
+    for finding in results:
+        if finding.get("status") != "found":
+            continue
+        try:
+            finding["explanation"] = explain(finding)
+        except Exception:
+            pass
+    return results
+
+
 @app.get("/api/findings")
 def get_findings() -> List[Dict[str, Any]]:
-    """Return the current findings, in the F-1 format.
+    """Return the current findings, in the F-1 format, plus a plain-English
+    "explanation" on every status="found" finding (US-19 / #31).
 
     Serves mock data until a config has been uploaded, then calls the real
     pipeline. The response shape is identical either way, including
@@ -133,10 +183,17 @@ def get_findings() -> List[Dict[str, Any]]:
 
     Note SNAPSHOT_DIR, not CONFIG_ROOT: analyse() wants the snapshot root, the
     folder that CONTAINS `configs/`. See the layout diagram at the top.
+
+    Mock findings are NOT explained. #31's acceptance criterion is about a
+    real finding from a real uploaded config; explaining fabricated demo
+    data risks a viewer mistaking a rephrased invention for a rephrased
+    fact, which is exactly the distinction this whole project exists to
+    keep clear.
     """
     if not _uploaded:
         return mock_findings.get_mock_findings()
-    return analysis_pipeline.analyse(SNAPSHOT_DIR, snapshot_name=SNAPSHOT_NAME)
+    results = analysis_pipeline.analyse(SNAPSHOT_DIR, snapshot_name=SNAPSHOT_NAME)
+    return _attach_explanations(results)
 
 
 @app.post("/api/upload")
