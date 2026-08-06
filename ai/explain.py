@@ -282,6 +282,35 @@ def _generate(finding: Dict[str, Any]) -> str:
     return response["response"].strip()
 
 
+def _try_generate(finding: Dict[str, Any]) -> Optional[str]:
+    """One attempt to call the model, or None if Ollama itself could not be
+    reached.
+
+    WHY THIS EXISTS
+        analyse() already reports an unreachable Batfish as a status="error"
+        finding rather than raising -- the web layer never has to handle an
+        exception for it. Before this wrapper, explain() did not follow the
+        same convention: `ollama.generate()` raises a bare `ConnectionError`
+        when Ollama is not running, and nothing here caught it. Confirmed
+        directly: pointing this module at an unreachable Ollama and calling
+        explain() raised past every caller.
+
+        Same failure class -- a dependency the check does not control is
+        down -- handled two different ways. Wiring explanations into the
+        dashboard (#31) on top of the old behaviour would mean a machine
+        without Ollama running gets a broken findings view instead of
+        findings without explanations.
+
+    Returns None rather than raising so explain() can fall back the same way
+    it already does when generation fails validation twice, instead of
+    needing a second, different failure path.
+    """
+    try:
+        return _generate(finding)
+    except ConnectionError:
+        return None
+
+
 def _is_unacceptable(text: str, *, is_error: bool) -> bool:
     """One check, used for every status. status="error" additionally
     rejects any claimed result about the network; every status rejects
@@ -302,17 +331,19 @@ def explain(finding: Dict[str, Any]) -> str:
     Generates, validates, and retries once if the first attempt is
     unacceptable; falls back to a fixed, non-generated sentence if the
     second attempt is unacceptable too, rather than ever showing an
-    unvalidated response.
+    unvalidated response. If Ollama cannot be reached at all, this degrades
+    straight to the same fallback -- it does not raise, and it does not
+    waste a second attempt against a host that is already known to be
+    unreachable.
     """
     is_error = finding.get("status") == "error"
 
-    explanation = _generate(finding)
-    if not _is_unacceptable(explanation, is_error=is_error):
-        return explanation
-
-    explanation = _generate(finding)
-    if not _is_unacceptable(explanation, is_error=is_error):
-        return explanation
+    for _ in range(2):
+        explanation = _try_generate(finding)
+        if explanation is None:
+            break
+        if not _is_unacceptable(explanation, is_error=is_error):
+            return explanation
 
     if is_error:
         return _fallback_error_explanation(finding)
