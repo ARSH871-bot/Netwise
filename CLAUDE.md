@@ -301,9 +301,17 @@ of 5 August (#39). `web/main.py` stages the upload and calls
 upload. Verified against opposite fixtures:
 
 ```
-upload rtr-us5-insecure  ->  5 problems found, 2 could not check
-upload rtr-us5-secure    ->  0 problems, 2 checked clean, 2 could not check
+upload rtr-us5-insecure  ->  5 problems found, 1 could not check
+upload rtr-us5-secure    ->  0 problems, 2 checked clean, 1 could not check
 ```
+
+The remaining "could not check" is honest rather than noise: it is the routing
+assertions saying, once, that they are written about `rtr-hq`/`rtr-branch` and
+so do not apply to a single-router upload. Every check is now scoped to the
+devices actually present — `access_control` (#45), `policy_compliance` (#50),
+`routing` (#29) — so an inapplicable statement is reported once, together,
+instead of one amber card each. It stays a `status="error"`: not applicable is
+not the same as checked and clean.
 
 **One link is still open: the AI explanation does not render.** `ai/explain.py`
 works and the dashboard has a slot for it (#40), deliberately marked *"not
