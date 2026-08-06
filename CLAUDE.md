@@ -248,12 +248,14 @@ format, to the screen. This replaced the earlier engine/frontend split.
 | **Shubham** | Policy-compliance + change-impact analysis |
 | **Samika** | Risk prioritisation + the interface + secure upload |
 
-## 11. Status — last updated 2026-08-03
+## 11. Status — last updated 2026-08-06
 
 > **⚠️ This section goes stale faster than anything else in the file.** It has
-> already been wrong about `main` twice in one day — once caught in review
-> before merging, once caught after. If a decision depends on it, check the
-> repo rather than trusting it:
+> been wrong about `main` repeatedly, in both directions — claiming work that
+> had not landed, and calling finished work blocked. Every instance so far was
+> the same cause: a fact recorded here *and* somewhere else, and only one of
+> them updated. If a decision depends on this section, check the repo rather
+> than trusting it:
 >
 > ```bash
 > sed -n '/^CHECKS = {/,/^}/p' analysis/pipeline.py   # what actually runs
@@ -267,8 +269,13 @@ format, to the screen. This replaced the earlier engine/frontend split.
 **Sprint 1 — complete.** Batfish installed and running; the five core questions
 run and understood on bundled example configs. See `docs/sprint1/SPRINT1.md`.
 
-**Sprint 2 — in progress.** The output-schema question that once blocked this
-is **settled**: the team agreed F-1 (see §7a). Do not reopen it casually.
+**Sprint 2 — complete** (30 July – 5 August 2026). The output-schema question
+that once blocked it is **settled**: the team agreed F-1 (see §7a). Do not
+reopen it casually. The record is `docs/sprint2/SPRINT2.md`, written inside the
+sprint rather than reconstructed after it.
+
+**Sprint 3 — starting.** Not yet planned or recorded. Anything below describing
+work in flight is Sprint 2 carry-over until a `docs/sprint3/` record exists.
 
 ### What is built and on `main`
 
@@ -288,7 +295,7 @@ is **settled**: the team agreed F-1 (see §7a). Do not reopen it casually.
 
 | Piece | Owner | Note |
 |---|---|---|
-| `risk` scoring | Samika | Blocked — see the open decisions below |
+| `risk` scoring | Samika | Not started. **No longer blocked** — the post-processor stage it plugs into is built (#44) and `POST_PROCESSORS` is waiting for one line. See §7b |
 | `change_impact` | Shubham | Not started, and does not fit the `run(bf)` contract |
 | AI: natural-language questions | Ankeet | Not started — the other half of Layer 2 |
 | AI explanation on screen | Samika + Ankeet | Slot built (#40); `explain()` not yet called — #31 |
