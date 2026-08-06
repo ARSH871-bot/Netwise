@@ -18,6 +18,7 @@ RUN
     pytest tests/ -v
 """
 
+from ai import explain as explain_module
 from ai.explain import (
     _build_prompt,
     _compute_dead_rule_outcome,
@@ -25,6 +26,7 @@ from ai.explain import (
     _fallback_plain_restatement,
     _looks_like_a_result_claim,
     _looks_like_speculation,
+    explain,
 )
 
 # --- _looks_like_a_result_claim ----------------------------------------------
@@ -228,6 +230,83 @@ def test_fallback_handles_a_missing_detail_gracefully():
     defence and must not itself be a new way to fail."""
     assert _fallback_error_explanation({"evidence": {}}) != ""
     assert _fallback_error_explanation({}) != ""
+
+
+# --- explain() degrades when Ollama is unreachable -----------------------------
+# Regression coverage for a real gap found in review: ollama.generate() raises a
+# bare ConnectionError when Ollama is not running, and nothing caught it, so
+# explain() raised straight past every caller. analyse() already reports an
+# unreachable Batfish as a status="error" finding instead of raising; explain()
+# not doing the same for an unreachable Ollama is what blocks #31 -- wiring
+# explanations into the dashboard would otherwise mean a machine without Ollama
+# running gets a broken findings view rather than findings without explanations.
+
+
+def test_explain_falls_back_instead_of_raising_when_ollama_is_unreachable(monkeypatch):
+    def unreachable(finding):
+        raise ConnectionError("Failed to connect to Ollama.")
+
+    monkeypatch.setattr(explain_module, "_generate", unreachable)
+
+    finding = {
+        "id": "AC-001",
+        "status": "found",
+        "summary": "Unencrypted web traffic reaches the internal server",
+        "evidence": {"detail": "Expected DENY but got PERMIT"},
+    }
+    result = explain(finding)
+    assert "Unencrypted web traffic reaches the internal server" in result
+
+
+def test_explain_uses_the_error_fallback_when_ollama_is_unreachable(monkeypatch):
+    """The found/none and error fallbacks are different functions -- this
+    must still pick the right one when Ollama is the thing that failed, not
+    generation quality."""
+
+    def unreachable(finding):
+        raise ConnectionError("Failed to connect to Ollama.")
+
+    monkeypatch.setattr(explain_module, "_generate", unreachable)
+
+    finding = {
+        "id": "RT-000",
+        "status": "error",
+        "evidence": {"detail": "BatfishException: Work terminated abnormally"},
+    }
+    result = explain(finding)
+    assert "BatfishException: Work terminated abnormally" in result
+    assert _looks_like_a_result_claim(result) is False
+
+
+def test_explain_does_not_retry_a_second_time_against_an_unreachable_ollama(monkeypatch):
+    """A second attempt against a host already known to be down would only
+    add latency for no chance of a different outcome -- one call, not two."""
+    calls = []
+
+    def unreachable(finding):
+        calls.append(finding)
+        raise ConnectionError("Failed to connect to Ollama.")
+
+    monkeypatch.setattr(explain_module, "_generate", unreachable)
+    explain({"id": "AC-001", "status": "found", "summary": "x", "evidence": {"detail": "y"}})
+    assert len(calls) == 1
+
+
+def test_explain_still_retries_normally_when_ollama_is_reachable(monkeypatch):
+    """The Ollama-unreachable short-circuit must not change the existing
+    generate-validate-retry behaviour for an ordinary validation failure."""
+    calls = []
+
+    def speculative_then_clean(finding):
+        calls.append(finding)
+        if len(calls) == 1:
+            return "This could potentially be a problem."
+        return "The device allows all traffic through with no restriction."
+
+    monkeypatch.setattr(explain_module, "_generate", speculative_then_clean)
+    result = explain({"id": "AC-001", "status": "found", "summary": "x", "evidence": {"detail": "y"}})
+    assert len(calls) == 2
+    assert "no restriction" in result
 
 
 # --- _build_prompt -------------------------------------------------------------
