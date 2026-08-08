@@ -30,6 +30,14 @@ device and filter explicitly rather than trying to discover filters
 automatically. When real client configs arrive, each rule carries its own
 `node` and `filter`, so the list extends without the check changing.
 
+**On a snapshot that does not contain `rtr-us5`, no rule can be evaluated.**
+The check reports that once, as `PC-050`, rather than once per rule — it used
+to emit five "could not check" cards, which is correct under F-4 and unusable
+in volume. It is reported, never skipped: a config nothing was checked against
+must never come back clean. Naming devices in the policy at all is the deeper
+problem, tracked as issue #29; this makes the current design usable, it does
+not fix it.
+
 ### The address space these rules talk about
 
 | Address | What it is | Where it comes from |
@@ -329,6 +337,18 @@ two slots:
 |---|---|---|
 | Violation | `PC-00n` | rule *n* is broken by this config |
 | Check error | `PC-0(n+50)` | rule *n* could not be fully evaluated |
+
+Two check-level slots sit outside the per-rule numbering, and they mirror each
+other — `PC-000` is "the whole check found nothing", `PC-050` is "the whole
+check could not apply":
+
+| id | Meaning |
+|---|---|
+| `PC-000` | every applicable rule ran and held |
+| `PC-050` | the rules do not apply to this snapshot, or we could not tell |
+
+`PC-050` is `SENTINEL_NUMBER + ERROR_NUMBER_OFFSET`. Rules are numbered from 1,
+so nothing else can ever land there.
 
 `ERROR_NUMBER_OFFSET = 50` in `analysis/checks/policy_compliance.py`. So POL-2
 violated *and* partly unchecked yields **`PC-002` and `PC-052`**.

@@ -56,7 +56,15 @@ def two_arm_rule(monkeypatch):
 
     POL-2 is the real two-arm rule, but pinning the test to the live policy
     would make it fail the day someone edits POL-2 for an unrelated reason.
+
+    Also stubs `device_names` to say the rule's device IS present. run() now
+    scopes rules to the devices in the snapshot, so without this every test
+    here would take the "nothing applies to this config" path and prove nothing
+    about arm isolation. Device scoping has its own tests in
+    tests/test_device_scoping.py.
     """
+    monkeypatch.setattr(policy_compliance.snapshot, "device_names",
+                        lambda bf: {"rtr-us5"})
     rule = {
         "number": 2,
         "description": "The internal server is reachable only over HTTPS",
