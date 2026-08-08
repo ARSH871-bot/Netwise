@@ -120,15 +120,35 @@ Batfish runs in Docker container `batfish` (image `batfish/allinone`), exposing
   else. Interfaces and filter rules are covered; NAT, aliases, DHCP, VPN, IPv6
   and combined `tcp/udp` rules are not, and each raises rather than guessing.
 
-  **Read this before showing the client their own config.** PF Sense evaluates
-  rules *last-match-wins* unless a rule is marked "quick"; the converter treats
-  them as *first-match-wins*, like a Cisco ACL. Our fixture is written so both
-  models agree, so the tests cannot catch the difference. A real export that
-  relies on last-match semantics between overlapping rules **converts to
-  something that parses cleanly and decides differently from the real
-  firewall** — findings would be confidently wrong about a network that does
-  not behave that way. Tracked as an open risk, not a bug: see the module
-  docstring and the linked issue.
+  **Rule order: PF Sense and Cisco disagree, and the converter now refuses
+  rather than guesses.** PF Sense evaluates *last-match-wins* unless a rule is
+  marked `quick`; a Cisco ACL — and so this converter — is *first-match-wins*.
+  Where two overlapping rules have different actions and the earlier one is not
+  `quick`, the two models decide the same traffic **differently**. Measured: a
+  block followed by a narrower HTTPS permit, neither `quick`, converts into an
+  ACL that denies traffic the real firewall permits, and Netwise then reports
+  the deciding rule as one that "never takes effect".
+
+  `_check_rule_order_is_unambiguous()` detects exactly that case and raises,
+  rather than emitting something that parses cleanly and is wrong (#58, closing
+  #47). Only the *earlier* rule's `quick` flag can make a pair safe — PF Sense
+  has already moved past a non-quick earlier rule before the later one is
+  reached.
+
+  **Our own fixture was wrong about this until #58**, which is worth recording
+  because the earlier version of this section cited it as reassurance. Its
+  comment claimed every rule matched a disjoint slice of traffic; the trailing
+  catch-all deny overlaps every rule before it by definition, so under real PF
+  Sense semantics that deny would have overridden both permits and the fixture
+  demonstrated the opposite of its stated policy. Both pass rules now carry
+  `<quick/>` — also what a PF Sense GUI normally produces — and a test strips
+  the tag from a copy to prove the refusal still fires.
+
+  **Still open, and it is a client question, not a code one:** does the client's
+  real export mark its rules `quick`? If it does, we can convert and analyse it
+  as it stands. If it does not, the converter will now correctly refuse, and
+  teaching it PF Sense's real evaluation order becomes a piece of work nobody
+  has scoped.
 
 ## 7a. The finding format (F-1) — the one contract
 
@@ -337,6 +357,10 @@ those two is #31, and it is now a small job rather than a redesign.
   are enforced in `pipeline.run_post_processors()` rather than trusted. Only
   the `docs/finding-format.md:36` wording still needs changing, and that is an
   F-1 edit needing all four — see below.
+- **PF Sense rule order** (issue #47, closed by #58). The converter refuses to
+  convert when two overlapping rules disagree and the earlier is not `quick`,
+  instead of silently mistranslating them. See §7. What remains is a **client
+  question, not a decision of ours**: whether the real export uses `quick`.
 
 ### Open decisions — do not settle these alone
 
@@ -352,8 +376,9 @@ those two is #31, and it is now a small job rather than a redesign.
    other than `PASSED` as fatal, including `PARTIALLY_UNRECOGNIZED`. Safe for
    test configs, likely too strict for real ones. The fix is to run the checks
    and attach a loud "results may be incomplete" finding — never to ignore it.
-   **This is also the only thing catching a mis-converted PF Sense config**, so
-   relaxing it has a consequence beyond convenience — see §7 and issue #47.
-4. **PF Sense rule order** (issue #47). The converter assumes first-match-wins;
-   PF Sense is last-match-wins unless a rule is marked `quick`. Our fixture is
-   correct under both, so the tests cannot catch the difference.
+
+   It used to carry a second argument: that it was *the only thing catching a
+   mis-converted PF Sense config*. **That is no longer true** — #58 catches
+   ambiguous rule order in the converter itself, where the fault actually is.
+   Relaxing parse strictness is now a question about parse strictness alone,
+   which is the shape it should always have had.
