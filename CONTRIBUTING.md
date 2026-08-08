@@ -141,11 +141,62 @@ Real network configs **never** go in git. Only synthetic fixtures we invented
 ourselves belong in `tests/fixtures/`. Everything else lives in `configs/`,
 which is ignored. When in doubt, keep it out.
 
+## 5a. The merge rules
+
+Five rules. They exist because each one was broken at least once on 6 August,
+by the person who wrote this file, while merging a fourteen-PR queue. They are
+written down because **GitHub cannot enforce any of them here** — see §6.
+
+**1. Never merge your own pull request.**
+One approval from someone else, every time, including documentation. If a change
+is genuinely too urgent to wait, say so in the PR and name what made it urgent —
+then it is a judgement someone can disagree with, rather than a rule quietly
+skipped. *(Broken on #62: reviewers requested, then self-merged before anyone
+looked.)*
+
+**2. Wait for CI to go green before merging.**
+`MERGEABLE / UNSTABLE` means the checks have not finished. A local `pytest` run
+is not a substitute — the entire point of CI is that it runs somewhere that is
+not your machine, on both 3.12 and 3.13. *(Broken on #58, #54, #62: all merged
+while pending. They passed afterwards, which was luck.)*
+
+**3. Ask before rewriting someone else's branch.**
+If their PR needs a rebase, ask them. If they are unavailable and it is
+genuinely blocking, use `--force-with-lease` (never bare `--force`) and comment
+on the PR saying exactly what you did and why. Disclosure afterwards is the
+mitigation, not the fix. *(Broken on #54 and #58.)*
+
+**4. Merge small and merge often.**
+A queue of fourteen approved PRs produced three simultaneous conflicts in the
+same test file. None of them were hard; all of them were avoidable. If something
+is approved and green, land it.
+
+**5. Rebase to resolve, don't merge `main` into your branch.**
+Keeps feature branches linear and keeps the PR diff showing your work rather
+than everyone else's. When you rebase a branch that was built on another PR,
+rebase only your own commits:
+
+```bash
+git rebase --onto origin/main <the-other-prs-old-head> <your-branch>
+```
+
+### Two habits worth copying
+
+**Commit before you experiment.** `git checkout -- <file>` on an *uncommitted*
+file destroys the work, not just the experiment. Commit, then break things.
+
+**Stack deliberately when work depends on unmerged work.** Branch from the PR
+you depend on, say so in the description, and name the merge order. Writing
+documentation that describes behaviour not yet on `main` is how this repo has
+gone wrong before.
+
 ## 6. This is an agreement, not an enforcement
 
 We cannot turn on branch protection — it needs GitHub Pro or a public repo, and
 we keep this repo **private** so client configs stay protected. That trade is
 deliberate.
 
-So nothing stops you pushing to `main`. Please don't. The convention only works
-because we all keep it.
+So nothing stops you pushing to `main`, self-merging, or merging red. Please
+don't. The convention only works because we all keep it — and it is worth being
+blunt that the first person to break these rules was the one who wrote them,
+which is precisely why they are now written down rather than assumed.
