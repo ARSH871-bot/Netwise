@@ -311,9 +311,18 @@ def test_rules_on_two_different_interfaces_raises():
 
 def test_rules_are_emitted_in_document_order():
     """Cisco ACLs are first-match-wins, so order is meaning, not just
-    style -- a converter that reordered rules would change the policy."""
+    style -- a converter that reordered rules would change the policy.
+
+    The deny is marked quick: these two rules' traffic overlaps (the
+    permit is a catch-all), and without quick on the earlier, more
+    specific rule, issue #47's rule-order check correctly refuses this
+    pair as ambiguous -- see test_a_specific_deny_before_a_broader_permit_
+    without_quick_raises below. This test is about output ORDER, not about
+    #47, so it uses input the new check accepts, same reasoning as the
+    other tests updated when #45/#50's device-scoping check landed."""
     xml_text = _minimal_xml(rules_xml="""
         <rule><type>block</type><interface>lan</interface><protocol>tcp</protocol>
+        <quick/>
         <source><any/></source><destination><address>10.0.0.5</address><port>22</port></destination></rule>
         <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
         <source><any/></source><destination><any/></destination></rule>
@@ -339,6 +348,28 @@ def test_hostname_with_an_embedded_newline_raises():
     xml_text = _minimal_xml(
         hostname="probe\nip access-list extended acl_in\n permit ip any any"
     )
+# --- Rule order ambiguity (issue #47) -----------------------------------------
+# PF Sense evaluates last-match-wins unless a rule is "quick"; this module
+# converts as first-match-wins, exactly like a Cisco ACL. The two models agree
+# whenever the earlier of two overlapping rules is quick (both stop there), or
+# whenever the two rules have the same action (it does not matter which one
+# "wins"). They can disagree otherwise -- demonstrated live in issue #47's own
+# probe, a deny-then-permit pair on the same host, neither quick, which
+# converted cleanly and reported the permit as "unreachable" while the real
+# firewall, evaluating last-match, would have let that exact traffic through.
+
+
+def test_a_specific_deny_before_a_broader_permit_without_quick_raises():
+    """Issue #47's own probe, reproduced here as a regression test. Neither
+    rule is quick, their actions differ (deny vs permit), and their traffic
+    overlaps (the permit is a subset of what the deny already covers) --
+    exactly the condition PF Sense and this converter can disagree about."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>block</type><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/></source><destination><address>10.20.0.5</address></destination></rule>
+        <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/></source><destination><address>10.20.0.5</address><port>443</port></destination></rule>
+    """)
     with pytest.raises(PfSenseConversionError):
         _convert_string(xml_text)
 
@@ -427,3 +458,101 @@ def test_write_snapshot_refuses_a_path_traversal_hostname():
             assert not escaped.exists()
         finally:
             xml_path.unlink()
+def test_the_same_pair_converts_once_the_earlier_rule_is_quick():
+    """The earlier rule stops evaluation the instant it matches, in both
+    models -- Cisco's first-match and PF Sense's quick mean the same thing
+    here, so this specific pair becomes unambiguous regardless of whether
+    the later rule is quick too."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>block</type><interface>lan</interface><protocol>tcp</protocol>
+        <quick/>
+        <source><any/></source><destination><address>10.20.0.5</address></destination></rule>
+        <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/></source><destination><address>10.20.0.5</address><port>443</port></destination></rule>
+    """)
+    output = _convert_string(xml_text)
+    assert "deny tcp any host 10.20.0.5" in output
+    assert "permit tcp any host 10.20.0.5 eq 443" in output
+
+
+def test_marking_only_the_later_rule_quick_still_raises():
+    """The LATER rule's quick flag never makes a pair safe on its own --
+    PF Sense has already evaluated the earlier, non-quick rule and kept
+    going before it ever reaches the later one, so the two models can
+    still disagree about which action the earlier rule's own match space
+    resolves to."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>block</type><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/></source><destination><address>10.20.0.5</address></destination></rule>
+        <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+        <quick/>
+        <source><any/></source><destination><address>10.20.0.5</address><port>443</port></destination></rule>
+    """)
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
+def test_overlapping_rules_with_the_same_action_never_raise():
+    """If both rules would produce the same outcome, it does not matter
+    which model "wins" -- there is nothing to disagree about even though
+    the two rules' traffic genuinely overlaps and neither is quick."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>block</type><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/></source><destination><address>10.20.0.5</address><port>22</port></destination></rule>
+        <rule><type>block</type><interface>lan</interface><protocol>any</protocol>
+        <source><any/></source><destination><any/></destination></rule>
+    """)
+    output = _convert_string(xml_text)
+    assert "deny tcp any host 10.20.0.5 eq 22" in output
+    assert "deny ip any any" in output
+
+
+def test_disjoint_rules_never_raise_regardless_of_quick():
+    """Two rules that genuinely never match the same traffic cannot
+    disagree about it, quick or not -- the check is about overlap, not
+    about quick in isolation."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/></source><destination><address>10.20.0.5</address><port>443</port></destination></rule>
+        <rule><type>pass</type><interface>lan</interface><protocol>udp</protocol>
+        <source><any/></source><destination><address>10.20.0.6</address><port>53</port></destination></rule>
+    """)
+    output = _convert_string(xml_text)
+    assert "permit tcp any host 10.20.0.5 eq 443" in output
+    assert "permit udp any host 10.20.0.6 eq 53" in output
+
+
+def test_a_single_rule_never_raises():
+    """No pair exists with only one rule -- the check must not misfire on
+    the trivial case."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>block</type><interface>lan</interface><protocol>any</protocol>
+        <source><any/></source><destination><any/></destination></rule>
+    """)
+    assert "deny ip any any" in _convert_string(xml_text)
+
+
+def test_the_real_fixture_relies_on_quick_and_would_be_wrong_without_it():
+    """Regression coverage for the gap this fix found in the fixture
+    itself, not just in new adversarial input: the real fixture's two
+    pass rules are followed by a catch-all deny, which by definition
+    overlaps both of them. Before this fix added <quick/> to the two pass
+    rules, this exact fixture converted successfully and produced a
+    config that would have been backwards under real PF Sense semantics
+    -- the trailing deny would have overridden both permits. Confirms the
+    fixture's own <quick/> tags are load-bearing, not decoration, by
+    checking a temp copy with them removed raises."""
+    original = Path(FIXTURE).read_text()
+    without_quick = original.replace("<quick/>\n      ", "")
+    assert without_quick != original, "the fixture must actually contain <quick/> for this test to mean anything"
+
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False, encoding="utf-8") as f:
+        f.write(without_quick)
+        path = Path(f.name)
+    try:
+        with pytest.raises(PfSenseConversionError):
+            convert(path)
+    finally:
+        path.unlink()

@@ -17,6 +17,18 @@ intentional, it means analysis/pfsense_convert.py's output can be checked
 against a scenario every existing check (access_control, policy_compliance)
 already has a documented, verified opinion about, rather than inventing a
 new policy nobody has reasoned about before.
+
+Both pass rules carry <quick/>, and it is load-bearing, not decoration
+(issue #47). Real PF Sense evaluates last match wins unless a rule is
+quick, and the final rule below is a catch-all deny that, by definition,
+overlaps every specific rule before it. Without <quick/> on the two pass
+rules, PF Sense's own real semantics would let that trailing deny-all
+override them for any flow it also matches, meaning DNS and HTTPS would
+be DENIED on the real firewall despite the earlier permits, exactly
+backwards from what this file is meant to demonstrate. Marking them quick
+is also the realistic choice, not just the convenient one, most PF Sense
+GUI-authored rules default to quick, the module docstring already said so
+before this file caught up to it.
 -->
 <pfsense>
   <version>21.05</version>
@@ -45,6 +57,7 @@ new policy nobody has reasoned about before.
       <interface>lan</interface>
       <ipprotocol>inet</ipprotocol>
       <protocol>udp</protocol>
+      <quick/>
       <source>
         <network>lan</network>
       </source>
@@ -60,6 +73,7 @@ new policy nobody has reasoned about before.
       <interface>lan</interface>
       <ipprotocol>inet</ipprotocol>
       <protocol>tcp</protocol>
+      <quick/>
       <source>
         <network>lan</network>
       </source>
