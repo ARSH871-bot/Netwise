@@ -105,11 +105,25 @@ def test_the_real_fixture_uses_a_valid_cisco_interface_name_not_the_raw_pfsense_
 # --- Interfaces ----------------------------------------------------------------
 
 
+# A benign, single rule on "lan" -- these two tests are about interface
+# emission, not filtering, but convert() now refuses an empty rule set
+# entirely (see the "Free-text fields..." / F6/F7 section below), so each
+# needs at least one rule naming a real interface to exercise what it is
+# actually testing.
+_ONE_BENIGN_LAN_RULE = """
+    <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+    <source><any/></source><destination><any/></destination></rule>
+"""
+
+
 def test_wan_and_lan_get_different_synthetic_interface_names():
-    xml_text = _minimal_xml(interfaces_xml="""
+    xml_text = _minimal_xml(
+        interfaces_xml="""
         <wan><if>em0</if><ipaddr>1.2.3.1</ipaddr><subnet>30</subnet></wan>
         <lan><if>em1</if><ipaddr>10.0.0.1</ipaddr><subnet>24</subnet></lan>
-    """)
+    """,
+        rules_xml=_ONE_BENIGN_LAN_RULE,
+    )
     output = _convert_string(xml_text)
     assert "interface GigabitEthernet0/0" in output
     assert "interface GigabitEthernet0/1" in output
@@ -118,10 +132,13 @@ def test_wan_and_lan_get_different_synthetic_interface_names():
 def test_interface_without_a_static_address_is_skipped_not_guessed():
     """A DHCP-assigned interface has no <ipaddr>/<subnet> to convert. Skipping
     it is correct; inventing an address would not be."""
-    xml_text = _minimal_xml(interfaces_xml="""
+    xml_text = _minimal_xml(
+        interfaces_xml="""
         <wan><if>em0</if></wan>
         <lan><if>em1</if><ipaddr>10.0.0.1</ipaddr><subnet>24</subnet></lan>
-    """)
+    """,
+        rules_xml=_ONE_BENIGN_LAN_RULE,
+    )
     output = _convert_string(xml_text)
     assert output.count("interface Gigabit") == 1
 
@@ -370,6 +387,18 @@ def test_a_specific_deny_before_a_broader_permit_without_quick_raises():
         <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
         <source><any/></source><destination><address>10.20.0.5</address><port>443</port></destination></rule>
     """)
+# --- Refuse rather than silently invert or drop the source firewall's policy -----
+# Regression coverage for three findings from a senior-level adversarial QA pass,
+# all in convert()'s interface/ACL-binding logic and _parse_interfaces().
+
+
+def test_no_filter_rules_at_all_raises():
+    """PF Sense fails closed with no rules (blocks everything); Cisco fails
+    open with no ACL bound (permits everything). Converting zero rules into
+    zero rules would silently invert the source firewall's actual security
+    posture -- confirmed live before this fix: this exact input converted
+    to an interface with no ACL and no access-group line at all."""
+    xml_text = _minimal_xml(rules_xml="")
     with pytest.raises(PfSenseConversionError):
         _convert_string(xml_text)
 
@@ -412,7 +441,12 @@ def test_a_hostname_with_ordinary_punctuation_still_converts():
     """The fix must not become a blanket ban -- real PF Sense hostnames can
     contain dots and hyphens (e.g. "fw-01.branch.example"), and that must
     keep working."""
-    xml_text = _minimal_xml(hostname="fw-01.branch-office")
+    # Needs a rule for the same reason the two interface-emission tests above
+    # do: convert() now refuses an empty rule set (#54). This test is about
+    # hostname punctuation, not about filtering.
+    xml_text = _minimal_xml(
+        hostname="fw-01.branch-office", rules_xml=_ONE_BENIGN_LAN_RULE
+    )
     output = _convert_string(xml_text)
     assert "hostname fw-01.branch-office" in output
 
@@ -432,7 +466,11 @@ def _write_temp_xml(xml_text: str) -> Path:
 
 
 def test_write_snapshot_writes_inside_the_configs_subdirectory():
-    xml_path = _write_temp_xml(_minimal_xml(hostname="rtr-normal"))
+    # Same as above: a benign rule so convert() has something to bind an ACL
+    # to. This test is about WHERE the file lands, not about its rules.
+    xml_path = _write_temp_xml(
+        _minimal_xml(hostname="rtr-normal", rules_xml=_ONE_BENIGN_LAN_RULE)
+    )
     with tempfile.TemporaryDirectory() as snapshot_dir:
         try:
             out_path = write_snapshot(xml_path, snapshot_dir)
@@ -556,3 +594,38 @@ def test_the_real_fixture_relies_on_quick_and_would_be_wrong_without_it():
             convert(path)
     finally:
         path.unlink()
+def test_a_rule_with_no_interface_raises_rather_than_producing_an_unbound_acl():
+    """Confirmed live before this fix: acl_role defaulted to None, so
+    "ip access-group ACL_NAME in" was never written to any interface, but
+    the ACL's own permit/deny lines WERE still emitted -- a filter that
+    looks present in the file and enforces nothing."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>block</type><protocol>tcp</protocol>
+        <source><any/></source><destination><any/></destination></rule>
+    """)
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
+def test_negative_subnet_raises_pfsense_conversion_error_not_a_raw_ipaddress_error():
+    xml_text = _minimal_xml(
+        interfaces_xml="""
+        <lan><if>em1</if><ipaddr>10.0.0.1</ipaddr><subnet>-1</subnet></lan>
+        """,
+        rules_xml=_ONE_BENIGN_LAN_RULE,
+    )
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
+def test_ipv6_shaped_ipaddr_raises_pfsense_conversion_error_not_a_raw_ipaddress_error():
+    """Same class of gap PR #34 already fixed once for <address>/<port>
+    inside filter rules, recurring one layer up for interface addressing."""
+    xml_text = _minimal_xml(
+        interfaces_xml="""
+        <lan><if>em1</if><ipaddr>2001:db8::1</ipaddr><subnet>24</subnet></lan>
+        """,
+        rules_xml=_ONE_BENIGN_LAN_RULE,
+    )
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)

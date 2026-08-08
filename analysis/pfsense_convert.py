@@ -219,6 +219,28 @@ def _parse_interfaces(root: ET.Element) -> Dict[str, Dict[str, str]]:
             # emit a Cisco stanza with no address, which would itself fail
             # to parse meaningfully.
             continue
+
+        # WHY VALIDATED HERE, NOT LEFT TO ipaddress.IPv4Network() DOWNSTREAM
+        #   Found in a senior-level adversarial QA pass: an invalid <subnet>
+        #   (e.g. "-1") or an IPv6-shaped <ipaddr> was not rejected here, so
+        #   it reached ipaddress.IPv4Network() unvalidated in _resolve_endpoint()
+        #   and again in convert()'s interface-emission loop, raising a raw
+        #   ipaddress.NetmaskValueError / AddressValueError instead of
+        #   PfSenseConversionError. Same class of gap PR #34 already fixed
+        #   once for <address>/<port> inside filter rules -- recurring one
+        #   layer up, for interface addressing, and fixed the same way:
+        #   validated at the layer that knows what went wrong (which
+        #   interface, which field), rather than left for a caller several
+        #   frames away to catch a exception type it was not expecting.
+        try:
+            ipaddress.IPv4Network(f"{ipaddr}/{subnet}", strict=False)
+        except ValueError as error:
+            raise PfSenseConversionError(
+                f"interface {role!r} has <ipaddr>{ipaddr!r}</ipaddr> and "
+                f"<subnet>{subnet!r}</subnet>, not a valid IPv4 address and "
+                f"prefix length -- {error}"
+            ) from None
+
         interfaces[role] = {
             "if": _reject_control_characters(
                 _text(iface_el, "if", default=role), field="<if>"
@@ -501,6 +523,25 @@ def convert(xml_path: Union[str, Path]) -> str:
     filter_el = root.find("filter")
     rule_els = filter_el.findall("rule") if filter_el is not None else []
 
+    # WHY AN EMPTY RULE SET IS REFUSED, NOT CONVERTED AS "NO ACL"
+    #   Found in a senior-level adversarial QA pass. PF Sense fails CLOSED
+    #   with no rules configured on an interface -- it blocks everything.
+    #   Cisco fails OPEN with no ACL bound to an interface -- it permits
+    #   everything. Converting zero rules into zero rules would silently
+    #   invert the source firewall's actual security posture: the client's
+    #   most restrictive interface would become the analysis's least
+    #   restrictive one. Nothing here can pick which interface(s) should
+    #   get an implicit "deny all" either -- an empty <filter> gives no
+    #   signal about that -- so the correct move is to refuse rather than
+    #   guess, same discipline as everywhere else in this module.
+    if not rule_els:
+        raise PfSenseConversionError(
+            "no filter rules at all -- PF Sense fails closed with no rules "
+            "(blocks everything), Cisco fails open with no ACL bound "
+            "(permits everything); converting this would silently invert "
+            "the source firewall's actual security posture"
+        )
+
     # All rules must be on ONE interface role. Batfish/Cisco applies one ACL
     # per interface direction; supporting rules split across several
     # interfaces would mean building several ACLs and is out of scope for
@@ -513,6 +554,23 @@ def convert(xml_path: Union[str, Path]) -> str:
             f"filter rules span multiple interfaces {sorted(rule_roles)}; "
             "only a single-interface rule set is supported"
         )
+
+    # WHY A RULE SET WITH NO <interface> AT ALL IS REFUSED
+    #   Found in the same QA pass. rule_roles is empty here in exactly one
+    #   other case: every rule is missing <interface>. Before this check,
+    #   acl_role then defaulted to None, the "if role == acl_role" test in
+    #   the interface-emission loop below never matched any real interface,
+    #   and "ip access-group ACL_NAME in" was never written anywhere -- but
+    #   the ACL's own deny/permit lines WERE still emitted, present in the
+    #   file, bound to nothing. A config that looks like it has a filter and
+    #   silently enforces none of it.
+    if not rule_roles:
+        raise PfSenseConversionError(
+            "no filter rule names an <interface> -- the resulting ACL would "
+            "be written but never bound to anything, and would silently "
+            "enforce nothing"
+        )
+
     acl_role = next(iter(rule_roles), None)
     if acl_role is not None and acl_role not in interfaces:
         raise PfSenseConversionError(
