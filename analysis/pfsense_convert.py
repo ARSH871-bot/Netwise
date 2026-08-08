@@ -58,6 +58,7 @@ WHY INTERFACE NAMES ARE REWRITTEN, NOT COPIED
 from __future__ import annotations
 
 import ipaddress
+import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -96,6 +97,77 @@ def _text(el: Optional[ET.Element], tag: str, default: Optional[str] = None) -> 
     return child.text.strip()
 
 
+# A literal newline inside an XML text node is valid XML (`<descr>a&#10;b</descr>`
+# parses fine and `.text` comes back as "a\nb"), but every free-text field this
+# module emits verbatim into the generated Cisco config text -- <hostname>,
+# interface <descr>, interface <if> -- assumes it is ONE line. Cisco IOS parses
+# config line by line, so a newline inside one of these fields is not cosmetic:
+# it lets the field's content be read as additional config statements.
+#
+# Found in a senior-level adversarial QA pass, confirmed with:
+#   <hostname>probe&#10;ip access-list extended acl_in&#10; permit ip any any</hostname>
+# Cisco IOS treats a REPEATED "ip access-list extended NAME" block as
+# APPENDING to the existing ACL of that name, not replacing it -- so the
+# injected "permit ip any any" became a real line in the same acl_in ACL as
+# the legitimate rules, evaluated BEFORE the real deny. An actual policy
+# bypass in the converted config, not just corrupted-looking output.
+_CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _reject_control_characters(text: str, *, field: str) -> str:
+    """Refuse `text` if it contains a newline or other control character,
+    rather than emit it into the generated config where it could be read as
+    additional config lines. See the module-level comment above this
+    function for the confirmed exploit this closes.
+
+    Applied to free-text fields only (interface <descr>, <if>) -- fields
+    already validated to a strict character set (see
+    `_sanitised_hostname()`) do not need this separately, a stricter check
+    already implies it.
+    """
+    if _CONTROL_CHAR_PATTERN.search(text):
+        raise PfSenseConversionError(
+            f"{field} contains a newline or other control character "
+            f"({text!r}) -- refusing to emit it into the generated config "
+            "rather than risk it being read as additional config lines"
+        )
+    return text
+
+
+# Real PF Sense hostnames are DNS hostname syntax: letters, digits, hyphen,
+# dot -- this is deliberately closer to "what a hostname actually is" than
+# "reject the specific characters found exploitable so far", the same
+# refuse-rather-than-guess discipline as everywhere else in this module.
+_HOSTNAME_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+
+
+def _sanitised_hostname(text: str) -> str:
+    """Validate <hostname> is safe to use both inside the generated Cisco
+    config text and as a filesystem path component.
+
+    WHY THIS EXISTS
+        Found in the same QA pass as `_reject_control_characters()`, a
+        second consequence of the same unsanitised field:
+        `write_snapshot()` builds its output path directly from this text
+        (`configs_dir / f"{hostname_text}.cfg"`). A crafted hostname like
+        "../../../../evil" walks the write outside the intended snapshot
+        directory -- confirmed directly, landed four directories above the
+        target, outside `snapshot_dir` entirely.
+
+        A conservative hostname-shaped allowlist closes both the
+        config-injection risk this field shares with <descr>/<if> AND the
+        path-traversal risk in one check, rather than a control-character
+        blocklist for one and a separate path check for the other -- an
+        allowlist cannot be bypassed by a character nobody thought to ban.
+    """
+    if not _HOSTNAME_PATTERN.match(text):
+        raise PfSenseConversionError(
+            f"<hostname> is {text!r}, not a plain hostname -- refusing to "
+            "use it in the generated config or as a filename"
+        )
+    return text
+
+
 def _parse_interfaces(root: ET.Element) -> Dict[str, Dict[str, str]]:
     """Return {role: {"if": ..., "ipaddr": ..., "subnet": ..., "descr": ...}}
     for every interface PF Sense defines, in document order.
@@ -121,10 +193,14 @@ def _parse_interfaces(root: ET.Element) -> Dict[str, Dict[str, str]]:
             # to parse meaningfully.
             continue
         interfaces[role] = {
-            "if": _text(iface_el, "if", default=role),
+            "if": _reject_control_characters(
+                _text(iface_el, "if", default=role), field="<if>"
+            ),
             "ipaddr": ipaddr,
             "subnet": subnet,
-            "descr": _text(iface_el, "descr", default=role.upper()),
+            "descr": _reject_control_characters(
+                _text(iface_el, "descr", default=role.upper()), field="<descr>"
+            ),
         }
     return interfaces
 
@@ -251,7 +327,7 @@ def convert(xml_path: Union[str, Path]) -> str:
     """
     root = ET.parse(xml_path).getroot()
 
-    hostname = _text(root.find("system"), "hostname", default="pfsense")
+    hostname = _sanitised_hostname(_text(root.find("system"), "hostname", default="pfsense"))
     interfaces = _parse_interfaces(root)
     if not interfaces:
         raise PfSenseConversionError("no interface has both an address and a subnet")
@@ -304,14 +380,30 @@ def write_snapshot(xml_path: Union[str, Path], snapshot_dir: Union[str, Path]) -
     """Convert `xml_path` and write it as a Batfish-ready snapshot at
     `snapshot_dir` (device files land in `snapshot_dir/configs/`, matching
     what analysis.pipeline.load_snapshot expects). Returns the file written.
+
+    WHY THE OUTPUT PATH IS VALIDATED TWICE
+        `_sanitised_hostname()` already rejects anything but a plain
+        hostname-shaped string, which structurally cannot contain a path
+        separator or "..", so the second check below can never actually
+        fire today. It stays as a cheap, explicit assertion rather than a
+        trust that a regex will always be the only thing standing between
+        untrusted XML text and a filesystem write -- found in a senior-
+        level adversarial QA pass, confirmed live before this fix:
+        `<hostname>../../../../evil</hostname>` wrote a file four
+        directories above the intended `snapshot_dir` entirely.
     """
     text = convert(xml_path)
     hostname = ET.parse(xml_path).getroot().find("system")
-    hostname_text = _text(hostname, "hostname", default="pfsense")
+    hostname_text = _sanitised_hostname(_text(hostname, "hostname", default="pfsense"))
 
     configs_dir = Path(snapshot_dir) / "configs"
     configs_dir.mkdir(parents=True, exist_ok=True)
-    out_path = configs_dir / f"{hostname_text}.cfg"
+    out_path = (configs_dir / f"{hostname_text}.cfg").resolve()
+    if configs_dir.resolve() not in out_path.parents:
+        raise PfSenseConversionError(
+            f"<hostname> {hostname_text!r} would write outside the snapshot "
+            "directory -- refusing"
+        )
     out_path.write_text(text)
     return out_path
 

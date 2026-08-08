@@ -16,16 +16,20 @@ RUN
     pytest tests/ -v
 """
 
+import tempfile
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import pytest
 
-from analysis.pfsense_convert import PfSenseConversionError, convert
+from analysis.pfsense_convert import PfSenseConversionError, convert, write_snapshot
 
 FIXTURE = "tests/fixtures/pfsense-source/config.xml"
 
 
-def _minimal_xml(*, rules_xml: str = "", interfaces_xml: str | None = None) -> str:
+def _minimal_xml(
+    *, rules_xml: str = "", interfaces_xml: str | None = None, hostname: str = "test-device"
+) -> str:
     """Build a minimal, valid PF Sense config.xml string for a single test,
     so each test can vary exactly the one thing it is checking rather than
     editing the shared fixture."""
@@ -40,7 +44,7 @@ def _minimal_xml(*, rules_xml: str = "", interfaces_xml: str | None = None) -> s
         """
     return f"""<?xml version="1.0"?>
     <pfsense>
-      <system><hostname>test-device</hostname></system>
+      <system><hostname>{hostname}</hostname></system>
       <interfaces>{interfaces_xml}</interfaces>
       <filter>{rules_xml}</filter>
     </pfsense>
@@ -318,3 +322,108 @@ def test_rules_are_emitted_in_document_order():
     deny_pos = output.index("deny tcp any host 10.0.0.5 eq 22")
     permit_pos = output.index("permit tcp any any")
     assert deny_pos < permit_pos
+
+
+# --- Free-text fields cannot inject additional config lines -----------------------
+# Regression coverage for a senior-level adversarial QA finding: a literal
+# newline inside an XML text node is valid XML, and <hostname>/<descr>/<if>
+# were all emitted into the generated Cisco config text unescaped. Cisco IOS
+# parses config line by line, and a REPEATED "ip access-list extended NAME"
+# block APPENDS to the existing ACL rather than replacing it -- confirmed live,
+# an injected line landed inside the real acl_in ACL, evaluated BEFORE the
+# legitimate rules. An actual policy bypass in the converted config, not just
+# corrupted-looking output.
+
+
+def test_hostname_with_an_embedded_newline_raises():
+    xml_text = _minimal_xml(
+        hostname="probe\nip access-list extended acl_in\n permit ip any any"
+    )
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
+def test_descr_with_an_embedded_newline_does_not_inject_additional_config_lines():
+    xml_text = _minimal_xml(
+        interfaces_xml="""
+        <lan>
+          <if>em1</if>
+          <descr>LAN&#10;ip access-list extended acl_in&#10; permit ip any any</descr>
+          <ipaddr>10.0.0.1</ipaddr>
+          <subnet>24</subnet>
+        </lan>
+        """
+    )
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
+def test_if_with_an_embedded_newline_also_raises():
+    """The raw PF Sense device identifier (e.g. "em0") is emitted into the
+    same description line as <descr> -- same field, same injection vector,
+    same fix, checked separately since it is read by a different _text()
+    call."""
+    xml_text = _minimal_xml(
+        interfaces_xml="""
+        <lan>
+          <if>em1&#10;ip access-list extended acl_in&#10; permit ip any any</if>
+          <descr>LAN</descr>
+          <ipaddr>10.0.0.1</ipaddr>
+          <subnet>24</subnet>
+        </lan>
+        """
+    )
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
+def test_a_hostname_with_ordinary_punctuation_still_converts():
+    """The fix must not become a blanket ban -- real PF Sense hostnames can
+    contain dots and hyphens (e.g. "fw-01.branch.example"), and that must
+    keep working."""
+    xml_text = _minimal_xml(hostname="fw-01.branch-office")
+    output = _convert_string(xml_text)
+    assert "hostname fw-01.branch-office" in output
+
+
+# --- write_snapshot() -------------------------------------------------------------
+# No test exercised write_snapshot() at all before this -- only convert() was
+# covered. Added alongside the fix for the path-traversal bug it had (below),
+# since a function with zero tests is also how that bug went unnoticed.
+
+
+def _write_temp_xml(xml_text: str) -> Path:
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".xml", delete=False, encoding="utf-8"
+    ) as f:
+        f.write(xml_text)
+        return Path(f.name)
+
+
+def test_write_snapshot_writes_inside_the_configs_subdirectory():
+    xml_path = _write_temp_xml(_minimal_xml(hostname="rtr-normal"))
+    with tempfile.TemporaryDirectory() as snapshot_dir:
+        try:
+            out_path = write_snapshot(xml_path, snapshot_dir)
+            expected_dir = (Path(snapshot_dir) / "configs").resolve()
+            assert out_path.resolve().parent == expected_dir
+            assert out_path.name == "rtr-normal.cfg"
+            assert out_path.read_text().startswith("hostname rtr-normal")
+        finally:
+            xml_path.unlink()
+
+
+def test_write_snapshot_refuses_a_path_traversal_hostname():
+    """Confirmed live before this fix: this exact hostname wrote a file four
+    directories above the intended snapshot_dir, entirely outside it."""
+    xml_path = _write_temp_xml(_minimal_xml(hostname="../../../../evil"))
+    with tempfile.TemporaryDirectory() as snapshot_dir:
+        try:
+            with pytest.raises(PfSenseConversionError):
+                write_snapshot(xml_path, snapshot_dir)
+            # Confirm nothing was written anywhere outside the snapshot dir,
+            # not just that an exception happened to be raised.
+            escaped = Path(snapshot_dir).parent.parent.parent.parent / "evil.cfg"
+            assert not escaped.exists()
+        finally:
+            xml_path.unlink()
