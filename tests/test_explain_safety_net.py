@@ -18,13 +18,18 @@ RUN
     pytest tests/ -v
 """
 
+import ollama
+
+from ai import explain as explain_module
 from ai.explain import (
     _build_prompt,
     _compute_dead_rule_outcome,
+    _evidence_detail,
     _fallback_error_explanation,
     _fallback_plain_restatement,
     _looks_like_a_result_claim,
     _looks_like_speculation,
+    explain,
 )
 
 # --- _looks_like_a_result_claim ----------------------------------------------
@@ -228,6 +233,248 @@ def test_fallback_handles_a_missing_detail_gracefully():
     defence and must not itself be a new way to fail."""
     assert _fallback_error_explanation({"evidence": {}}) != ""
     assert _fallback_error_explanation({}) != ""
+
+
+# --- explain() degrades when Ollama is unreachable -----------------------------
+# Regression coverage for a real gap found in review: ollama.generate() raises a
+# bare ConnectionError when Ollama is not running, and nothing caught it, so
+# explain() raised straight past every caller. analyse() already reports an
+# unreachable Batfish as a status="error" finding instead of raising; explain()
+# not doing the same for an unreachable Ollama is what blocks #31 -- wiring
+# explanations into the dashboard would otherwise mean a machine without Ollama
+# running gets a broken findings view rather than findings without explanations.
+
+
+def test_explain_falls_back_instead_of_raising_when_ollama_is_unreachable(monkeypatch):
+    def unreachable(finding):
+        raise ConnectionError("Failed to connect to Ollama.")
+
+    monkeypatch.setattr(explain_module, "_generate", unreachable)
+
+    finding = {
+        "id": "AC-001",
+        "status": "found",
+        "summary": "Unencrypted web traffic reaches the internal server",
+        "evidence": {"detail": "Expected DENY but got PERMIT"},
+    }
+    result = explain(finding)
+    assert "Unencrypted web traffic reaches the internal server" in result
+
+
+def test_explain_uses_the_error_fallback_when_ollama_is_unreachable(monkeypatch):
+    """The found/none and error fallbacks are different functions -- this
+    must still pick the right one when Ollama is the thing that failed, not
+    generation quality."""
+
+    def unreachable(finding):
+        raise ConnectionError("Failed to connect to Ollama.")
+
+    monkeypatch.setattr(explain_module, "_generate", unreachable)
+
+    finding = {
+        "id": "RT-000",
+        "status": "error",
+        "evidence": {"detail": "BatfishException: Work terminated abnormally"},
+    }
+    result = explain(finding)
+    assert "BatfishException: Work terminated abnormally" in result
+    assert _looks_like_a_result_claim(result) is False
+
+
+def test_explain_does_not_retry_a_second_time_against_an_unreachable_ollama(monkeypatch):
+    """A second attempt against a host already known to be down would only
+    add latency for no chance of a different outcome -- one call, not two."""
+    calls = []
+
+    def unreachable(finding):
+        calls.append(finding)
+        raise ConnectionError("Failed to connect to Ollama.")
+
+    monkeypatch.setattr(explain_module, "_generate", unreachable)
+    explain({"id": "AC-001", "status": "found", "summary": "x", "evidence": {"detail": "y"}})
+    assert len(calls) == 1
+
+
+def test_explain_still_retries_normally_when_ollama_is_reachable(monkeypatch):
+    """The Ollama-unreachable short-circuit must not change the existing
+    generate-validate-retry behaviour for an ordinary validation failure."""
+    calls = []
+
+    def speculative_then_clean(finding):
+        calls.append(finding)
+        if len(calls) == 1:
+            return "This could potentially be a problem."
+        return "The device allows all traffic through with no restriction."
+
+    monkeypatch.setattr(explain_module, "_generate", speculative_then_clean)
+    result = explain({"id": "AC-001", "status": "found", "summary": "x", "evidence": {"detail": "y"}})
+    assert len(calls) == 2
+    assert "no restriction" in result
+
+
+# --- explain() skips generation entirely when there is no real evidence to
+# ground it in -----------------------------------------------------------------
+# Regression coverage for a confirmed, reproducible hallucination found in a
+# senior-level adversarial QA pass: with live Ollama, a status="found" finding
+# with no evidence.detail at all reliably produced a specific, confident,
+# invented technical claim ("the device has a rule that allows all traffic
+# through with no restriction"), reproduced 3/3. Neither existing safety check
+# catches it -- _looks_like_a_result_claim() only runs for status="error", and
+# _looks_like_speculation() only catches HEDGED claims, not confident ones.
+# This is exactly what CLAUDE.md constraint 2 calls "a critical failure, not a
+# bug." The fix is to never call the model at all when there is nothing real
+# to rephrase, not to try to catch the hallucination after the fact.
+
+
+def test_explain_skips_generation_when_there_is_no_evidence_detail(monkeypatch):
+    calls = []
+    monkeypatch.setattr(explain_module, "_generate", lambda finding: calls.append(finding) or "unused")
+
+    finding = {"id": "AC-101", "status": "found", "summary": "A finding"}
+    result = explain(finding)
+
+    assert calls == [], "the model must not be called at all with no real evidence"
+    assert result == "A finding"
+
+
+def test_explain_skips_generation_for_status_none_with_no_evidence_too(monkeypatch):
+    """The same guard for status="none" -- this is also the exact shape that
+    reproduced the Modelfile worked-example-echo failure (a different
+    symptom of the same root cause: nothing real to ground a generated
+    answer in)."""
+    calls = []
+    monkeypatch.setattr(explain_module, "_generate", lambda finding: calls.append(finding) or "unused")
+
+    finding = {"id": "AC-201", "status": "none", "summary": "No issues found by access control"}
+    result = explain(finding)
+
+    assert calls == []
+    assert result == "No issues found by access control"
+
+
+def test_explain_skips_generation_for_status_error_with_no_evidence_too(monkeypatch):
+    calls = []
+    monkeypatch.setattr(explain_module, "_generate", lambda finding: calls.append(finding) or "unused")
+
+    finding = {"id": "RT-000", "status": "error", "summary": "Could not check"}
+    result = explain(finding)
+
+    assert calls == []
+    assert "unknown error" in result
+
+
+def test_explain_still_generates_normally_when_real_evidence_is_present(monkeypatch):
+    """The guard must not become a blanket ban on generation -- only fire
+    when there is genuinely nothing to ground an answer in."""
+    calls = []
+
+    def stub(finding):
+        calls.append(finding)
+        return "The device allows all traffic through with no restriction."
+
+    monkeypatch.setattr(explain_module, "_generate", stub)
+    finding = {
+        "id": "AC-001",
+        "status": "found",
+        "summary": "x",
+        "evidence": {"detail": "Expected DENY but got PERMIT"},
+    }
+    result = explain(finding)
+
+    assert len(calls) == 1, "generation must still happen when evidence.detail is real"
+    assert "no restriction" in result
+
+
+def test_explain_falls_back_when_the_model_is_not_built(monkeypatch):
+    """Ollama up, but nobody has run `ollama create netwise-warden -f
+    ai/Modelfile` yet -- at least as likely in practice as Ollama being
+    fully down, and missed by the first pass at this fix, which only
+    caught ConnectionError."""
+
+    def not_built(finding):
+        raise ollama.ResponseError("model 'netwise-warden' not found", 404)
+
+    monkeypatch.setattr(explain_module, "_generate", not_built)
+    result = explain({"id": "AC-001", "status": "found", "summary": "x", "evidence": {"detail": "y"}})
+    assert "x" in result
+
+
+def test_explain_falls_back_on_a_malformed_request_too(monkeypatch):
+    """The third member of the same family as ConnectionError and
+    ResponseError -- a request the client itself rejects before sending."""
+
+    def malformed(finding):
+        raise ollama.RequestError("bad request")
+
+    monkeypatch.setattr(explain_module, "_generate", malformed)
+    result = explain({"id": "RT-000", "status": "error", "evidence": {"detail": "d"}})
+    assert "d" in result
+
+
+# --- _evidence_detail ------------------------------------------------------------
+# Regression coverage for a real crash: dict.get(key, default) only falls back
+# to `default` when `key` is ABSENT, not when it is present with value None.
+# findings.make_finding() does not reject evidence={"detail": None} or
+# evidence=None outright, so this is one bug away in any check, not
+# hypothetical.
+
+
+def test_evidence_detail_handles_a_none_detail():
+    assert _evidence_detail({"evidence": {"detail": None}}) == ""
+
+
+def test_evidence_detail_handles_evidence_being_none_entirely():
+    assert _evidence_detail({"evidence": None}) == ""
+
+
+def test_evidence_detail_handles_evidence_missing_entirely():
+    assert _evidence_detail({}) == ""
+
+
+def test_evidence_detail_handles_a_non_string_detail():
+    assert _evidence_detail({"evidence": {"detail": 12345}}) == ""
+
+
+def test_evidence_detail_returns_the_real_string_when_present():
+    assert _evidence_detail({"evidence": {"detail": "the real detail"}}) == "the real detail"
+
+
+def test_build_prompt_does_not_crash_when_evidence_detail_is_none():
+    """The exact path that crashed before this fix: _build_prompt() passes
+    evidence.detail to _compute_dead_rule_outcome()'s regex .search() call,
+    which requires a string, not None. Tested at this level (not through
+    explain()) so it stays a pure, millisecond test with no model call,
+    same reasoning as every other test in this file."""
+    finding = {"id": "AC-001", "status": "found", "summary": "test", "evidence": {"detail": None}}
+    prompt = _build_prompt(finding)
+    assert '"id": "AC-001"' in prompt
+
+
+def test_explain_does_not_crash_when_evidence_detail_is_none(monkeypatch):
+    """explain() end to end. evidence.detail=None means _evidence_detail()
+    returns "", which the thin-evidence guard (see explain()'s docstring)
+    now treats the same as no evidence at all -- generation is skipped, not
+    attempted and then rescued. Asserting the model is never even called is
+    the point: the crash this test used to cover doesn't need rescuing
+    anymore, because the path that crashed is no longer reached."""
+    calls = []
+    monkeypatch.setattr(explain_module, "_generate", lambda finding: calls.append(finding) or "unused")
+    finding = {"id": "AC-001", "status": "found", "summary": "test", "evidence": {"detail": None}}
+    assert explain(finding) == "test"
+    assert calls == []
+
+
+def test_fallback_error_explanation_does_not_crash_when_evidence_is_none_entirely():
+    """The deterministic last resort for status="error" -- the one place
+    that must not be able to fail -- crashed on evidence=None outright, not
+    just on evidence={"detail": None}, before this fix."""
+    result = _fallback_error_explanation({"evidence": None})
+    assert "unknown error" in result
+
+
+def test_fallback_plain_restatement_does_not_crash_when_evidence_is_none_entirely():
+    result = _fallback_plain_restatement({"summary": "x", "evidence": None})
+    assert result == "x"
 
 
 # --- _build_prompt -------------------------------------------------------------
