@@ -481,5 +481,5 @@ unapproved destination, and POL-2 arm A catches DNS to `10.20.0.5`. Verified:
 |---|---|---|
 | Shubham | Author; owns the check | ✅ |
 | Arsh | Registry, pipeline, `findings.py` impact | ✅ rules, IDs, and the §4 `findings.py` change |
-| Samika | Severity values are hers | ✅ |
+| Samika | Severity values are his | ✅ |
 | Ankeet | Consumes findings in the AI layer | ⬜ |
