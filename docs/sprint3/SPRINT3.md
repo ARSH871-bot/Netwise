@@ -69,7 +69,7 @@ beyond design notes:
 | Story | Owner | Note |
 |---|---|---|
 | #30 US-18 change-impact | Shubham | design agreed (`analyse_change(before, after)`), nothing written |
-| #11 US-11 natural-language questions | Ankeet | the other half of Layer 2 |
+| #11 US-11 natural-language questions | Ankeet | **Taken 9 August.** Shape chosen on #64 (A + C); the template surface comes first |
 | #13 US-13 config change from plain English | Ankeet | the client's "input direction" |
 | #14 US-14 safety pushback | Ankeet | inseparable from #13 — see below |
 | #15 US-15 evaluation against known flaws | all | what the capstone is marked on |
@@ -89,29 +89,42 @@ we actually have (10, 11, 12 August).
 
 | | Fits? | Why |
 |---|---|---|
-| **Close the five open PRs** | Yes — hours | #59 needs two signatures, #51 one commit, #63 one confirmation, #61 and #64 need reactions. Nothing here is work, it is unblocking |
+| **Close the six open PRs** | Yes — hours | #59 needs two signatures, #51 one commit, #63 one confirmation, #61 and #65 need reactions. Nothing here is work, it is unblocking |
 | **#15 evaluation against known flaws** | Yes | The raw material exists — opposite-fixture pairs for every check, and a measured before/after for the PF Sense conversion. This is assembling evidence we already produced, not producing it |
-| **#64 — decide the query-grounding shape** | Yes | It is a decision, not code. A, B or C, argued and recorded |
-| **#11 implementation** | **No** | Ankeet's point on #61 is why: the translation step is new and unproven, and the design is not yet chosen. Three days to pick a shape *and* build it safely is how the guard gets skipped |
+| ~~**#64 — decide the query-grounding shape**~~ | **DECIDED** | Ankeet chose **A (constrained selection) + C (show the question back)** on #64, with reasoning, and has taken #11 |
+| **#11 — the template surface** | **Yes** | Ankeet's first task: enumerate which of the five questions map cleanly to a natural-language pattern, which parameters validate against `snapshot.py`, and what "cannot map, refuse" looks like as a response. Analysis, not model integration |
+| **#11 — model integration** | **No** | Deliberately after the surface is known and reviewed. Building the generation side before the thing it selects from is how the guard gets skipped |
 | **#13 / #14** | No | Config generation on top of the same unsolved problem |
 | **#30 change-impact** | No | Design agreed, nothing written, and no one free |
 
 **What I would put to the team, given three days:**
 
-1. **Unblock everything** — the five PRs. It costs hours and it clears the board.
+1. **Unblock everything** — the six open PRs. It costs a signature, a commit and
+   a few reactions, and it clears the board.
 2. **#15**, as the sprint's one delivered story. It is the only story that turns
    "the checks work" into something a capstone panel can see, and it is the
    cheapest remaining item precisely because the evidence already exists.
-3. **Decide #64**, so that whoever picks up #11 next sprint starts from a chosen
-   shape rather than an open problem.
-4. **#11 moves to Sprint 4** — not as a failure, but because we learned during
-   this sprint that it contains a real design problem we had not costed. That is
-   what a sprint is for.
+3. ~~Decide #64.~~ **Done.** Ankeet chose A + C on #64 and took #11.
+4. **#11 — the template surface only**, reported back for review before any
+   model integration. That is Ankeet's own sequencing and it is the right one:
+   the thing that selects queries cannot be built before the set it selects
+   from is known.
+5. **#11's model integration moves to Sprint 4** — not as a failure. We
+   discovered mid-sprint that the story contained a design problem nobody had
+   costed, chose a shape for it, and scoped the first honest piece of work. That
+   is what a sprint is for.
 
 The honest framing for the retro: Sprint 3 spent four of seven days finishing
 Sprint 2 and discovered a hidden design problem in the story it planned to take.
 Neither is a mistake. Both are worth recording, because the same thing will
 happen again if we keep planning as though carry-over is free.
+
+**Worth recording as the sprint's best moment:** the design problem was found in
+*review*, by someone reading a planning document and disagreeing with an
+estimate — not in production, and not after the code was written. Ankeet raised
+it on #61, it became `docs/design/query-grounding-problem.md`, and he then chose
+a shape and took the story. That is the review culture doing exactly what it is
+for.
 
 ## The shape I would argue for
 
@@ -199,10 +212,11 @@ Recorded plainly, not as failure — this is ordinary carry-over.
    now costed against.
 2. ~~Who lands the queue, and when.~~ **Done — ten PRs merged 8 August.**
 3. Scope, and it is the only big one left: given three days, is the answer
-   "unblock the five PRs, deliver #15, decide #64, move #11 to Sprint 4"? See
-   "What actually fits in three days".
+   "unblock the six PRs, deliver #15, and take #11 as far as its template
+   surface"? See "What actually fits in three days".
 4. Whether #13 and #14 are taken together or not at all.
 5. Whether anyone has asked Senaka about `quick` yet.
-6. **Who takes the query-grounding problem** (`docs/design/query-grounding-problem.md`)
-   if #11 is in scope. It is the one genuinely new design problem in the
-   sprint, and it needs deciding before code, not during review.
+6. ~~Who takes the query-grounding problem.~~ **Ankeet, and he has chosen the
+   shape: A (constrained selection) + C (show the question back).** Recorded on
+   #64 with reasoning. What is left is not a decision but a review point: he
+   reports the template surface back before building the generation side.
