@@ -307,9 +307,13 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
         "filename": display_name,
         "size_bytes": size,
         "accepted": True,
+        # The dashboard re-fetches findings itself as soon as this returns, so
+        # this no longer tells anyone to refresh. Saying "refresh" when nothing
+        # needs refreshing is a small lie that makes the tool look broken to
+        # whoever follows the instruction and sees nothing change.
         "message": (
             f"'{display_name}' accepted ({size:,} bytes) and staged for "
-            "analysis. Refresh findings to see real results."
+            "analysis. Loading results now..."
         ),
     }
 

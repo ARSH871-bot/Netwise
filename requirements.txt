@@ -35,3 +35,9 @@ python-multipart>=0.0.9
 # Run the suite from the repository root:  pytest tests/ -v
 # The current tests need neither Batfish nor Docker.
 pytest>=8.0
+
+# Browser-driving tools for UI tests live in requirements-dev.txt, not here.
+# They are not needed to run the product or the pytest suite, and one of them
+# pulls a ~115 MB browser -- see that file. Install both with:
+#
+#     pip install -r requirements.txt -r requirements-dev.txt

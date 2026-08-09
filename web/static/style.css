@@ -426,6 +426,20 @@ body {
   color: var(--blind-ink);
 }
 
+/* "We are working on it" is not "something went wrong".
+   The base .notice is amber -- the same colour as a status="error" card,
+   because it is used when findings could not be loaded at all. A loading
+   message wearing that colour would announce a failure that has not
+   happened, in a dashboard whose whole premise is not overstating what it
+   knows. So the in-progress state is deliberately neutral: plain card
+   background, grey border, muted text. Nothing to alarm anyone. */
+.notice.loading {
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
 /* --- Chat ---------------------------------------------------------------- */
 .pane-chat {
   background: var(--card);
