@@ -90,6 +90,7 @@ the live verification behind it, not committed to this repo)
 from __future__ import annotations
 
 import ipaddress
+import itertools
 import re
 from typing import Any, Dict, Optional
 
@@ -152,6 +153,53 @@ def _find_ip_or_cidr(text: str) -> Optional[str]:
         if _is_valid_ip_or_cidr(match.group(1)):
             return match.group(1)
     return None
+
+
+def _probe_address(text: str) -> "tuple[str, str]":
+    """Turn what the user typed into (address_to_trace_to, how_to_say_it).
+
+    WHY THIS EXISTS (issue #70)
+        Batfish resolves a CIDR to a representative address and picks the
+        NETWORK address -- 10.20.20.0 for 10.20.20.0/24. That is not a live
+        host, so the trace ends in EXITS_NETWORK, which routing.py
+        deliberately treats as failure. The result was that asking about a
+        subnet answered "no" while every host in it answered "yes":
+
+            can rtr-hq reach 10.20.20.5      -> Yes.
+            can rtr-hq reach 10.20.20.0/24   -> No.
+
+        Nothing hallucinated and no guard failed. The query was well formed,
+        really ran, and was answered truthfully -- it just was not the
+        question anyone meant. That is exactly the failure
+        docs/design/query-grounding-problem.md predicted before this module
+        existed.
+
+    THE FIX, AND WHY IT IS NOT SILENT
+        A network resolves to its first usable HOST, and the returned phrase
+        says so. The substitution is never hidden: the caller puts it in
+        `question_understood`, so the reader sees "a host in 10.20.20.0/24
+        (checked 10.20.20.1)" rather than a bare restatement of what they
+        typed. Choosing a probe address on someone's behalf is a translation,
+        and shape C exists so translations are visible.
+
+    A plain address is returned unchanged, so the common case reads exactly
+    as before.
+    """
+    network = ipaddress.ip_network(text, strict=False)
+
+    # A single address -- either a plain IP or an explicit /32. Nothing to
+    # choose, so say it back exactly as typed.
+    if network.num_addresses == 1:
+        return str(network.network_address), text
+
+    hosts = list(itertools.islice(network.hosts(), 1))
+    if not hosts:
+        # No usable host at all. Rather than invent one, trace to the network
+        # address as before and do not claim it stands for a host.
+        return str(network.network_address), text
+
+    probe = str(hosts[0])
+    return probe, f"a host in {text} (checked {probe})"
 
 
 def _split_on_reach_keyword(question: str) -> Optional[tuple]:
@@ -255,15 +303,18 @@ def _answer_reachability_question(split: tuple, bf: Session) -> Dict[str, Any]:
             "not a name like \"the finance server\"."
         )
 
-    question_understood = (
-        f"Can {source_device} reach {destination_ip}?"
-    )
+    # A network is traced to a usable host inside it, not to the network
+    # address -- see _probe_address() and issue #70. `spoken` carries the
+    # substitution into question_understood so it is visible rather than
+    # silent.
+    probe_ip, spoken = _probe_address(destination_ip)
+    question_understood = f"Can {source_device} reach {spoken}?"
 
     try:
         frame = (
             bf.q.traceroute(
                 startLocation=source_device,
-                headers=HeaderConstraints(dstIps=destination_ip),
+                headers=HeaderConstraints(dstIps=probe_ip),
             )
             .answer()
             .frame()
@@ -291,7 +342,7 @@ def _answer_reachability_question(split: tuple, bf: Session) -> Dict[str, Any]:
     traces = frame.iloc[0]["Traces"]
     return {
         "question_understood": question_understood,
-        "answer": _describe_traces(source_device, destination_ip, traces),
+        "answer": _describe_traces(source_device, probe_ip, traces),
         "grounded": True,
     }
 

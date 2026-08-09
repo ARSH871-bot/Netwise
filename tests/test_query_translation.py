@@ -15,6 +15,7 @@ RUN
     pytest tests/ -v
 """
 
+from ai import query
 from ai.query import answer_question
 
 
@@ -351,3 +352,51 @@ def test_a_dead_rule_question_does_not_trip_reachability(monkeypatch):
     )
     assert result["grounded"] is True
     assert "never take effect" in result["question_understood"]
+
+
+# --- A network resolves to a usable host, visibly (issue #70) -------------------
+#
+# Batfish resolves a CIDR to the NETWORK address, which is not a live host, so
+# the trace ended in EXITS_NETWORK and a subnet answered "no" while every host
+# in it answered "yes". Nothing hallucinated and no guard fired -- the query was
+# well formed, really ran, and was answered truthfully. It just was not the
+# question anyone meant, which is the failure query-grounding-problem.md
+# predicted before this module existed.
+
+
+def test_a_plain_address_is_unchanged():
+    """The common case must read exactly as it did before the fix."""
+    probe, spoken = query._probe_address("10.20.20.5")
+    assert probe == "10.20.20.5"
+    assert spoken == "10.20.20.5"
+
+
+def test_a_slash_32_is_treated_as_the_single_host_it_is():
+    probe, spoken = query._probe_address("10.20.20.5/32")
+    assert probe == "10.20.20.5"
+    assert spoken == "10.20.20.5/32", "nothing was substituted, so say it as typed"
+
+
+def test_a_network_resolves_to_its_first_usable_host():
+    probe, _ = query._probe_address("10.20.20.0/24")
+    assert probe == "10.20.20.1", "not 10.20.20.0 -- that is what caused #70"
+
+
+def test_the_substitution_is_stated_rather_than_silent():
+    """The whole reason this is safe. Choosing a probe address on someone's
+    behalf is a translation, and shape C exists so translations are visible."""
+    _, spoken = query._probe_address("10.20.20.0/24")
+    assert "10.20.20.0/24" in spoken, "the network they asked about"
+    assert "10.20.20.1" in spoken, "and the address actually checked"
+
+
+def test_a_network_question_can_still_answer_no():
+    """The fix must not turn every network into a yes. A trace that fails
+    still fails -- otherwise this would have swapped one wrong answer for a
+    more comfortable one."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("NO_ROUTE")]}])
+    session = _session_with_devices({"rtr-hq"}, traceroute_frame=frame)
+    result = answer_question("can rtr-hq reach 10.20.20.0/24", session)
+    assert result["grounded"] is True
+    assert result["answer"].startswith("No")
+    assert "10.20.20.1" in result["question_understood"]
