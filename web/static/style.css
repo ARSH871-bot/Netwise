@@ -480,6 +480,87 @@ body {
   color: var(--ink-soft);
 }
 
+/* One question and its response, kept together so the translated question and
+   the answer it produced cannot drift apart visually as the log scrolls. */
+.exchange {
+  margin-bottom: 0.55rem;
+}
+.exchange .message {
+  margin-bottom: 0;
+}
+
+/* --- "I checked:" -- the translated question, shown back ------------------
+   CLAUDE.md §7c: this is not decoration. Every other guard in the project
+   checks that the ANSWER is grounded in the QUERY; none of them check the
+   query was the right one. Showing the translated question back is the only
+   thing that lets the person who asked notice a mistranslation, which is what
+   makes a narrow scope safe rather than merely limited.
+
+   So it is styled to be READ, not skimmed past: full width, a dark rule down
+   the side, and a bold label. If a future change hides, collapses or shrinks
+   this, the safety argument for the whole feature goes with it.
+
+   Deliberately NOT colour-coded. Violet already means "the AI wrote this",
+   amber means "could not check", red/orange/blue are severities, green is
+   clean. This block is none of those -- it is the system quoting its own
+   interpretation back -- so it earns attention through weight and structure
+   instead of borrowing a hue that already means something else. */
+.understood {
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--page);
+  border-left: 3px solid var(--ink);
+  border-radius: 0 4px 4px 0;
+  padding: 0.45rem 0.7rem;
+  margin-bottom: 0.35rem;
+}
+
+.understood::before {
+  content: "I checked:";
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+  margin-bottom: 0.15rem;
+}
+
+/* --- A refusal is not an answer ------------------------------------------
+   grounded=false means nothing was run, or nothing could be. That is the same
+   distinction the dashboard draws between "checked, nothing found" and "could
+   not check", so it uses the same amber vocabulary: a reader who has learnt
+   what an amber card means on the left already knows what this means on the
+   right.
+
+   Rendering a refusal in the ordinary grey system bubble would let "I could
+   not work out what you meant" sit in the log looking exactly like a finding
+   about the network. That is F-4 arriving through the chat pane. */
+.message.system.refusal {
+  background: var(--blind-fill);
+  border-color: var(--blind);
+  color: var(--blind-ink);
+}
+
+.message.system.refusal::before {
+  content: "No answer given";
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.15rem;
+}
+
+/* Waiting. Neutral on purpose: /api/ask connects to Batfish and loads the
+   snapshot on every call, so this is seconds, not milliseconds. It must not
+   borrow the amber refusal styling -- nothing has failed yet. */
+.message.system.pending {
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
 .chat-form {
   display: flex;
   gap: 0.4rem;
