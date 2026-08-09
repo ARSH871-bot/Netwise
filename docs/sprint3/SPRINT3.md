@@ -3,10 +3,10 @@
 **Status:** Dates AGREED by all four. Scope still open.
 **Sprint dates:** **6–12 August 2026** — agreed, not inferred.
 **Written:** 6 August 2026, the day after Sprint 2 closed
-**Updated:** 9 August 2026, after the queue landed and Ankeet's review
+**Updated:** 10 August 2026 (NZST), after the queue landed, Ankeet's review, and US-11's backend
 
-> **⚠️ The dates are now confirmed, so the clock is real: today is day 4 of 7,
-> and three working days remain (10, 11, 12 August).** Scope is still not
+> **⚠️ The dates are confirmed, so the clock is real: today is day 5 of 7.**
+> Three days remain, counting today (10, 11, 12 August). Scope is still not
 > agreed.
 >
 > Four of the seven days went on Sprint 2's carry-over — ten pull requests
@@ -69,7 +69,7 @@ beyond design notes:
 | Story | Owner | Note |
 |---|---|---|
 | #30 US-18 change-impact | Shubham | design agreed (`analyse_change(before, after)`), nothing written |
-| #11 US-11 natural-language questions | Ankeet | **Taken 9 August.** Shape chosen on #64 (A + C); the template surface comes first |
+| #11 US-11 natural-language questions | Ankeet + Samika | **Backend landed 10 August** (#66). Shape chosen on #64 (A + C). The chat pane is Samika's half and is outstanding |
 | #13 US-13 config change from plain English | Ankeet | the client's "input direction" |
 | #14 US-14 safety pushback | Ankeet | inseparable from #13 — see below |
 | #15 US-15 evaluation against known flaws | all | what the capstone is marked on |
@@ -80,7 +80,7 @@ reason this document is a proposal rather than a plan.
 
 ## What actually fits in three days
 
-Written 9 August, once the dates were confirmed. Everything below this line in
+Written 9 August and revised 10 August, once the dates were confirmed. Everything below this line in
 "The shape I would argue for" was reasoned against seven days and still holds
 as *ordering*; what follows is the same argument costed against the three days
 we actually have (10, 11, 12 August).
@@ -208,8 +208,8 @@ Recorded plainly, not as failure — this is ordinary carry-over.
 ## What we should decide in planning
 
 1. ~~Sprint dates.~~ **AGREED by all four: 6–12 August 2026.** Which makes
-   today day 4 of 7, with three days left — the constraint everything else is
-   now costed against.
+   today day 5 of 7, with three days left counting today — the constraint
+   everything else is now costed against.
 2. ~~Who lands the queue, and when.~~ **Done — ten PRs merged 8 August.**
 3. Scope, and it is the only big one left: given three days, is the answer
    "unblock the six PRs, deliver #15, and take #11 as far as its template
