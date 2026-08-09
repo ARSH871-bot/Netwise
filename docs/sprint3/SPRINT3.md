@@ -1,26 +1,26 @@
 # Sprint 3 — planning proposal
 
-**Status:** PROPOSAL — still not agreed.
-**Proposed dates:** 6–12 August 2026 (following the seven-day cadence of Sprints 1 and 2 — confirm)
+**Status:** Dates AGREED by all four. Scope still open.
+**Sprint dates:** **6–12 August 2026** — agreed, not inferred.
 **Written:** 6 August 2026, the day after Sprint 2 closed
 **Updated:** 9 August 2026, after the queue landed and Ankeet's review
 
-> **⚠️ If the proposed dates are right, this sprint is on day 4 of 7 and its
-> scope is still not agreed.** That is the most important fact in this
-> document and it belongs at the top rather than implied by the dates.
+> **⚠️ The dates are now confirmed, so the clock is real: today is day 4 of 7,
+> and three working days remain (10, 11, 12 August).** Scope is still not
+> agreed.
 >
-> Half of a seven-day sprint has been spent, productively — ten pull requests
-> merged on 8 August — but on Sprint 2's carry-over rather than on anything
-> Sprint 3 chose. Either we agree scope now and accept a three-day sprint, or
-> we say plainly that Sprint 3 started on 8 August and runs to 14 August. Both
-> are defensible; drifting without deciding is not.
+> Four of the seven days went on Sprint 2's carry-over — ten pull requests
+> merged on 8 August, all of it real work, none of it work Sprint 3 chose.
+> That is not recoverable and not worth relitigating; it is simply the budget
+> we now have.
 >
-> This is deliberately a **proposal**, not a plan. Sprint scope is a team
-> decision and a client conversation, not the SCRUM Master's to settle alone.
-> It exists so the discussion starts from measured facts rather than from
-> everyone recalling a different version of where we are.
+> **What this changes: the scope section below was written against a
+> seven-day sprint and is no longer affordable as written.** See "What
+> actually fits in three days" — the arithmetic, not the ambition, is what
+> moved.
 >
-> Replace this header with `**Status:** Agreed` once we have.
+> Scope is still a team decision, not the SCRUM Master's to settle alone.
+> Replace this line with `**Status:** Agreed` once scope is settled too.
 
 ---
 
@@ -57,8 +57,9 @@ re-checked, the AI layer degrading correctly with Ollama down, and zero
 3. **#63** — the merge rules, approved by Ankeet with one change requested and
    applied.
 
-None of these are a day's work, so the sprint has more room than this document
-originally assumed.
+None of these is a day's work — between them they are a signature, a commit and
+a confirmation. But that does not mean the sprint has room: four of its seven
+days are already spent. See "What actually fits in three days".
 
 ## What is genuinely not built
 
@@ -76,6 +77,41 @@ beyond design notes:
 
 **Six stories, four people, one week.** That does not fit, which is the whole
 reason this document is a proposal rather than a plan.
+
+## What actually fits in three days
+
+Written 9 August, once the dates were confirmed. Everything below this line in
+"The shape I would argue for" was reasoned against seven days and still holds
+as *ordering*; what follows is the same argument costed against the three days
+we actually have (10, 11, 12 August).
+
+**The arithmetic moved, not the ambition.**
+
+| | Fits? | Why |
+|---|---|---|
+| **Close the five open PRs** | Yes — hours | #59 needs two signatures, #51 one commit, #63 one confirmation, #61 and #64 need reactions. Nothing here is work, it is unblocking |
+| **#15 evaluation against known flaws** | Yes | The raw material exists — opposite-fixture pairs for every check, and a measured before/after for the PF Sense conversion. This is assembling evidence we already produced, not producing it |
+| **#64 — decide the query-grounding shape** | Yes | It is a decision, not code. A, B or C, argued and recorded |
+| **#11 implementation** | **No** | Ankeet's point on #61 is why: the translation step is new and unproven, and the design is not yet chosen. Three days to pick a shape *and* build it safely is how the guard gets skipped |
+| **#13 / #14** | No | Config generation on top of the same unsolved problem |
+| **#30 change-impact** | No | Design agreed, nothing written, and no one free |
+
+**What I would put to the team, given three days:**
+
+1. **Unblock everything** — the five PRs. It costs hours and it clears the board.
+2. **#15**, as the sprint's one delivered story. It is the only story that turns
+   "the checks work" into something a capstone panel can see, and it is the
+   cheapest remaining item precisely because the evidence already exists.
+3. **Decide #64**, so that whoever picks up #11 next sprint starts from a chosen
+   shape rather than an open problem.
+4. **#11 moves to Sprint 4** — not as a failure, but because we learned during
+   this sprint that it contains a real design problem we had not costed. That is
+   what a sprint is for.
+
+The honest framing for the retro: Sprint 3 spent four of seven days finishing
+Sprint 2 and discovered a hidden design problem in the story it planned to take.
+Neither is a mistake. Both are worth recording, because the same thing will
+happen again if we keep planning as though carry-over is free.
 
 ## The shape I would argue for
 
@@ -158,12 +194,13 @@ Recorded plainly, not as failure — this is ordinary carry-over.
 
 ## What we should decide in planning
 
-1. **Sprint dates, and this one is now urgent.** If 6–12 August stands, we are
-   on day 4 of 7 with no agreed scope. Either accept a three-day sprint, or
-   restate Sprint 3 as 8–14 August starting from when the queue landed.
+1. ~~Sprint dates.~~ **AGREED by all four: 6–12 August 2026.** Which makes
+   today day 4 of 7, with three days left — the constraint everything else is
+   now costed against.
 2. ~~Who lands the queue, and when.~~ **Done — ten PRs merged 8 August.**
-3. Scope: which of the six stories, given four people and whatever is left of
-   the week after (1) is answered.
+3. Scope, and it is the only big one left: given three days, is the answer
+   "unblock the five PRs, deliver #15, decide #64, move #11 to Sprint 4"? See
+   "What actually fits in three days".
 4. Whether #13 and #14 are taken together or not at all.
 5. Whether anyone has asked Senaka about `quick` yet.
 6. **Who takes the query-grounding problem** (`docs/design/query-grounding-problem.md`)
