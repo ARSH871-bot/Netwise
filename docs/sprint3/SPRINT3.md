@@ -15,28 +15,39 @@
 
 ## Where Sprint 3 actually starts
 
-Not from a clean slate. **Twelve pull requests are open, approved and unmerged**,
-representing most of a sprint's work already done:
+Not from a clean slate — but no longer from a stalled queue either. **This
+section originally said the first job of Sprint 3 was landing what Sprint 2
+finished. That has now happened**, and the update is recorded rather than
+silently overwritten, because the difference matters to how much room the sprint
+has.
 
-| PR | Owner | What it delivers |
+**Ten pull requests merged on 8 August**, closing **#12, #29, #31 and #47**:
+
+| PR | Owner | What it delivered |
 |---|---|---|
 | #48, #50 | Shubham | requirement rules proven to fail; policy scoping |
-| #51 | Samika | auto-refresh after upload |
-| #52, #53, #54, #56, #58 | Ankeet | explain() hardening; PF Sense injection + traversal + ambiguity; explanations on screen |
-| #55, #57 | Arsh | routing scoping; §11 sync |
-| #59, #60 | Samika | F-1 severity amendment; the risk post-processor |
+| #52, #53, #54, #56, #58 | Ankeet | `explain()` hardening; PF Sense injection, traversal and rule-order ambiguity; explanations on screen |
+| #55, #57, #62 | Arsh | routing scoping; §11 sync; §7 rewrite |
+| #60 | Samika | the risk post-processor |
 
-Merged, that queue closes **#12, #29, #31, #47** and finishes **#17**.
+`main` is at `488f3d8` with **167 tests**, and all five features are on it
+together for the first time. Verified end to end after the merge, not just by
+test count: every fixture through the pipeline, all ten PF Sense protections
+re-checked, the AI layer degrading correctly with Ollama down, and zero
+`RK-8xx` post-processor violations on any snapshot.
 
-**So the first job of Sprint 3 is not new work — it is landing what Sprint 2
-finished.** Three things block it, and none are code:
+**Still open, and each waiting on one person:**
 
-1. Merges are blocked in Arsh's tooling; they need doing by hand.
-2. #54 and #58 need rebasing onto #53 (all three touch the same test file).
-3. #59 is an F-1 amendment and needs Ankeet's and Shubham's signatures.
+1. **#59** — the F-1 severity amendment. Signed by Arsh and Ankeet; **needs
+   Shubham**. It is an F-1 edit, so it takes all four, and it is the last
+   outstanding piece of the shapes decision.
+2. **#51** — one commit from Samika moving `playwright` to
+   `requirements-dev.txt`, then it merges.
+3. **#63** — the merge rules, approved by Ankeet with one change requested and
+   applied.
 
-That is a day's work at most, and until it is done the board shows an empty
-"In progress" column with five items stuck in review.
+None of these are a day's work, so the sprint has more room than this document
+originally assumed.
 
 ## What is genuinely not built
 
@@ -71,11 +82,28 @@ only story that produces evidence the tool *works* rather than evidence it
 raw material exists. For a capstone review this is the difference between
 demonstrating features and demonstrating results.
 
-**3. #11 is the cheapest remaining client-visible win.** `ai/explain.py` already
-has a working, safety-netted model integration; the natural-language direction
+**3. #11 is the cheapest remaining client-visible win — but "cheapest"
+undersells one genuinely new problem inside it.** `ai/explain.py` already has a
+working, safety-netted model integration, and the natural-language direction
 reuses that machinery rather than starting fresh. Contrast #13/#14, which need
-config *generation* — genuinely hard, and explicitly flagged in CLAUDE.md §4 as
-possibly only partly achievable.
+config *generation* — genuinely hard, and flagged in CLAUDE.md §4 as possibly
+only partly achievable.
+
+**The caution, raised by Ankeet on this PR and correct:** the reuse is true of
+the *plumbing*, not of the hard part. `explain()` rephrases a finding that
+already exists, grounded in evidence a check already produced. #11 has to go the
+other direction first — take free text and decide **which Batfish question to
+run, with which parameters** — before there is anything to explain.
+
+That translation step is new and unproven, and it is where a wrong answer is
+worst. A confidently wrong *finding* is bad. A confidently wrong *query* is
+worse: the explanation afterwards is faithfully grounded in the wrong question
+and still reads as authoritative. Every safety net we have sits downstream of
+the query being the right one.
+
+That does not change the ordering — #11 still goes ahead of #13/#14, which need
+config generation on top of the same problem — but it should change the estimate
+and it is where the design effort belongs.
 
 That suggests: **land the queue, then #11, then #15**, with #13/#14 as the
 stretch and #30 and #16 deferred. But see the open question below, because one
@@ -106,14 +134,16 @@ issue #47.
 
 Recorded plainly, not as failure — this is ordinary carry-over.
 
-- The twelve-PR queue above.
-- `CLAUDE.md` §7 states something now known to be false: *"Our fixture is
-  written so both models agree."* It never did — the trailing catch-all deny
-  overlapped every rule before it. #58 fixes the fixture; the §7 rewrite is a
-  follow-up Arsh has taken, blocked until #58 lands.
-- `#17`'s acceptance criteria predate the shapes decision and still say five
-  checks register in `CHECKS`. Correction proposed in a comment on that issue,
-  awaiting a second opinion.
+- ~~The twelve-PR queue above.~~ **Landed 8 August.**
+- ~~`CLAUDE.md` §7 states something now known to be false.~~ **Fixed by #62.**
+  It said *"Our fixture is written so both models agree"*, which it never did —
+  the trailing catch-all deny overlapped every rule before it. #58 fixed the
+  fixture, #62 rewrote §7, and #47 moved to Settled.
+- **`#17`'s acceptance criteria predate the shapes decision** and still say five
+  checks register in `CHECKS`. There are three, and `risk` is a post-processor.
+  Correction proposed in a comment on that issue, still awaiting a second
+  opinion — this is the one genuine carry-over left, and it is why #17 sits in
+  **In review** rather than Done.
 
 ## What we should decide in planning
 
