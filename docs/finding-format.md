@@ -160,6 +160,6 @@ decided. It is the sentence catching up.
 | Member | Why it touches them | Agreed |
 |---|---|---|
 | **Arsh** | Owns `pipeline.py`; enforces the two re-rating limits in `run_post_processors()` | ⬜ |
-| **Ankeet** | Owns the AI layer; the "never set by the AI" half is unchanged and still binding | ⬜ |
+| **Ankeet** | Owns the AI layer; the "never set by the AI" half is unchanged and still binding | ✅ |
 | **Shubham** | `policy_compliance` sets its own severities and continues to | ⬜ |
 | **Samika** | Owns `risk` and `docs/severity-rules.md`, written against this wording | ⬜ |
