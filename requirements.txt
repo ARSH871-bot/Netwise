@@ -36,17 +36,8 @@ python-multipart>=0.0.9
 # The current tests need neither Batfish nor Docker.
 pytest>=8.0
 
-# Drives a real browser, for checking the dashboard actually behaves rather
-# than only that its JavaScript parses. Earned its place verifying US-10's
-# auto-refresh: it selected a fixture in the file input and screenshotted the
-# loading state WHILE Batfish was still running, which no amount of reading
-# the code would have confirmed.
+# Browser-driving tools for UI tests live in requirements-dev.txt, not here.
+# They are not needed to run the product or the pytest suite, and one of them
+# pulls a ~115 MB browser -- see that file. Install both with:
 #
-# DEV ONLY -- nothing in analysis/, ai/ or web/ imports it, and the app runs
-# without it. It also needs a one-off browser download after install:
-#
-#     python -m playwright install chromium     (~115 MB)
-#
-# Skip both if you are not writing UI tests. Note the pytest suite does NOT
-# use it today; the checks so far have been standalone scripts.
-playwright>=1.40
+#     pip install -r requirements.txt -r requirements-dev.txt
