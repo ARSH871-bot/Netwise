@@ -78,6 +78,18 @@ the live verification behind it, not committed to this repo)
     supplied to `headers`; Batfish selects a representative one for the
     starting device, confirmed live to work.
 
+    A CIDR destination is resolved to one real host address ourselves,
+    rather than handed to Batfish as-is (#70). Left alone, Batfish resolves
+    a network destination to its own network address, which is never a
+    live host -- confirmed live on `routing-secure`: every actual host in
+    10.20.20.0/24 answers "Yes", but the network itself answered "No",
+    silently, with `grounded: true`, because the trace was well-formed and
+    genuinely ended in EXITS_NETWORK. Nothing hallucinated and no guard
+    failed; the query was simply not the one the user meant. This module
+    picks the host itself now (see `_representative_host`) and names it in
+    both `question_understood` and the answer text, so the substitution is
+    visible rather than silent -- shape C doing the job it exists for.
+
     This is narrower than CLAUDE.md's own example question ("the guest
     network reach the finance server", both sides named, neither a raw
     IP). Stated plainly rather than glossed over: resolving a destination
@@ -152,6 +164,41 @@ def _find_ip_or_cidr(text: str) -> Optional[str]:
         if _is_valid_ip_or_cidr(match.group(1)):
             return match.group(1)
     return None
+
+
+def _representative_host(network: "ipaddress.IPv4Network") -> str:
+    """One concrete host address inside `network`, picked deterministically.
+
+    Only called for a network wider than a single address -- see
+    _resolve_destination(). `hosts()` excludes the network and broadcast
+    addresses, which is exactly what a "real host" should mean, and is
+    empty for /31 and /32, where those addresses are the only ones there
+    are; the network address is a reasonable, disclosed fallback for that
+    edge case rather than a case this project's fixtures actually exercise.
+    """
+    first_host = next(network.hosts(), None)
+    return str(first_host) if first_host is not None else str(network.network_address)
+
+
+def _resolve_destination(destination_text: str) -> Optional["tuple[str, str]"]:
+    """The literal address to query Batfish with, and how to name it in
+    question_understood / the answer text. For a single host these are the
+    same string. For a network (#70), Batfish would otherwise silently
+    resolve the CIDR to its own network address -- never a live host -- so
+    this module picks a real host itself and says exactly which one, rather
+    than letting a wrong answer happen quietly. Returns None if nothing
+    valid is found."""
+    matched = _find_ip_or_cidr(destination_text)
+    if matched is None:
+        return None
+
+    network = ipaddress.ip_network(matched, strict=False)
+    if network.num_addresses == 1:
+        address = str(network.network_address)
+        return address, address
+
+    host = _representative_host(network)
+    return host, f"a host in {matched} (checked {host})"
 
 
 def _split_on_reach_keyword(question: str) -> Optional[tuple]:
@@ -246,17 +293,18 @@ def _answer_reachability_question(split: tuple, bf: Session) -> Dict[str, Any]:
             "snapshot, not a description of one."
         )
 
-    destination_ip = _find_ip_or_cidr(destination_text)
-    if destination_ip is None:
+    resolved = _resolve_destination(destination_text)
+    if resolved is None:
         return _refuse(
             "I could not find a valid IP address or network on the "
             f"destination side of the question ({destination_text.strip()!r}). "
             "For now I can only check reachability to a literal address, "
             "not a name like \"the finance server\"."
         )
+    destination_ip, destination_display = resolved
 
     question_understood = (
-        f"Can {source_device} reach {destination_ip}?"
+        f"Can {source_device} reach {destination_display}?"
     )
 
     try:
@@ -291,7 +339,7 @@ def _answer_reachability_question(split: tuple, bf: Session) -> Dict[str, Any]:
     traces = frame.iloc[0]["Traces"]
     return {
         "question_understood": question_understood,
-        "answer": _describe_traces(source_device, destination_ip, traces),
+        "answer": _describe_traces(source_device, destination_display, traces),
         "grounded": True,
     }
 
@@ -307,21 +355,27 @@ def _answer_reachability_question(split: tuple, bf: Session) -> Dict[str, Any]:
 _SUCCESS_DISPOSITIONS = {"ACCEPTED", "DELIVERED_TO_SUBNET"}
 
 
-def _describe_traces(source_device: str, destination_ip: str, traces: Any) -> str:
+def _describe_traces(source_device: str, destination_display: str, traces: Any) -> str:
     """Plain English, built directly from Batfish's own disposition and
     path -- never paraphrased by a model. States the observed effect, not
-    an assumed cause, same discipline routing.py's own summaries hold."""
+    an assumed cause, same discipline routing.py's own summaries hold.
+
+    `destination_display` is whatever _resolve_destination() decided to
+    call the destination -- a literal address, or (#70) "a host in
+    <network> (checked <address>)" -- so the answer names the same thing
+    question_understood does, rather than the answer being silently more
+    specific than what the person was told was checked."""
     successes = [t for t in traces if t.disposition in _SUCCESS_DISPOSITIONS]
     failures = [t for t in traces if t.disposition not in _SUCCESS_DISPOSITIONS]
 
     if successes and not failures:
-        return f"Yes. Traffic from {source_device} reaches {destination_ip}."
+        return f"Yes. Traffic from {source_device} reaches {destination_display}."
 
     if failures and not successes:
         bad = failures[0]
         hops = " -> ".join(hop.node for hop in bad.hops) or source_device
         return (
-            f"No. Traffic from {source_device} to {destination_ip} ends in "
+            f"No. Traffic from {source_device} to {destination_display} ends in "
             f"{bad.disposition}. Path: {hops}."
         )
 
@@ -331,7 +385,7 @@ def _describe_traces(source_device: str, destination_ip: str, traces: Any) -> st
     # _compute_dead_rule_outcome() already holds for ambiguous evidence.
     return (
         f"Mixed result: {len(successes)} of {len(traces)} traced paths from "
-        f"{source_device} to {destination_ip} succeed, {len(failures)} do not. "
+        f"{source_device} to {destination_display} succeed, {len(failures)} do not. "
         "The paths disagree, so there is no single yes/no answer here."
     )
 

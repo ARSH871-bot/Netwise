@@ -91,13 +91,19 @@ class _FakeQuestions:
         self._traceroute_frame = traceroute_frame
         self._whole_snapshot_frame = whole_snapshot_frame
         self._raises = raises
+        # What traceroute() was actually called with, so a test can check
+        # what address query.py resolved and handed to Batfish, not just
+        # what it printed back -- the #70 fix is entirely about those two
+        # no longer being different things.
+        self.traceroute_calls = []
 
     def fileParseStatus(self, **_kwargs):
         if self._devices is None:
             raise RuntimeError("Batfish said no")
         return _FakeAnswer(_FakeFrame([{"Nodes": sorted(self._devices)}]))
 
-    def traceroute(self, **_kwargs):
+    def traceroute(self, **kwargs):
+        self.traceroute_calls.append(kwargs)
         if self._raises:
             raise RuntimeError("Batfish said no")
         return _FakeAnswer(self._traceroute_frame)
@@ -195,6 +201,68 @@ def test_reachability_accepts_a_cidr_destination():
     result = answer_question("Can rtr-us5 reach 10.20.0.0/24?", session)
     assert result["grounded"] is True
     assert "10.20.0.0/24" in result["question_understood"]
+
+
+# --- #70: a network destination is resolved to a real host, not the network
+# address, and the substitution is named rather than silent -----------------
+
+
+def test_cidr_destination_is_resolved_to_a_real_host_before_it_reaches_batfish():
+    """The bug #70 found: Batfish resolves a bare CIDR destination to the
+    network address, which is never a live host, so a real, reachable
+    network reads as unreachable. Fixed by resolving the host ourselves --
+    checked here at the boundary that matters, what was actually sent to
+    Batfish, not just what the answer says."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    answer_question("Can rtr-us5 reach 10.20.20.0/24?", session)
+
+    [call] = session.q.traceroute_calls
+    assert call["headers"].dstIps == "10.20.20.1"
+
+
+def test_cidr_destination_names_the_resolved_host_in_question_understood():
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    result = answer_question("Can rtr-us5 reach 10.20.20.0/24?", session)
+
+    assert "10.20.20.0/24" in result["question_understood"]
+    assert "10.20.20.1" in result["question_understood"]
+    assert "checked" in result["question_understood"]
+
+
+def test_cidr_destination_names_the_resolved_host_in_the_answer_too():
+    """Not just question_understood -- the answer text names the same host,
+    so it is never silently more specific than what the reader was told was
+    checked."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    result = answer_question("Can rtr-us5 reach 10.20.20.0/24?", session)
+
+    assert "10.20.20.1" in result["answer"]
+
+
+def test_a_single_host_cidr_behaves_like_a_plain_address():
+    """A /32 names exactly one address -- no "checked" phrasing is needed,
+    and it must not silently become a different address than the one
+    written."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    result = answer_question("Can rtr-us5 reach 10.20.20.5/32?", session)
+
+    assert result["question_understood"] == "Can rtr-us5 reach 10.20.20.5?"
+    [call] = session.q.traceroute_calls
+    assert call["headers"].dstIps == "10.20.20.5"
+
+
+def test_the_bug_scenario_from_70_now_answers_yes():
+    """Reproduces #70's own repro directly: a network where every host is
+    reachable must no longer answer "No" for the network as a whole."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-hq"}, traceroute_frame=frame)
+    result = answer_question("Can rtr-hq reach 10.20.20.0/24?", session)
+
+    assert result["answer"].startswith("Yes.")
 
 
 # --- Reachability: the actual answer, grounded in real trace data --------------
