@@ -1,9 +1,20 @@
 # Sprint 3 — planning proposal
 
-**Status:** PROPOSAL — not agreed. Nothing here is committed until the team says so.
+**Status:** PROPOSAL — still not agreed.
 **Proposed dates:** 6–12 August 2026 (following the seven-day cadence of Sprints 1 and 2 — confirm)
 **Written:** 6 August 2026, the day after Sprint 2 closed
+**Updated:** 9 August 2026, after the queue landed and Ankeet's review
 
+> **⚠️ If the proposed dates are right, this sprint is on day 4 of 7 and its
+> scope is still not agreed.** That is the most important fact in this
+> document and it belongs at the top rather than implied by the dates.
+>
+> Half of a seven-day sprint has been spent, productively — ten pull requests
+> merged on 8 August — but on Sprint 2's carry-over rather than on anything
+> Sprint 3 chose. Either we agree scope now and accept a three-day sprint, or
+> we say plainly that Sprint 3 started on 8 August and runs to 14 August. Both
+> are defensible; drifting without deciding is not.
+>
 > This is deliberately a **proposal**, not a plan. Sprint scope is a team
 > decision and a client conversation, not the SCRUM Master's to settle alone.
 > It exists so the discussion starts from measured facts rather than from
@@ -147,8 +158,14 @@ Recorded plainly, not as failure — this is ordinary carry-over.
 
 ## What we should decide in planning
 
-1. Sprint dates — is 6–12 August right?
-2. Who lands the queue, and when. It blocks everything.
-3. Scope: which of the six stories, given four people and one week.
+1. **Sprint dates, and this one is now urgent.** If 6–12 August stands, we are
+   on day 4 of 7 with no agreed scope. Either accept a three-day sprint, or
+   restate Sprint 3 as 8–14 August starting from when the queue landed.
+2. ~~Who lands the queue, and when.~~ **Done — ten PRs merged 8 August.**
+3. Scope: which of the six stories, given four people and whatever is left of
+   the week after (1) is answered.
 4. Whether #13 and #14 are taken together or not at all.
 5. Whether anyone has asked Senaka about `quick` yet.
+6. **Who takes the query-grounding problem** (`docs/design/query-grounding-problem.md`)
+   if #11 is in scope. It is the one genuinely new design problem in the
+   sprint, and it needs deciding before code, not during review.
