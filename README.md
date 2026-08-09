@@ -41,7 +41,7 @@ invents network behaviour.
 
 ## Status
 
-🚧 **In development — Sprint 2.**
+🚧 **In development — Sprint 3** (6–12 August 2026).
 
 | Layer | State |
 |---|---|
