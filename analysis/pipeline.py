@@ -48,7 +48,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from pybatfish.client.session import Session
 
 from analysis import findings
-from analysis.checks import access_control, policy_compliance, routing
+from analysis.checks import access_control, policy_compliance, risk, routing
 
 # --- The check registry -----------------------------------------------------
 #
@@ -280,7 +280,7 @@ def analyse(
 # ---------------------------------------------------------------------------
 
 POST_PROCESSORS = {
-    # "risk": risk.refine,   # Samika
+    "risk": risk.refine,  # Samika -- ruleset in docs/severity-rules.md
 }
 
 # Ranked worst-first, so a HIGHER index is a LOWER severity.

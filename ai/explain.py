@@ -197,6 +197,43 @@ def _looks_like_speculation(text: str) -> bool:
     return bool(_SPECULATION_PATTERN.search(text) or _LEAD_TO_PATTERN.search(text))
 
 
+def _evidence_detail(finding: Dict[str, Any]) -> str:
+    """The finding's evidence.detail as a string. Never raises, whatever
+    shape `finding` is in -- returns "" for anything that isn't a usable
+    string.
+
+    WHY THIS EXISTS
+        `finding.get("evidence", {}).get("detail")` and
+        `(finding.get("evidence") or {}).get("detail", "")` both look like
+        they default safely, but a dict's `.get(key, default)` only falls
+        back to `default` when `key` is ABSENT -- not when it is present
+        with value `None`. `findings.make_finding()` does not reject
+        `evidence={"detail": None}`, or `evidence=None` outright, so a
+        finding shaped that way is not hypothetical, it is one bug away in
+        any check.
+
+        Confirmed directly, three call sites, all crashing before this fix:
+        `_build_prompt()` (via `_compute_dead_rule_outcome()`'s regex,
+        `TypeError`), `_fallback_plain_restatement()` (`.strip()` on `None`,
+        `AttributeError`), and `_fallback_error_explanation()` -- the
+        deterministic last resort for status="error", the one place that
+        must not be able to fail -- crashing on `evidence=None` outright,
+        not just `detail=None`.
+
+        A malformed finding from a future check with a bug should degrade
+        explain() the same way an unreachable Ollama does, not take down
+        the whole explanation layer, including its own fallback.
+
+    A non-string, non-None `detail` (e.g. an int, if a future check ever
+    got that wrong) is also treated as "", not str()-coerced -- this
+    function's job is to hand back usable prose text, and a stringified
+    int is not that.
+    """
+    evidence = finding.get("evidence")
+    detail = evidence.get("detail") if isinstance(evidence, dict) else None
+    return detail if isinstance(detail, str) else ""
+
+
 def _fallback_error_explanation(finding: Dict[str, Any]) -> str:
     """The deterministic last resort for status="error", used only if the
     model fails validation twice in a row.
@@ -205,7 +242,7 @@ def _fallback_error_explanation(finding: Dict[str, Any]) -> str:
     facts actually known: the check did not complete, and (if given) the
     technical reason why. No model call, so nothing here can hallucinate.
     """
-    detail = finding.get("evidence", {}).get("detail") or "an unknown error"
+    detail = _evidence_detail(finding) or "an unknown error"
     return (
         "This check could not be completed, so nothing is confirmed about "
         f"the network either way. The underlying reason: {detail}"
@@ -222,7 +259,7 @@ def _fallback_plain_restatement(finding: Dict[str, Any]) -> str:
     fluent one that might still be speculating.
     """
     summary = (finding.get("summary") or "").strip()
-    detail = (finding.get("evidence") or {}).get("detail", "").strip()
+    detail = _evidence_detail(finding).strip()
     if detail:
         return f"{summary}. Technical detail: {detail}"
     return summary or "No explanation is available for this finding."
@@ -250,7 +287,7 @@ def _build_prompt(finding: Dict[str, Any]) -> str:
         "unrelated case; read its actual fields before answering."
     ]
 
-    detail = (finding.get("evidence") or {}).get("detail", "")
+    detail = _evidence_detail(finding)
     computed_outcome = _compute_dead_rule_outcome(detail)
     if computed_outcome is not None:
         # Deliberately NOT a distinctive, quotable label like "IMPORTANT
@@ -282,6 +319,49 @@ def _generate(finding: Dict[str, Any]) -> str:
     return response["response"].strip()
 
 
+def _try_generate(finding: Dict[str, Any]) -> Optional[str]:
+    """One attempt to call the model, or None if the model could not be
+    reached or could not answer.
+
+    WHY THIS EXISTS
+        analyse() already reports an unreachable Batfish as a status="error"
+        finding rather than raising -- the web layer never has to handle an
+        exception for it. Before this wrapper, explain() did not follow the
+        same convention: `ollama.generate()` raises when the request cannot
+        be served, and nothing here caught it. Confirmed directly, two ways:
+
+            Ollama not running at all    -> builtin ConnectionError
+            Ollama running, model not
+            built (`ollama create ...`
+            never run)                   -> ollama.ResponseError, HTTP 404
+
+        The second is at least as likely as the first in practice -- it is
+        exactly the state of a fresh clone before anyone has followed
+        ai/explain.py's own PREREQUISITE section -- and was missed by the
+        first pass at this fix, which only caught ConnectionError. Also
+        catches ollama.RequestError (a malformed request, e.g. a model name
+        the client rejects before sending), the third member of the same
+        "the model could not be reached or could not answer" family; not
+        reproduced live, included on the same reasoning as the other two
+        rather than waiting for it to be found the hard way.
+
+        Same failure class -- a dependency the check does not control is
+        down or misconfigured -- handled two different ways. Wiring
+        explanations into the dashboard (#31) on top of the old behaviour
+        would mean a machine without Ollama running, or with the wrong
+        model built, gets a broken findings view instead of findings
+        without explanations.
+
+    Returns None rather than raising so explain() can fall back the same way
+    it already does when generation fails validation twice, instead of
+    needing a separate failure path per exception type.
+    """
+    try:
+        return _generate(finding)
+    except (ConnectionError, ollama.ResponseError, ollama.RequestError):
+        return None
+
+
 def _is_unacceptable(text: str, *, is_error: bool) -> bool:
     """One check, used for every status. status="error" additionally
     rejects any claimed result about the network; every status rejects
@@ -302,17 +382,48 @@ def explain(finding: Dict[str, Any]) -> str:
     Generates, validates, and retries once if the first attempt is
     unacceptable; falls back to a fixed, non-generated sentence if the
     second attempt is unacceptable too, rather than ever showing an
-    unvalidated response.
+    unvalidated response. If Ollama cannot be reached at all, this degrades
+    straight to the same fallback -- it does not raise, and it does not
+    waste a second attempt against a host that is already known to be
+    unreachable.
+
+    If the finding carries no real evidence.detail, generation is skipped
+    entirely and this returns the deterministic fallback straight away.
+
+    WHY: found in a senior-level adversarial QA pass. Neither safety-net
+    check catches an unhedged, invented claim, because
+    _looks_like_a_result_claim() only ever runs for status="error" (a
+    "found" explanation legitimately needs words like "blocked" or "reach"
+    to describe the confirmed fact -- banning them would break the normal
+    case, not fix this one), and _looks_like_speculation() only catches
+    HEDGED claims, not confident ones. Reproduced live, 3/3, temperature
+    0.2: explain({"id": "AC-101", "status": "found", "summary": "A
+    finding"}) -- no evidence field at all -- returned "The device has a
+    rule that allows all traffic through with no restriction," a specific,
+    confident, entirely invented technical claim. This is exactly what
+    CLAUDE.md constraint 2 calls "a critical failure, not a bug": the model
+    is only ever supposed to rephrase real Batfish output, and with no
+    evidence.detail there is no real output to rephrase.
+
+    Skipping generation rather than trying to prompt or validate the
+    hallucination away, for the same reason _compute_dead_rule_outcome()
+    refuses rather than guesses when it is not confident: a rule that says
+    "do not say more than you know" is only real if it is enforced before
+    generation, not policed after it. The fallback restates only the
+    fields that are actually known (summary, and detail if present), which
+    is strictly less than what was already being shown for a validation
+    failure -- this is not a new code path, it is the existing one taken
+    one step earlier.
     """
     is_error = finding.get("status") == "error"
 
-    explanation = _generate(finding)
-    if not _is_unacceptable(explanation, is_error=is_error):
-        return explanation
-
-    explanation = _generate(finding)
-    if not _is_unacceptable(explanation, is_error=is_error):
-        return explanation
+    if _evidence_detail(finding):
+        for _ in range(2):
+            explanation = _try_generate(finding)
+            if explanation is None:
+                break
+            if not _is_unacceptable(explanation, is_error=is_error):
+                return explanation
 
     if is_error:
         return _fallback_error_explanation(finding)

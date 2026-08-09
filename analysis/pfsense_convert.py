@@ -30,18 +30,45 @@ SCOPE -- TIMEBOXED ON PURPOSE, PER CLAUDE.md SECTION 7
     "refuse rather than guess" discipline analysis/checks/routing.py's
     _compute_dead_rule_outcome() and ai/Modelfile both already commit to.
 
-A SIMPLIFYING ASSUMPTION, STATED EXPLICITLY
+A SIMPLIFYING ASSUMPTION, NO LONGER A SILENT ONE (issue #47)
     PF Sense's real rule evaluation is "last matching rule wins" unless a
-    rule is marked "quick" (which most PF Sense-GUI-authored rules are, but
-    the XML does not guarantee it). This module instead treats rules as
+    rule is marked "quick", in which case evaluation stops there and that
+    rule's action is final. This module instead treats rules as
     first-match-wins, top to bottom -- exactly how a Cisco ACL already
     behaves, and how every existing check in this project already reasons
-    about rule order. tests/fixtures/pfsense-source/config.xml is written so
-    every rule matches a disjoint slice of traffic except the final
-    catch-all, which makes it correct under EITHER evaluation model. A real
-    PF Sense export relying on last-match-wins semantics between overlapping
-    rules would convert to something that parses cleanly but decides
-    differently than the original -- a known limitation, not a hidden one.
+    about rule order.
+
+    For two overlapping rules A (earlier) and B (later), the two models are
+    guaranteed to agree in exactly two cases: A and B have the SAME action
+    (it does not matter which one "wins"), or A is "quick" (both models
+    stop evaluating at A the moment it matches -- Cisco because first-match
+    always stops there, PF Sense because "quick" says to). B's own "quick"
+    flag does not help on its own: PF Sense has already evaluated the
+    earlier, non-quick A and moved past it before B is ever reached, so a
+    later quick rule cannot undo the disagreement A already caused.
+    Anything else -- overlapping traffic, different actions, A not quick --
+    is genuinely ambiguous.
+
+    Demonstrated, not hypothetical (issue #47's probe): a deny-then-permit
+    pair on the same host, neither marked "quick", converted cleanly and
+    reported the permit line as "unreachable, shadowed by the deny" -- while
+    the real firewall, evaluating last-match, lets that exact traffic
+    through. Confidently wrong is worse than refusing, so this module now
+    checks for that ambiguity rather than assuming it away: see
+    `_check_rule_order_is_unambiguous()`, called from `convert()` for every
+    rule pair.
+
+    tests/fixtures/pfsense-source/config.xml's two "pass" rules are both
+    marked `<quick/>`, and it is load-bearing, not decoration. The file's
+    final rule is a catch-all deny, which by definition overlaps every
+    specific rule before it -- this check caught that the fixture itself
+    would have been wrong under real PF Sense semantics without `<quick/>`
+    on the two passes, the trailing deny would have overridden both of
+    them, denying the exact traffic the file exists to show as permitted.
+    "Written so every rule matches a disjoint slice" was true of the three
+    rules' intent, not of their actual address spaces once the catch-all is
+    counted -- a distinction this check exists specifically to stop anyone
+    (human or converter) from eliding again.
 
 WHY INTERFACE NAMES ARE REWRITTEN, NOT COPIED
     PF Sense identifies interfaces with FreeBSD device names (em0, em1, igb0).
@@ -58,6 +85,7 @@ WHY INTERFACE NAMES ARE REWRITTEN, NOT COPIED
 from __future__ import annotations
 
 import ipaddress
+import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -96,6 +124,77 @@ def _text(el: Optional[ET.Element], tag: str, default: Optional[str] = None) -> 
     return child.text.strip()
 
 
+# A literal newline inside an XML text node is valid XML (`<descr>a&#10;b</descr>`
+# parses fine and `.text` comes back as "a\nb"), but every free-text field this
+# module emits verbatim into the generated Cisco config text -- <hostname>,
+# interface <descr>, interface <if> -- assumes it is ONE line. Cisco IOS parses
+# config line by line, so a newline inside one of these fields is not cosmetic:
+# it lets the field's content be read as additional config statements.
+#
+# Found in a senior-level adversarial QA pass, confirmed with:
+#   <hostname>probe&#10;ip access-list extended acl_in&#10; permit ip any any</hostname>
+# Cisco IOS treats a REPEATED "ip access-list extended NAME" block as
+# APPENDING to the existing ACL of that name, not replacing it -- so the
+# injected "permit ip any any" became a real line in the same acl_in ACL as
+# the legitimate rules, evaluated BEFORE the real deny. An actual policy
+# bypass in the converted config, not just corrupted-looking output.
+_CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _reject_control_characters(text: str, *, field: str) -> str:
+    """Refuse `text` if it contains a newline or other control character,
+    rather than emit it into the generated config where it could be read as
+    additional config lines. See the module-level comment above this
+    function for the confirmed exploit this closes.
+
+    Applied to free-text fields only (interface <descr>, <if>) -- fields
+    already validated to a strict character set (see
+    `_sanitised_hostname()`) do not need this separately, a stricter check
+    already implies it.
+    """
+    if _CONTROL_CHAR_PATTERN.search(text):
+        raise PfSenseConversionError(
+            f"{field} contains a newline or other control character "
+            f"({text!r}) -- refusing to emit it into the generated config "
+            "rather than risk it being read as additional config lines"
+        )
+    return text
+
+
+# Real PF Sense hostnames are DNS hostname syntax: letters, digits, hyphen,
+# dot -- this is deliberately closer to "what a hostname actually is" than
+# "reject the specific characters found exploitable so far", the same
+# refuse-rather-than-guess discipline as everywhere else in this module.
+_HOSTNAME_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+
+
+def _sanitised_hostname(text: str) -> str:
+    """Validate <hostname> is safe to use both inside the generated Cisco
+    config text and as a filesystem path component.
+
+    WHY THIS EXISTS
+        Found in the same QA pass as `_reject_control_characters()`, a
+        second consequence of the same unsanitised field:
+        `write_snapshot()` builds its output path directly from this text
+        (`configs_dir / f"{hostname_text}.cfg"`). A crafted hostname like
+        "../../../../evil" walks the write outside the intended snapshot
+        directory -- confirmed directly, landed four directories above the
+        target, outside `snapshot_dir` entirely.
+
+        A conservative hostname-shaped allowlist closes both the
+        config-injection risk this field shares with <descr>/<if> AND the
+        path-traversal risk in one check, rather than a control-character
+        blocklist for one and a separate path check for the other -- an
+        allowlist cannot be bypassed by a character nobody thought to ban.
+    """
+    if not _HOSTNAME_PATTERN.match(text):
+        raise PfSenseConversionError(
+            f"<hostname> is {text!r}, not a plain hostname -- refusing to "
+            "use it in the generated config or as a filename"
+        )
+    return text
+
+
 def _parse_interfaces(root: ET.Element) -> Dict[str, Dict[str, str]]:
     """Return {role: {"if": ..., "ipaddr": ..., "subnet": ..., "descr": ...}}
     for every interface PF Sense defines, in document order.
@@ -120,11 +219,37 @@ def _parse_interfaces(root: ET.Element) -> Dict[str, Dict[str, str]]:
             # emit a Cisco stanza with no address, which would itself fail
             # to parse meaningfully.
             continue
+
+        # WHY VALIDATED HERE, NOT LEFT TO ipaddress.IPv4Network() DOWNSTREAM
+        #   Found in a senior-level adversarial QA pass: an invalid <subnet>
+        #   (e.g. "-1") or an IPv6-shaped <ipaddr> was not rejected here, so
+        #   it reached ipaddress.IPv4Network() unvalidated in _resolve_endpoint()
+        #   and again in convert()'s interface-emission loop, raising a raw
+        #   ipaddress.NetmaskValueError / AddressValueError instead of
+        #   PfSenseConversionError. Same class of gap PR #34 already fixed
+        #   once for <address>/<port> inside filter rules -- recurring one
+        #   layer up, for interface addressing, and fixed the same way:
+        #   validated at the layer that knows what went wrong (which
+        #   interface, which field), rather than left for a caller several
+        #   frames away to catch a exception type it was not expecting.
+        try:
+            ipaddress.IPv4Network(f"{ipaddr}/{subnet}", strict=False)
+        except ValueError as error:
+            raise PfSenseConversionError(
+                f"interface {role!r} has <ipaddr>{ipaddr!r}</ipaddr> and "
+                f"<subnet>{subnet!r}</subnet>, not a valid IPv4 address and "
+                f"prefix length -- {error}"
+            ) from None
+
         interfaces[role] = {
-            "if": _text(iface_el, "if", default=role),
+            "if": _reject_control_characters(
+                _text(iface_el, "if", default=role), field="<if>"
+            ),
             "ipaddr": ipaddr,
             "subnet": subnet,
-            "descr": _text(iface_el, "descr", default=role.upper()),
+            "descr": _reject_control_characters(
+                _text(iface_el, "descr", default=role.upper()), field="<descr>"
+            ),
         }
     return interfaces
 
@@ -201,6 +326,144 @@ def _resolve_endpoint(el: ET.Element, interfaces: Dict[str, Dict[str, str]]) -> 
     )
 
 
+def _endpoint_network(el: ET.Element, interfaces: Dict[str, Dict[str, str]]) -> ipaddress.IPv4Network:
+    """The address space a <source>/<destination> element actually matches,
+    as an IPv4Network, for OVERLAP DETECTION only -- see
+    _check_rule_order_is_unambiguous(). The ACL line itself is still built
+    by _resolve_endpoint(), which keeps emitting the literal "any"/"host"/
+    network syntax Cisco expects; this exists only to answer "do these two
+    address spaces intersect", which a formatted string cannot answer
+    without being re-parsed.
+
+    "any" becomes 0.0.0.0/0 -- the actual universal set, not a special case,
+    so it overlaps everything through the same .overlaps() call as every
+    other shape. A single host becomes a /32.
+
+    Handles exactly the same three forms _resolve_endpoint() does, and is
+    always called after _resolve_endpoint() has already succeeded for the
+    same element (see convert()), so the validation _resolve_endpoint()
+    already performs -- unresolvable network references, non-IP <address>
+    aliases -- does not need repeating here.
+    """
+    if el.find("any") is not None:
+        return ipaddress.IPv4Network("0.0.0.0/0")
+
+    network = _text(el, "network")
+    if network is not None:
+        iface = interfaces[network]
+        return ipaddress.IPv4Network(f"{iface['ipaddr']}/{iface['subnet']}", strict=False)
+
+    address = _text(el, "address")
+    return ipaddress.IPv4Network(f"{address}/32")
+
+
+def _protocols_might_overlap(a: str, b: str) -> bool:
+    """PF Sense protocol strings ("tcp", "udp", "icmp", "any"). "any" is a
+    superset of every other protocol, so it overlaps all of them; two
+    specific protocols overlap only if they are the same one."""
+    return a == "any" or b == "any" or a == b
+
+
+def _ports_might_overlap(a: Optional[int], b: Optional[int]) -> bool:
+    """None means "no <port> element", i.e. every port -- a superset of any
+    specific port, same reasoning as "any" for protocols above."""
+    return a is None or b is None or a == b
+
+
+def _check_rule_order_is_unambiguous(
+    rule_els: List[ET.Element], interfaces: Dict[str, Dict[str, str]], acl_lines: List[str]
+) -> None:
+    """Refuse to convert if two rules could disagree about a flow that
+    matches both of them -- see the module docstring's issue #47 section
+    for the two evaluation models this reconciles.
+
+    THE EXACT CONDITION, derived rather than approximated
+        For two rules A (earlier in the file) and B (later), whose traffic
+        spaces overlap:
+
+        - If A and B have the SAME action, it does not matter which one
+          "wins" for the overlapping traffic -- the outcome is identical
+          either way, so there is nothing to disagree about even though
+          the two models might pick a different rule to credit it to.
+
+        - If A is "quick": PF Sense stops evaluating at A the instant a
+          flow matches it, so A's action is final. Cisco's first-match
+          semantics ALSO stop at A, being earlier. The two models agree on
+          A's action for every such flow, regardless of what B is or
+          whether B is also quick.
+
+        - Otherwise (actions differ, A is not quick): Cisco still stops at
+          A (first-match always does), but PF Sense keeps evaluating past
+          A and lets B's action override it (whether because B is quick
+          and matches next, or because B is simply the last matching rule
+          in a run with no quick rules at all). The two models can produce
+          different actions for the same flow. Genuinely ambiguous.
+
+        B's own "quick" flag never enters this decision -- only A's does,
+        because A is the one either model might stop at first. This is
+        narrower than "flag unless both rules are quick" would be: a
+        specific, quick, early rule followed by a broad, non-quick,
+        catch-all rule is NOT ambiguous, and the check does not spuriously
+        refuse it.
+
+    Called from convert() AFTER every rule has already been through
+    _rule_to_acl_line() successfully, passed in as `acl_lines` (same order
+    as `rule_els`) rather than rebuilt here -- so every field read here is
+    already known to be a shape this module understands, and no rule is
+    converted to an ACL line twice. This function only ever adds a refusal
+    on top of a config that would otherwise have converted, it never turns
+    an already-invalid rule into a different error.
+
+    O(n^2) in the rule count. PF Sense rule sets in scope for this converter
+    are small (single-interface, no aliases, no ranges -- see the module's
+    own SCOPE section), so this is not a performance concern; correctness
+    is what matters here, not asymptotic elegance.
+    """
+    parsed = []
+    for rule_el, line in zip(rule_els, acl_lines):
+        pf_type = _text(rule_el, "type") or ""
+        pf_protocol = _text(rule_el, "protocol", default="any") or "any"
+        destination_el = rule_el.find("destination")
+        port_text = _text(destination_el, "port") if pf_protocol in ("tcp", "udp") else None
+        parsed.append(
+            {
+                # The CISCO action, not the raw PF Sense <type> -- "block"
+                # and "reject" both become "deny", and a block/reject pair
+                # is exactly as same-action-safe as a block/block pair.
+                "action": _PFSENSE_TO_CISCO_ACTION.get(pf_type),
+                "quick": rule_el.find("quick") is not None,
+                "protocol": pf_protocol,
+                "source": _endpoint_network(rule_el.find("source"), interfaces),
+                "destination": _endpoint_network(destination_el, interfaces),
+                "port": int(port_text) if port_text is not None else None,
+                "line": line,
+            }
+        )
+
+    for i, a in enumerate(parsed):
+        for b in parsed[i + 1 :]:
+            if a["action"] == b["action"]:
+                continue
+            if a["quick"]:
+                continue
+            if not _protocols_might_overlap(a["protocol"], b["protocol"]):
+                continue
+            if not a["source"].overlaps(b["source"]):
+                continue
+            if not a["destination"].overlaps(b["destination"]):
+                continue
+            if not _ports_might_overlap(a["port"], b["port"]):
+                continue
+            raise PfSenseConversionError(
+                "rule order is ambiguous: these two rules' traffic spaces "
+                "overlap, their actions differ, and the earlier one is not "
+                "marked quick, so PF Sense's real last-match-wins "
+                "evaluation and this converter's first-match-wins model "
+                f"can disagree about which one decides -- {a['line']!r} "
+                f"(earlier) and {b['line']!r} (later)"
+            )
+
+
 def _rule_to_acl_line(rule_el: ET.Element, interfaces: Dict[str, Dict[str, str]]) -> str:
     """Convert one PF Sense <rule> element into one Cisco extended-ACL line."""
     pf_type = _text(rule_el, "type")
@@ -251,7 +514,7 @@ def convert(xml_path: Union[str, Path]) -> str:
     """
     root = ET.parse(xml_path).getroot()
 
-    hostname = _text(root.find("system"), "hostname", default="pfsense")
+    hostname = _sanitised_hostname(_text(root.find("system"), "hostname", default="pfsense"))
     interfaces = _parse_interfaces(root)
     if not interfaces:
         raise PfSenseConversionError("no interface has both an address and a subnet")
@@ -259,6 +522,25 @@ def convert(xml_path: Union[str, Path]) -> str:
 
     filter_el = root.find("filter")
     rule_els = filter_el.findall("rule") if filter_el is not None else []
+
+    # WHY AN EMPTY RULE SET IS REFUSED, NOT CONVERTED AS "NO ACL"
+    #   Found in a senior-level adversarial QA pass. PF Sense fails CLOSED
+    #   with no rules configured on an interface -- it blocks everything.
+    #   Cisco fails OPEN with no ACL bound to an interface -- it permits
+    #   everything. Converting zero rules into zero rules would silently
+    #   invert the source firewall's actual security posture: the client's
+    #   most restrictive interface would become the analysis's least
+    #   restrictive one. Nothing here can pick which interface(s) should
+    #   get an implicit "deny all" either -- an empty <filter> gives no
+    #   signal about that -- so the correct move is to refuse rather than
+    #   guess, same discipline as everywhere else in this module.
+    if not rule_els:
+        raise PfSenseConversionError(
+            "no filter rules at all -- PF Sense fails closed with no rules "
+            "(blocks everything), Cisco fails open with no ACL bound "
+            "(permits everything); converting this would silently invert "
+            "the source firewall's actual security posture"
+        )
 
     # All rules must be on ONE interface role. Batfish/Cisco applies one ACL
     # per interface direction; supporting rules split across several
@@ -272,6 +554,23 @@ def convert(xml_path: Union[str, Path]) -> str:
             f"filter rules span multiple interfaces {sorted(rule_roles)}; "
             "only a single-interface rule set is supported"
         )
+
+    # WHY A RULE SET WITH NO <interface> AT ALL IS REFUSED
+    #   Found in the same QA pass. rule_roles is empty here in exactly one
+    #   other case: every rule is missing <interface>. Before this check,
+    #   acl_role then defaulted to None, the "if role == acl_role" test in
+    #   the interface-emission loop below never matched any real interface,
+    #   and "ip access-group ACL_NAME in" was never written anywhere -- but
+    #   the ACL's own deny/permit lines WERE still emitted, present in the
+    #   file, bound to nothing. A config that looks like it has a filter and
+    #   silently enforces none of it.
+    if not rule_roles:
+        raise PfSenseConversionError(
+            "no filter rule names an <interface> -- the resulting ACL would "
+            "be written but never bound to anything, and would silently "
+            "enforce nothing"
+        )
+
     acl_role = next(iter(rule_roles), None)
     if acl_role is not None and acl_role not in interfaces:
         raise PfSenseConversionError(
@@ -280,6 +579,7 @@ def convert(xml_path: Union[str, Path]) -> str:
         )
 
     acl_lines = [_rule_to_acl_line(r, interfaces) for r in rule_els]
+    _check_rule_order_is_unambiguous(rule_els, interfaces, acl_lines)
 
     lines: List[str] = [f"hostname {hostname}", "!"]
     for role, info in interfaces.items():
@@ -304,14 +604,30 @@ def write_snapshot(xml_path: Union[str, Path], snapshot_dir: Union[str, Path]) -
     """Convert `xml_path` and write it as a Batfish-ready snapshot at
     `snapshot_dir` (device files land in `snapshot_dir/configs/`, matching
     what analysis.pipeline.load_snapshot expects). Returns the file written.
+
+    WHY THE OUTPUT PATH IS VALIDATED TWICE
+        `_sanitised_hostname()` already rejects anything but a plain
+        hostname-shaped string, which structurally cannot contain a path
+        separator or "..", so the second check below can never actually
+        fire today. It stays as a cheap, explicit assertion rather than a
+        trust that a regex will always be the only thing standing between
+        untrusted XML text and a filesystem write -- found in a senior-
+        level adversarial QA pass, confirmed live before this fix:
+        `<hostname>../../../../evil</hostname>` wrote a file four
+        directories above the intended `snapshot_dir` entirely.
     """
     text = convert(xml_path)
     hostname = ET.parse(xml_path).getroot().find("system")
-    hostname_text = _text(hostname, "hostname", default="pfsense")
+    hostname_text = _sanitised_hostname(_text(hostname, "hostname", default="pfsense"))
 
     configs_dir = Path(snapshot_dir) / "configs"
     configs_dir.mkdir(parents=True, exist_ok=True)
-    out_path = configs_dir / f"{hostname_text}.cfg"
+    out_path = (configs_dir / f"{hostname_text}.cfg").resolve()
+    if configs_dir.resolve() not in out_path.parents:
+        raise PfSenseConversionError(
+            f"<hostname> {hostname_text!r} would write outside the snapshot "
+            "directory -- refusing"
+        )
     out_path.write_text(text)
     return out_path
 

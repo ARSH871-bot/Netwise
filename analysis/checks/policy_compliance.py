@@ -84,7 +84,7 @@ from typing import Any, Dict, List
 from pybatfish.client.session import Session
 from pybatfish.datamodel.flow import HeaderConstraints
 
-from analysis import findings
+from analysis import findings, snapshot
 
 # The name this check is registered under, and the value in every "check" field.
 CHECK_NAME = "policy_compliance"
@@ -100,6 +100,16 @@ ACTION_BY_KIND = {
 # from the rule number: POL-2 -> PC-002 for the violation, PC-052 for the error.
 # See the FINDING IDS section of the module docstring.
 ERROR_NUMBER_OFFSET = 50
+
+# The id for the ONE card reporting rules that do not apply to this snapshot.
+#
+# access_control numbers its findings sequentially, so it can just take the next
+# number. Ours are pinned to rules, so a check-level card needs a slot of its
+# own. 50 is that slot, and it is not arbitrary: it is SENTINEL_NUMBER + the
+# offset, mirroring PC-000. PC-000 is "the whole check found nothing"; PC-050 is
+# "the whole check could not apply". Rules are numbered from 1, so nothing else
+# can ever land here.
+SKIPPED_NUMBER = ERROR_NUMBER_OFFSET
 
 # --- The policy being asserted ----------------------------------------------
 #
@@ -262,7 +272,67 @@ def run(bf: Session) -> List[Dict[str, Any]]:
     """
     results: List[Dict[str, Any]] = []
 
-    for rule in POLICY_RULES:
+    # Which rules can this snapshot actually answer?
+    #
+    # Every rule names a device. On a snapshot that does not contain it, each
+    # rule reported "could not check" -- correct under F-4, and unusable in
+    # volume: measured at 5 of 5 findings on the routing-secure fixture. Report
+    # it ONCE instead, using the helper access_control established in #45.
+    #
+    # Unlike access_control, this check has NO analysis that works without a
+    # policy, so when nothing applies there is nothing else to run.
+    present = snapshot.device_names(bf)
+
+    if present is None:
+        # We could not find out what is in this snapshot. Note what this does
+        # NOT say: it does not claim the devices are absent, because we have not
+        # observed that. Claiming it would send a reader hunting for a missing
+        # device when the real fault was a broken Batfish query.
+        return [
+            findings.error_finding(
+                check=CHECK_NAME,
+                device="unknown",
+                summary=(
+                    f"{len(POLICY_RULES)} policy rule(s) could not be checked "
+                    "against this config"
+                ),
+                detail=(
+                    "The devices present in this snapshot could not be "
+                    "determined, so we cannot tell whether these rules apply to "
+                    "it. Nothing is claimed about them either way."
+                ),
+                source="analysis/checks/policy_compliance.py",
+                number=SKIPPED_NUMBER,
+            )
+        ]
+
+    applicable = [r for r in POLICY_RULES if r["node"] in present]
+    absent = sorted({r["node"] for r in POLICY_RULES if r["node"] not in present})
+    if absent:
+        results.append(
+            findings.error_finding(
+                check=CHECK_NAME,
+                # Safe here in a way it is not above: we know what is present,
+                # so naming what is missing is an observation, not a guess.
+                device=absent[0] if len(absent) == 1 else "unknown",
+                summary=(
+                    f"{len(POLICY_RULES) - len(applicable)} policy rule(s) could "
+                    "not be checked against this config"
+                ),
+                detail=(
+                    "They are written about "
+                    + ", ".join(absent)
+                    + ", which "
+                    + ("is" if len(absent) == 1 else "are")
+                    + " not in this snapshot. Nothing is claimed about them "
+                    "either way."
+                ),
+                source="analysis/checks/policy_compliance.py",
+                number=SKIPPED_NUMBER,
+            )
+        )
+
+    for rule in applicable:
         node = rule["node"]
         filter_name = rule["filter"]
         action = ACTION_BY_KIND[rule["kind"]]
@@ -345,8 +415,14 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                 check=CHECK_NAME,
                 device=POLICY_RULES[0]["node"] if POLICY_RULES else "unknown",
                 summary="No issues found by policy compliance",
-                detail=f"All {len(POLICY_RULES)} policy rule(s) hold",
-                source=", ".join(sorted({r["node"] for r in POLICY_RULES})),
+                # `applicable`, not POLICY_RULES: only rules that actually ran
+                # can be claimed to hold. They are the same list unless some
+                # were skipped -- and if any were, the skip card above already
+                # made `results` non-empty, so this branch is unreachable. Said
+                # accurately anyway, because the day that stops being true this
+                # sentence would quietly start overstating what we checked.
+                detail=f"All {len(applicable)} policy rule(s) hold",
+                source=", ".join(sorted({r["node"] for r in applicable})) or "unknown",
                 # PC-000. change_impact uses 100 for its own all-clear, so the
                 # two checks cannot collide on the "PC" prefix they share.
                 number=0,

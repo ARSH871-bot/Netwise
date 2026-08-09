@@ -1,0 +1,132 @@
+"""
+Netwise -- tests for web/main.py's _attach_explanations() (US-19 / #31).
+
+WHY THESE TESTS EXIST
+    _attach_explanations() is the seam between the AI layer and the
+    dashboard: it decides which findings get a plain-English explanation,
+    and what happens if generating one fails. Both are pure logic over a
+    list of dicts -- no Batfish, no Ollama, no HTTP -- so they are tested
+    directly here the same way every other pure-logic module in this repo
+    is, by monkeypatching web.main.explain rather than needing a real
+    model running.
+
+RUN
+    pytest tests/ -v
+"""
+
+from web import main
+
+
+def _finding(status: str, **overrides) -> dict:
+    base = {
+        "id": "AC-001",
+        "check": "access_control",
+        "severity": "high",
+        "device": "rtr-us5",
+        "summary": "A finding",
+        "evidence": {"detail": "some evidence", "source": "rtr-us5:acl_in"},
+        "status": status,
+    }
+    base.update(overrides)
+    return base
+
+
+# --- Which findings get explained -------------------------------------------
+
+
+def test_a_found_finding_gets_an_explanation(monkeypatch):
+    monkeypatch.setattr(main, "explain", lambda finding: "A plain-English explanation.")
+    results = main._attach_explanations([_finding("found")])
+    assert results[0]["explanation"] == "A plain-English explanation."
+
+
+def test_a_none_finding_is_not_explained(monkeypatch):
+    """A "none" finding has nothing to explain beyond its own summary --
+    static/app.js's rendering encodes the same rule for which cards get
+    the slot at all, this keeps the two in agreement."""
+    calls = []
+    monkeypatch.setattr(main, "explain", lambda finding: calls.append(finding) or "unused")
+    results = main._attach_explanations([_finding("none")])
+    assert "explanation" not in results[0]
+    assert calls == []
+
+
+def test_an_error_finding_is_not_explained(monkeypatch):
+    """An "error" finding has no real Batfish output to ground an
+    explanation in -- asking the model to write prose about a check that
+    never ran is exactly the invented-network-behaviour failure CLAUDE.md
+    constraint 2 forbids."""
+    calls = []
+    monkeypatch.setattr(main, "explain", lambda finding: calls.append(finding) or "unused")
+    results = main._attach_explanations([_finding("error")])
+    assert "explanation" not in results[0]
+    assert calls == []
+
+
+# --- Failure isolation --------------------------------------------------------
+# ai/explain.py's own module docstring guarantees explain() never raises, but
+# this boundary does not own that guarantee, so it is tested here as if it
+# could be wrong -- the same reasoning analysis.pipeline.run_check() already
+# applies to one check's crash not breaking the other three, one layer out.
+
+
+def test_a_failed_explanation_is_omitted_not_an_exception(monkeypatch):
+    def explodes(finding):
+        raise RuntimeError("Ollama said no")
+
+    monkeypatch.setattr(main, "explain", explodes)
+    results = main._attach_explanations([_finding("found")])
+    assert results[0]["status"] == "found", "the finding itself must still be returned"
+    assert "explanation" not in results[0]
+
+
+def test_one_failed_explanation_does_not_affect_the_others(monkeypatch):
+    def maybe_explode(finding):
+        if finding["id"] == "AC-001":
+            raise RuntimeError("boom")
+        return "a real explanation"
+
+    monkeypatch.setattr(main, "explain", maybe_explode)
+    results = main._attach_explanations(
+        [_finding("found", id="AC-001"), _finding("found", id="AC-002")]
+    )
+    assert "explanation" not in results[0]
+    assert results[1]["explanation"] == "a real explanation"
+
+
+# --- The response still validates as F-1, plus one extra key -----------------
+
+
+def test_the_finding_itself_is_unchanged_apart_from_the_new_key(monkeypatch):
+    """_attach_explanations() must not touch any existing F-1 field -- the
+    explanation is additive, not a replacement for anything the pipeline
+    already produced."""
+    monkeypatch.setattr(main, "explain", lambda finding: "explained")
+    finding = _finding("found")
+    original = dict(finding)
+    (result,) = main._attach_explanations([finding])
+    for key, value in original.items():
+        assert result[key] == value
+    assert result["explanation"] == "explained"
+
+
+# --- The /api/findings endpoint itself ----------------------------------------
+
+
+def test_mock_findings_are_never_explained(monkeypatch):
+    """#31's acceptance criterion is about a real finding from a real
+    uploaded config. Explaining fabricated demo data risks a viewer
+    mistaking a rephrased invention for a rephrased fact -- exactly the
+    distinction this project exists to keep clear."""
+    from fastapi.testclient import TestClient
+
+    calls = []
+    monkeypatch.setattr(main, "explain", lambda finding: calls.append(finding) or "unused")
+    monkeypatch.setattr(main, "_uploaded", False)
+
+    client = TestClient(main.app)
+    response = client.get("/api/findings")
+
+    assert response.status_code == 200
+    assert calls == []
+    assert all("explanation" not in f for f in response.json())

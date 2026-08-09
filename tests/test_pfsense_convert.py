@@ -16,16 +16,20 @@ RUN
     pytest tests/ -v
 """
 
+import tempfile
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import pytest
 
-from analysis.pfsense_convert import PfSenseConversionError, convert
+from analysis.pfsense_convert import PfSenseConversionError, convert, write_snapshot
 
 FIXTURE = "tests/fixtures/pfsense-source/config.xml"
 
 
-def _minimal_xml(*, rules_xml: str = "", interfaces_xml: str | None = None) -> str:
+def _minimal_xml(
+    *, rules_xml: str = "", interfaces_xml: str | None = None, hostname: str = "test-device"
+) -> str:
     """Build a minimal, valid PF Sense config.xml string for a single test,
     so each test can vary exactly the one thing it is checking rather than
     editing the shared fixture."""
@@ -40,7 +44,7 @@ def _minimal_xml(*, rules_xml: str = "", interfaces_xml: str | None = None) -> s
         """
     return f"""<?xml version="1.0"?>
     <pfsense>
-      <system><hostname>test-device</hostname></system>
+      <system><hostname>{hostname}</hostname></system>
       <interfaces>{interfaces_xml}</interfaces>
       <filter>{rules_xml}</filter>
     </pfsense>
@@ -101,11 +105,25 @@ def test_the_real_fixture_uses_a_valid_cisco_interface_name_not_the_raw_pfsense_
 # --- Interfaces ----------------------------------------------------------------
 
 
+# A benign, single rule on "lan" -- these two tests are about interface
+# emission, not filtering, but convert() now refuses an empty rule set
+# entirely (see the "Free-text fields..." / F6/F7 section below), so each
+# needs at least one rule naming a real interface to exercise what it is
+# actually testing.
+_ONE_BENIGN_LAN_RULE = """
+    <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+    <source><any/></source><destination><any/></destination></rule>
+"""
+
+
 def test_wan_and_lan_get_different_synthetic_interface_names():
-    xml_text = _minimal_xml(interfaces_xml="""
+    xml_text = _minimal_xml(
+        interfaces_xml="""
         <wan><if>em0</if><ipaddr>1.2.3.1</ipaddr><subnet>30</subnet></wan>
         <lan><if>em1</if><ipaddr>10.0.0.1</ipaddr><subnet>24</subnet></lan>
-    """)
+    """,
+        rules_xml=_ONE_BENIGN_LAN_RULE,
+    )
     output = _convert_string(xml_text)
     assert "interface GigabitEthernet0/0" in output
     assert "interface GigabitEthernet0/1" in output
@@ -114,10 +132,13 @@ def test_wan_and_lan_get_different_synthetic_interface_names():
 def test_interface_without_a_static_address_is_skipped_not_guessed():
     """A DHCP-assigned interface has no <ipaddr>/<subnet> to convert. Skipping
     it is correct; inventing an address would not be."""
-    xml_text = _minimal_xml(interfaces_xml="""
+    xml_text = _minimal_xml(
+        interfaces_xml="""
         <wan><if>em0</if></wan>
         <lan><if>em1</if><ipaddr>10.0.0.1</ipaddr><subnet>24</subnet></lan>
-    """)
+    """,
+        rules_xml=_ONE_BENIGN_LAN_RULE,
+    )
     output = _convert_string(xml_text)
     assert output.count("interface Gigabit") == 1
 
@@ -307,9 +328,18 @@ def test_rules_on_two_different_interfaces_raises():
 
 def test_rules_are_emitted_in_document_order():
     """Cisco ACLs are first-match-wins, so order is meaning, not just
-    style -- a converter that reordered rules would change the policy."""
+    style -- a converter that reordered rules would change the policy.
+
+    The deny is marked quick: these two rules' traffic overlaps (the
+    permit is a catch-all), and without quick on the earlier, more
+    specific rule, issue #47's rule-order check correctly refuses this
+    pair as ambiguous -- see test_a_specific_deny_before_a_broader_permit_
+    without_quick_raises below. This test is about output ORDER, not about
+    #47, so it uses input the new check accepts, same reasoning as the
+    other tests updated when #45/#50's device-scoping check landed."""
     xml_text = _minimal_xml(rules_xml="""
         <rule><type>block</type><interface>lan</interface><protocol>tcp</protocol>
+        <quick/>
         <source><any/></source><destination><address>10.0.0.5</address><port>22</port></destination></rule>
         <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
         <source><any/></source><destination><any/></destination></rule>
@@ -318,3 +348,284 @@ def test_rules_are_emitted_in_document_order():
     deny_pos = output.index("deny tcp any host 10.0.0.5 eq 22")
     permit_pos = output.index("permit tcp any any")
     assert deny_pos < permit_pos
+
+
+# --- Free-text fields cannot inject additional config lines -----------------------
+# Regression coverage for a senior-level adversarial QA finding: a literal
+# newline inside an XML text node is valid XML, and <hostname>/<descr>/<if>
+# were all emitted into the generated Cisco config text unescaped. Cisco IOS
+# parses config line by line, and a REPEATED "ip access-list extended NAME"
+# block APPENDS to the existing ACL rather than replacing it -- confirmed live,
+# an injected line landed inside the real acl_in ACL, evaluated BEFORE the
+# legitimate rules. An actual policy bypass in the converted config, not just
+# corrupted-looking output.
+
+
+def test_hostname_with_an_embedded_newline_raises():
+    xml_text = _minimal_xml(
+        hostname="probe\nip access-list extended acl_in\n permit ip any any"
+    )
+# --- Rule order ambiguity (issue #47) -----------------------------------------
+# PF Sense evaluates last-match-wins unless a rule is "quick"; this module
+# converts as first-match-wins, exactly like a Cisco ACL. The two models agree
+# whenever the earlier of two overlapping rules is quick (both stop there), or
+# whenever the two rules have the same action (it does not matter which one
+# "wins"). They can disagree otherwise -- demonstrated live in issue #47's own
+# probe, a deny-then-permit pair on the same host, neither quick, which
+# converted cleanly and reported the permit as "unreachable" while the real
+# firewall, evaluating last-match, would have let that exact traffic through.
+
+
+def test_a_specific_deny_before_a_broader_permit_without_quick_raises():
+    """Issue #47's own probe, reproduced here as a regression test. Neither
+    rule is quick, their actions differ (deny vs permit), and their traffic
+    overlaps (the permit is a subset of what the deny already covers) --
+    exactly the condition PF Sense and this converter can disagree about."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>block</type><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/></source><destination><address>10.20.0.5</address></destination></rule>
+        <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/></source><destination><address>10.20.0.5</address><port>443</port></destination></rule>
+    """)
+# --- Refuse rather than silently invert or drop the source firewall's policy -----
+# Regression coverage for three findings from a senior-level adversarial QA pass,
+# all in convert()'s interface/ACL-binding logic and _parse_interfaces().
+
+
+def test_no_filter_rules_at_all_raises():
+    """PF Sense fails closed with no rules (blocks everything); Cisco fails
+    open with no ACL bound (permits everything). Converting zero rules into
+    zero rules would silently invert the source firewall's actual security
+    posture -- confirmed live before this fix: this exact input converted
+    to an interface with no ACL and no access-group line at all."""
+    xml_text = _minimal_xml(rules_xml="")
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
+def test_descr_with_an_embedded_newline_does_not_inject_additional_config_lines():
+    xml_text = _minimal_xml(
+        interfaces_xml="""
+        <lan>
+          <if>em1</if>
+          <descr>LAN&#10;ip access-list extended acl_in&#10; permit ip any any</descr>
+          <ipaddr>10.0.0.1</ipaddr>
+          <subnet>24</subnet>
+        </lan>
+        """
+    )
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
+def test_if_with_an_embedded_newline_also_raises():
+    """The raw PF Sense device identifier (e.g. "em0") is emitted into the
+    same description line as <descr> -- same field, same injection vector,
+    same fix, checked separately since it is read by a different _text()
+    call."""
+    xml_text = _minimal_xml(
+        interfaces_xml="""
+        <lan>
+          <if>em1&#10;ip access-list extended acl_in&#10; permit ip any any</if>
+          <descr>LAN</descr>
+          <ipaddr>10.0.0.1</ipaddr>
+          <subnet>24</subnet>
+        </lan>
+        """
+    )
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
+def test_a_hostname_with_ordinary_punctuation_still_converts():
+    """The fix must not become a blanket ban -- real PF Sense hostnames can
+    contain dots and hyphens (e.g. "fw-01.branch.example"), and that must
+    keep working."""
+    # Needs a rule for the same reason the two interface-emission tests above
+    # do: convert() now refuses an empty rule set (#54). This test is about
+    # hostname punctuation, not about filtering.
+    xml_text = _minimal_xml(
+        hostname="fw-01.branch-office", rules_xml=_ONE_BENIGN_LAN_RULE
+    )
+    output = _convert_string(xml_text)
+    assert "hostname fw-01.branch-office" in output
+
+
+# --- write_snapshot() -------------------------------------------------------------
+# No test exercised write_snapshot() at all before this -- only convert() was
+# covered. Added alongside the fix for the path-traversal bug it had (below),
+# since a function with zero tests is also how that bug went unnoticed.
+
+
+def _write_temp_xml(xml_text: str) -> Path:
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".xml", delete=False, encoding="utf-8"
+    ) as f:
+        f.write(xml_text)
+        return Path(f.name)
+
+
+def test_write_snapshot_writes_inside_the_configs_subdirectory():
+    # Same as above: a benign rule so convert() has something to bind an ACL
+    # to. This test is about WHERE the file lands, not about its rules.
+    xml_path = _write_temp_xml(
+        _minimal_xml(hostname="rtr-normal", rules_xml=_ONE_BENIGN_LAN_RULE)
+    )
+    with tempfile.TemporaryDirectory() as snapshot_dir:
+        try:
+            out_path = write_snapshot(xml_path, snapshot_dir)
+            expected_dir = (Path(snapshot_dir) / "configs").resolve()
+            assert out_path.resolve().parent == expected_dir
+            assert out_path.name == "rtr-normal.cfg"
+            assert out_path.read_text().startswith("hostname rtr-normal")
+        finally:
+            xml_path.unlink()
+
+
+def test_write_snapshot_refuses_a_path_traversal_hostname():
+    """Confirmed live before this fix: this exact hostname wrote a file four
+    directories above the intended snapshot_dir, entirely outside it."""
+    xml_path = _write_temp_xml(_minimal_xml(hostname="../../../../evil"))
+    with tempfile.TemporaryDirectory() as snapshot_dir:
+        try:
+            with pytest.raises(PfSenseConversionError):
+                write_snapshot(xml_path, snapshot_dir)
+            # Confirm nothing was written anywhere outside the snapshot dir,
+            # not just that an exception happened to be raised.
+            escaped = Path(snapshot_dir).parent.parent.parent.parent / "evil.cfg"
+            assert not escaped.exists()
+        finally:
+            xml_path.unlink()
+def test_the_same_pair_converts_once_the_earlier_rule_is_quick():
+    """The earlier rule stops evaluation the instant it matches, in both
+    models -- Cisco's first-match and PF Sense's quick mean the same thing
+    here, so this specific pair becomes unambiguous regardless of whether
+    the later rule is quick too."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>block</type><interface>lan</interface><protocol>tcp</protocol>
+        <quick/>
+        <source><any/></source><destination><address>10.20.0.5</address></destination></rule>
+        <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/></source><destination><address>10.20.0.5</address><port>443</port></destination></rule>
+    """)
+    output = _convert_string(xml_text)
+    assert "deny tcp any host 10.20.0.5" in output
+    assert "permit tcp any host 10.20.0.5 eq 443" in output
+
+
+def test_marking_only_the_later_rule_quick_still_raises():
+    """The LATER rule's quick flag never makes a pair safe on its own --
+    PF Sense has already evaluated the earlier, non-quick rule and kept
+    going before it ever reaches the later one, so the two models can
+    still disagree about which action the earlier rule's own match space
+    resolves to."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>block</type><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/></source><destination><address>10.20.0.5</address></destination></rule>
+        <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+        <quick/>
+        <source><any/></source><destination><address>10.20.0.5</address><port>443</port></destination></rule>
+    """)
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
+def test_overlapping_rules_with_the_same_action_never_raise():
+    """If both rules would produce the same outcome, it does not matter
+    which model "wins" -- there is nothing to disagree about even though
+    the two rules' traffic genuinely overlaps and neither is quick."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>block</type><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/></source><destination><address>10.20.0.5</address><port>22</port></destination></rule>
+        <rule><type>block</type><interface>lan</interface><protocol>any</protocol>
+        <source><any/></source><destination><any/></destination></rule>
+    """)
+    output = _convert_string(xml_text)
+    assert "deny tcp any host 10.20.0.5 eq 22" in output
+    assert "deny ip any any" in output
+
+
+def test_disjoint_rules_never_raise_regardless_of_quick():
+    """Two rules that genuinely never match the same traffic cannot
+    disagree about it, quick or not -- the check is about overlap, not
+    about quick in isolation."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/></source><destination><address>10.20.0.5</address><port>443</port></destination></rule>
+        <rule><type>pass</type><interface>lan</interface><protocol>udp</protocol>
+        <source><any/></source><destination><address>10.20.0.6</address><port>53</port></destination></rule>
+    """)
+    output = _convert_string(xml_text)
+    assert "permit tcp any host 10.20.0.5 eq 443" in output
+    assert "permit udp any host 10.20.0.6 eq 53" in output
+
+
+def test_a_single_rule_never_raises():
+    """No pair exists with only one rule -- the check must not misfire on
+    the trivial case."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>block</type><interface>lan</interface><protocol>any</protocol>
+        <source><any/></source><destination><any/></destination></rule>
+    """)
+    assert "deny ip any any" in _convert_string(xml_text)
+
+
+def test_the_real_fixture_relies_on_quick_and_would_be_wrong_without_it():
+    """Regression coverage for the gap this fix found in the fixture
+    itself, not just in new adversarial input: the real fixture's two
+    pass rules are followed by a catch-all deny, which by definition
+    overlaps both of them. Before this fix added <quick/> to the two pass
+    rules, this exact fixture converted successfully and produced a
+    config that would have been backwards under real PF Sense semantics
+    -- the trailing deny would have overridden both permits. Confirms the
+    fixture's own <quick/> tags are load-bearing, not decoration, by
+    checking a temp copy with them removed raises."""
+    original = Path(FIXTURE).read_text()
+    without_quick = original.replace("<quick/>\n      ", "")
+    assert without_quick != original, "the fixture must actually contain <quick/> for this test to mean anything"
+
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False, encoding="utf-8") as f:
+        f.write(without_quick)
+        path = Path(f.name)
+    try:
+        with pytest.raises(PfSenseConversionError):
+            convert(path)
+    finally:
+        path.unlink()
+def test_a_rule_with_no_interface_raises_rather_than_producing_an_unbound_acl():
+    """Confirmed live before this fix: acl_role defaulted to None, so
+    "ip access-group ACL_NAME in" was never written to any interface, but
+    the ACL's own permit/deny lines WERE still emitted -- a filter that
+    looks present in the file and enforces nothing."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>block</type><protocol>tcp</protocol>
+        <source><any/></source><destination><any/></destination></rule>
+    """)
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
+def test_negative_subnet_raises_pfsense_conversion_error_not_a_raw_ipaddress_error():
+    xml_text = _minimal_xml(
+        interfaces_xml="""
+        <lan><if>em1</if><ipaddr>10.0.0.1</ipaddr><subnet>-1</subnet></lan>
+        """,
+        rules_xml=_ONE_BENIGN_LAN_RULE,
+    )
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
+def test_ipv6_shaped_ipaddr_raises_pfsense_conversion_error_not_a_raw_ipaddress_error():
+    """Same class of gap PR #34 already fixed once for <address>/<port>
+    inside filter rules, recurring one layer up for interface addressing."""
+    xml_text = _minimal_xml(
+        interfaces_xml="""
+        <lan><if>em1</if><ipaddr>2001:db8::1</ipaddr><subnet>24</subnet></lan>
+        """,
+        rules_xml=_ONE_BENIGN_LAN_RULE,
+    )
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)

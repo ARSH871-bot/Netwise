@@ -87,29 +87,25 @@ function renderFinding(finding, variant, icon, badgeText) {
   evidence.appendChild(el("span", "source", finding.evidence.source));
   card.appendChild(evidence);
 
-  // Where the AI layer's plain-English explanation will go, once it exists.
+  // The AI layer's plain-English explanation (US-19 / #31). web/main.py
+  // attaches `finding.explanation` server-side, only for status="found"
+  // findings that were actually explained -- see _attach_explanations()
+  // there for why "none"/"error" are excluded, and why a failed
+  // explanation attempt means the key is simply absent rather than an
+  // error message here.
   //
-  // Gated to status="found" cards on purpose. A status="none" card has nothing
-  // to explain, and a status="error" card has no Batfish output to ground an
-  // explanation IN -- asking a model to write prose about a check that never
-  // ran is exactly the invented-network-behaviour failure constraint 2 forbids.
-  // So the slot only appears where real evidence exists directly above it.
-  //
-  // The "placeholder" modifier is doing real work, not decoration. Once the AI
-  // layer lands, "the model has not run yet" and "the model said this" are two
-  // different claims, and they must not look alike -- the same reasoning that
-  // keeps status="none" and status="error" visually distinct. So the unwired
-  // state is dashed and muted, and wiring it up means dropping the modifier
-  // (and this literal string) rather than restyling anything.
-  if (variant !== "blind" && variant !== "clean") {
-    const explanation = el(
-      "div",
-      "ai-explanation placeholder",
-      "This is a placeholder for the plain-English explanation the AI layer " +
-        "will generate here once it's wired in. Example length: a sentence or " +
-        "two describing what the finding means and why it matters, grounded " +
-        "in the evidence above."
-    );
+  // No placeholder branch any more: before #31, this slot always rendered
+  // a dashed, muted "not generated yet" block so a hard-coded string could
+  // never be mistaken for real output (see the CSS comment on
+  // .ai-explanation.placeholder for the full reasoning, still relevant,
+  // just no longer reachable from here). Now that explain() is actually
+  // called, the two states this always distinguished collapse into one
+  // check: `finding.explanation` present means real, generated, grounded
+  // text; absent means nothing is shown at all, which is what "no
+  // explanation" honestly looks like -- not a dashed box promising one is
+  // coming.
+  if (variant !== "blind" && variant !== "clean" && finding.explanation) {
+    const explanation = el("div", "ai-explanation", finding.explanation);
     card.appendChild(explanation);
   }
 

@@ -19,7 +19,7 @@ These need neither Batfish nor Docker.
 import pytest
 
 from analysis import findings, snapshot
-from analysis.checks import access_control
+from analysis.checks import access_control, policy_compliance, routing
 
 
 class _FakeAnswer:
@@ -180,3 +180,199 @@ def test_a_missing_device_never_becomes_a_clean_result(monkeypatch):
         "a snapshot we could not check must never report 'no issues found'"
     )
     assert any(f["status"] == "error" for f in results)
+
+
+# --- policy_compliance's use of it -------------------------------------------
+#
+# Same behaviour, one structural difference worth testing separately: this check
+# has NO analysis that works without a policy. access_control still runs dead
+# rules and undefined references when its statements do not apply; here, if
+# nothing applies, nothing runs. That makes "skip quietly" a more attractive
+# shortcut and a worse mistake, because there is no other output left to notice
+# its absence.
+
+
+def _run_policy_with_devices(monkeypatch, present):
+    """Run policy_compliance with a known device set and Batfish stubbed out."""
+    monkeypatch.setattr(policy_compliance.snapshot, "device_names", lambda bf: present)
+    # No rule may actually reach Batfish: every one that runs returns "holds".
+    monkeypatch.setattr(policy_compliance, "_search", lambda *a, **k: [])
+    return policy_compliance.run(_FakeSession())
+
+
+def test_policy_absent_devices_reported_once_not_once_per_rule(monkeypatch):
+    results = _run_policy_with_devices(monkeypatch, {"rtr-hq", "rtr-branch"})
+
+    assert len(results) == 1, f"one card, not one per rule: {[f['id'] for f in results]}"
+    assert results[0]["status"] == "error", "still an error -- we did not check"
+    assert "rtr-us5" in results[0]["evidence"]["detail"]
+    assert "not in this snapshot" in results[0]["evidence"]["detail"]
+
+
+def test_policy_skip_card_has_its_own_reserved_id(monkeypatch):
+    """PC-050 mirrors PC-000: 'the whole check could not apply'.
+
+    It cannot borrow a rule's number -- those are pinned, and reusing one would
+    make PC-002 mean two different things depending on the snapshot.
+    """
+    results = _run_policy_with_devices(monkeypatch, {"rtr-hq"})
+    assert results[0]["id"] == "PC-050"
+
+    rule_ids = {f"PC-{r['number']:03d}" for r in policy_compliance.POLICY_RULES}
+    error_ids = {
+        f"PC-{r['number'] + policy_compliance.ERROR_NUMBER_OFFSET:03d}"
+        for r in policy_compliance.POLICY_RULES
+    }
+    assert "PC-050" not in rule_ids | error_ids, "the skip id must not collide"
+
+
+def test_policy_unknown_devices_do_not_claim_the_devices_are_absent(monkeypatch):
+    """The #45 lesson, applied here: do not assert a cause we did not observe."""
+    results = _run_policy_with_devices(monkeypatch, None)
+
+    assert len(results) == 1 and results[0]["status"] == "error"
+    detail = results[0]["evidence"]["detail"]
+    assert "could not be determined" in detail
+    assert "not in this snapshot" not in detail, (
+        "we did not observe that -- fileParseStatus failed, which is a "
+        "different fact from the device being absent"
+    )
+    assert results[0]["device"] == "unknown"
+
+
+def test_policy_missing_devices_never_become_a_clean_result(monkeypatch):
+    """The failure this whole change is one careless step away from.
+
+    If the skip card were ever dropped instead of reported, a snapshot naming
+    none of our devices would come back status="none" -- a clean bill of health
+    for a config nothing was checked against. That is the F-4 lie.
+    """
+    for present in ({"rtr-hq"}, set(), None):
+        results = _run_policy_with_devices(monkeypatch, present)
+        assert results, "never return nothing"
+        assert not any(f["status"] == "none" for f in results), (
+            f"a config we could not check must never read as clean (present={present!r})"
+        )
+
+
+def test_policy_says_nothing_when_every_device_is_present(monkeypatch):
+    """The normal case must not gain a spurious card."""
+    results = _run_policy_with_devices(monkeypatch, {"rtr-us5"})
+
+    assert [f["status"] for f in results] == ["none"]
+    assert results[0]["id"] == "PC-000"
+# --- routing's use of it -----------------------------------------------------
+#
+# The last check to adopt this. Until #29 it was the only remaining source of
+# "could not check" cards on an ordinary upload: measured on `main`, a full
+# pipeline run over rtr-us5-secure returned two clean checks and two amber
+# routing cards, both about routers that config never mentioned.
+
+
+class _EmptyTraceFrame:
+    """A traceroute answer that matched nothing.
+
+    Enough for these tests: they care which statements are ASKED about, not
+    what the answers say. An empty frame makes every applicable statement
+    report its own "Could not check: ..." card, which is deliberately worded
+    differently from the single scoping card so the two cannot be confused.
+    """
+
+    empty = True
+
+
+class _RoutingQuestions:
+    def traceroute(self, **_kwargs):
+        return _FakeAnswer(_EmptyTraceFrame())
+
+
+class _RoutingSession:
+    def __init__(self):
+        self.q = _RoutingQuestions()
+
+
+def _run_routing_with_devices(monkeypatch, present):
+    monkeypatch.setattr(routing.snapshot, "device_names", lambda bf: present)
+    return routing.run(_RoutingSession())
+
+
+def _scoping_card(results):
+    """The single card reported when statements do not apply to this snapshot.
+
+    Matched on the scoping wording specifically, NOT on "could not" -- a
+    per-statement error says "Could not check: the hq lan must...", and a test
+    that accepted either would pass while the fix did nothing.
+    """
+    cards = [f for f in results if "route assertion(s) could not be checked" in f["summary"]]
+    assert len(cards) == 1, f"expected exactly one scoping card, got {len(cards)}"
+    return cards[0]
+
+
+def test_routing_absent_devices_are_reported_once_not_once_per_statement(monkeypatch):
+    results = _run_routing_with_devices(monkeypatch, {"rtr-us5"})
+
+    card = _scoping_card(results)
+    assert card["status"] == "error", "still an error -- we did not check"
+    assert len(results) == 1, "the statements must not also report individually"
+
+
+def test_routing_summary_names_the_missing_devices_and_the_count(monkeypatch):
+    results = _run_routing_with_devices(monkeypatch, {"rtr-us5"})
+    card = _scoping_card(results)
+
+    assert str(len(routing.ROUTES)) in card["summary"]
+    detail = card["evidence"]["detail"]
+    assert "rtr-hq" in detail and "rtr-branch" in detail
+    assert "not in this snapshot" in detail
+
+
+def test_routing_reports_nothing_extra_when_every_device_is_present(monkeypatch):
+    """The normal case must be untouched -- no scoping card on a good run."""
+    results = _run_routing_with_devices(monkeypatch, {"rtr-hq", "rtr-branch"})
+
+    assert not any(
+        "route assertion(s) could not be checked" in f["summary"] for f in results
+    )
+
+
+def test_routing_unknown_devices_do_not_claim_the_devices_are_absent(monkeypatch):
+    """Same distinction #45 was corrected on, kept here rather than re-learned.
+
+    device_names() returning None means we could not find out what is in the
+    snapshot. Saying "rtr-hq is not in this snapshot" would assert something
+    never observed, and would be false on a snapshot that does contain it.
+    """
+    results = _run_routing_with_devices(monkeypatch, None)
+    card = _scoping_card(results)
+
+    detail = card["evidence"]["detail"]
+    assert "could not be determined" in detail
+    assert "not in this snapshot" not in detail, "must not assert absence"
+    assert card["device"] == "unknown"
+    assert card["status"] == "error"
+
+
+@pytest.mark.parametrize("present", [{"rtr-us5"}, set(), None])
+def test_routing_inapplicable_statements_never_become_a_clean_result(present, monkeypatch):
+    """The one that matters most.
+
+    Like policy_compliance and unlike access_control, this check has no
+    analysis that runs without a statement -- if nothing applies, nothing
+    runs. So "skip quietly" would leave an empty result list, and an empty
+    list is one line away from the all-clear at the end of run().
+    """
+    results = _run_routing_with_devices(monkeypatch, present)
+
+    assert results, "something must be reported"
+    assert not any(f["status"] == "none" for f in results), (
+        "a snapshot whose devices we never checked must never report 'no issues found'"
+    )
+
+
+def test_routing_scoping_card_id_cannot_collide_with_a_statement(monkeypatch):
+    """RT-050 is reserved. ROUTES numbers are pinned, so a borrowed id would
+    mean different things on different snapshots."""
+    card = _scoping_card(_run_routing_with_devices(monkeypatch, set()))
+
+    assert card["id"] == f"RT-{routing.SKIPPED_NUMBER:03d}"
+    assert routing.SKIPPED_NUMBER not in {r["number"] for r in routing.ROUTES}

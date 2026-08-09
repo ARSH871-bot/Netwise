@@ -120,15 +120,35 @@ Batfish runs in Docker container `batfish` (image `batfish/allinone`), exposing
   else. Interfaces and filter rules are covered; NAT, aliases, DHCP, VPN, IPv6
   and combined `tcp/udp` rules are not, and each raises rather than guessing.
 
-  **Read this before showing the client their own config.** PF Sense evaluates
-  rules *last-match-wins* unless a rule is marked "quick"; the converter treats
-  them as *first-match-wins*, like a Cisco ACL. Our fixture is written so both
-  models agree, so the tests cannot catch the difference. A real export that
-  relies on last-match semantics between overlapping rules **converts to
-  something that parses cleanly and decides differently from the real
-  firewall** — findings would be confidently wrong about a network that does
-  not behave that way. Tracked as an open risk, not a bug: see the module
-  docstring and the linked issue.
+  **Rule order: PF Sense and Cisco disagree, and the converter now refuses
+  rather than guesses.** PF Sense evaluates *last-match-wins* unless a rule is
+  marked `quick`; a Cisco ACL — and so this converter — is *first-match-wins*.
+  Where two overlapping rules have different actions and the earlier one is not
+  `quick`, the two models decide the same traffic **differently**. Measured: a
+  block followed by a narrower HTTPS permit, neither `quick`, converts into an
+  ACL that denies traffic the real firewall permits, and Netwise then reports
+  the deciding rule as one that "never takes effect".
+
+  `_check_rule_order_is_unambiguous()` detects exactly that case and raises,
+  rather than emitting something that parses cleanly and is wrong (#58, closing
+  #47). Only the *earlier* rule's `quick` flag can make a pair safe — PF Sense
+  has already moved past a non-quick earlier rule before the later one is
+  reached.
+
+  **Our own fixture was wrong about this until #58**, which is worth recording
+  because the earlier version of this section cited it as reassurance. Its
+  comment claimed every rule matched a disjoint slice of traffic; the trailing
+  catch-all deny overlaps every rule before it by definition, so under real PF
+  Sense semantics that deny would have overridden both permits and the fixture
+  demonstrated the opposite of its stated policy. Both pass rules now carry
+  `<quick/>` — also what a PF Sense GUI normally produces — and a test strips
+  the tag from a copy to prove the refusal still fires.
+
+  **Still open, and it is a client question, not a code one:** does the client's
+  real export mark its rules `quick`? If it does, we can convert and analyse it
+  as it stands. If it does not, the converter will now correctly refuse, and
+  teaching it PF Sense's real evaluation order becomes a piece of work nobody
+  has scoped.
 
 ## 7a. The finding format (F-1) — the one contract
 
@@ -172,6 +192,13 @@ A check is one file with one function, `run(bf: Session) -> list[dict]`, plus
 one line in the `CHECKS` registry in `pipeline.py`. Checks do not connect,
 load snapshots, or handle their own crashes — the pipeline isolates each one,
 so a bug in one feature cannot take down the other three.
+
+**After the checks run, post-processors refine the combined list**
+(`POST_PROCESSORS` in `pipeline.py`, `refine(results) -> results`). That is how
+`risk` sees every finding rather than a Batfish session. Two limits are
+enforced there rather than documented: a post-processor may not downgrade a
+`status="error"` finding, and may not drop one. A violation is restored *and*
+reported.
 
 ```bash
 python -m analysis.pipeline tests/fixtures/rtr-us5-secure
@@ -241,12 +268,14 @@ format, to the screen. This replaced the earlier engine/frontend split.
 | **Shubham** | Policy-compliance + change-impact analysis |
 | **Samika** | Risk prioritisation + the interface + secure upload |
 
-## 11. Status — last updated 2026-08-03
+## 11. Status — last updated 2026-08-06
 
 > **⚠️ This section goes stale faster than anything else in the file.** It has
-> already been wrong about `main` twice in one day — once caught in review
-> before merging, once caught after. If a decision depends on it, check the
-> repo rather than trusting it:
+> been wrong about `main` repeatedly, in both directions — claiming work that
+> had not landed, and calling finished work blocked. Every instance so far was
+> the same cause: a fact recorded here *and* somewhere else, and only one of
+> them updated. If a decision depends on this section, check the repo rather
+> than trusting it:
 >
 > ```bash
 > sed -n '/^CHECKS = {/,/^}/p' analysis/pipeline.py   # what actually runs
@@ -260,8 +289,15 @@ format, to the screen. This replaced the earlier engine/frontend split.
 **Sprint 1 — complete.** Batfish installed and running; the five core questions
 run and understood on bundled example configs. See `docs/sprint1/SPRINT1.md`.
 
-**Sprint 2 — in progress.** The output-schema question that once blocked this
-is **settled**: the team agreed F-1 (see §7a). Do not reopen it casually.
+**Sprint 2 — complete** (30 July – 5 August 2026). The output-schema question
+that once blocked it is **settled**: the team agreed F-1 (see §7a). Do not
+reopen it casually. The record is `docs/sprint2/SPRINT2.md`, written inside the
+sprint rather than reconstructed after it.
+
+**Sprint 3 — in progress** (6–12 August 2026, dates agreed by all four).
+**Scope is not yet agreed**, and four of the seven days went on landing Sprint
+2's carry-over — ten pull requests merged on 8 August. The planning proposal is
+`docs/sprint3/SPRINT3.md`; it is a proposal until its header says otherwise.
 
 ### What is built and on `main`
 
@@ -272,19 +308,22 @@ is **settled**: the team agreed F-1 (see §7a). Do not reopen it casually.
 | `access_control` check | Arsh | Done — four analyses: `testFilters`, `searchFilters`, `filterLineReachability`, `undefinedReferences` |
 | `policy_compliance` check | Shubham | Done — see `docs/policy-rules.md` |
 | `routing` check | Ankeet | Done — `traceroute`-based reachability, two-router fixtures |
-| **AI explanation layer** | Ankeet | Done — `ai/explain.py` + `ai/Modelfile` (Warden, local Ollama). Explains one finding; the natural-language-question direction is not started |
+| **AI explanation layer** | Ankeet | Done — `ai/explain.py` + `ai/Modelfile` (Warden, local Ollama). Explains one finding, and **never raises**: an unreachable Ollama, an unbuilt model, or a finding with no real evidence all degrade to deterministic text (#52) |
+| **AI explanation on screen** | Ankeet + Samika | Done (#56, closing #31). `/api/findings` attaches an `explanation` to every `status="found"` finding — **not** an F-1 field, added downstream of validation so the contract is untouched |
+| **`risk` scoring** | Samika | Done (#60) — `POST_PROCESSORS`, ruleset in `docs/severity-rules.md`. Re-rates severity and sorts worst-first; the two limits are enforced in `pipeline.run_post_processors()`, not trusted |
 | Dashboard + secure upload | Samika | Done — real findings on screen since #39 |
-| PF Sense conversion | Ankeet | Done — `analysis/pfsense_convert.py`. **Read the rule-order caveat in §7** before using it on a real export |
+| PF Sense conversion | Ankeet | Done — `analysis/pfsense_convert.py`, and **hardened**: refuses config injection and path traversal via free-text fields (#53), an unbound ACL / empty rule set / unvalidated addressing (#54), and ambiguous rule order (#58, closing #47). See §7 |
 | Test suite | team | Needs neither Batfish nor Ollama. For the count, run it — a number written here rots the next time anyone adds a test |
+
+**All five features are now on `main` together**, which first became true on
+8 August.
 
 ### What is NOT built
 
 | Piece | Owner | Note |
 |---|---|---|
-| `risk` scoring | Samika | Blocked — see the open decisions below |
 | `change_impact` | Shubham | Not started, and does not fit the `run(bf)` contract |
-| AI: natural-language questions | Ankeet | Not started — the other half of Layer 2 |
-| AI explanation on screen | Samika + Ankeet | Slot built (#40); `explain()` not yet called — #31 |
+| AI: natural-language questions | Ankeet | Not started — the other half of Layer 2. **Read `docs/design/query-grounding-problem.md` first**: every safety guard we have sits downstream of the query being the right one, and nothing yet chooses or checks that query |
 
 ### End to end — what is joined, and what is not
 
@@ -294,30 +333,69 @@ of 5 August (#39). `web/main.py` stages the upload and calls
 upload. Verified against opposite fixtures:
 
 ```
-upload rtr-us5-insecure  ->  5 problems found, 2 could not check
-upload rtr-us5-secure    ->  0 problems, 2 checked clean, 2 could not check
+upload rtr-us5-insecure  ->  5 problems found, 1 could not check
+upload rtr-us5-secure    ->  0 problems, 2 checked clean, 1 could not check
 ```
 
-**One link is still open: the AI explanation does not render.** `ai/explain.py`
-works and the dashboard has a slot for it (#40), deliberately marked *"not
-generated yet"* so a placeholder can never be mistaken for model output. Joining
-those two is #31, and it is now a small job rather than a redesign.
+The remaining "could not check" is honest rather than noise: it is the routing
+assertions saying, once, that they are written about `rtr-hq`/`rtr-branch` and
+so do not apply to a single-router upload. Every check is now scoped to the
+devices actually present — `access_control` (#45), `policy_compliance` (#50),
+`routing` (#29) — so an inapplicable statement is reported once, together,
+instead of one amber card each. It stays a `status="error"`: not applicable is
+not the same as checked and clean.
+
+**The last link closed on 8 August.** The AI explanation now renders: #56 joined
+`ai/explain.py` to the dashboard slot built in #40, closing #31. Three rules are
+enforced in that join rather than assumed:
+
+- only `status="found"` findings are explained — the model is never *called* for
+  a `none` or an `error`, so a card that could not be checked can never acquire
+  prose that reads as if it had been
+- the explanation is an extra key on the JSON response, **not** a new F-1 field,
+  so `analyse()` still returns and validates exactly the shape it always has
+- one explanation failing cannot take down the response, and the frontend
+  inserts it with `textContent`, never `innerHTML`
+
+Nothing in Layer 1 or 2 is now unjoined. What remains is features, not plumbing.
+
+### Settled — do not reopen without the team
+
+- **Three shapes for pipeline features.** `docs/design/pipeline-feature-shapes.md`,
+  **ADOPTED**, all four signatures. Producers keep `run(bf) -> list[dict]`;
+  `risk` is a post-processor; `change_impact` is a separate entry point and
+  **must not** be registered in `CHECKS`. The post-processor stage is built —
+  see §7b.
+- **Severity ownership.** Checks set a default; `risk` may re-rate; **`risk`
+  must never downgrade a `status="error"` finding, or drop one.** Both limits
+  are enforced in `pipeline.run_post_processors()` rather than trusted. Only
+  the `docs/finding-format.md:36` wording still needs changing, and that is an
+  F-1 edit needing all four — see below.
+- **PF Sense rule order** (issue #47, closed by #58). The converter refuses to
+  convert when two overlapping rules disagree and the earlier is not `quick`,
+  instead of silently mistranslating them. See §7. What remains is a **client
+  question, not a decision of ours**: whether the real export uses `quick`.
 
 ### Open decisions — do not settle these alone
 
-1. **Producer vs post-processor** (`docs/design/pipeline-feature-shapes.md`).
-   Two features cannot honour `run(bf) -> list[dict]`: `change_impact` needs
-   two snapshots, `risk` needs the combined findings list. Proposal is three
-   shapes. **This blocks Samika's severity ruleset.**
-2. **`change_impact` needs its own ID prefix.** It shares `PC` with
+1. **`change_impact` needs its own ID prefix.** It shares `PC` with
    `policy_compliance`, so their findings collide.
    `pipeline.duplicate_id_findings()` detects it; only a distinct prefix makes
    it impossible. Amending F-1 needs all four members.
-3. **Severity ownership.** `docs/finding-format.md` says severity is set by
-   Samika's rules; the checks currently set it themselves. Proposed resolution:
-   checks set a default, risk may re-rate, and **`risk` must never downgrade a
-   `status="error"`** — an unrunnable check is a blind spot regardless of policy.
-4. **Parse strictness.** `find_parse_problems()` currently treats any status
+2. **The F-1 wording on severity — amendment A-1 is in flight.**
+   `docs/finding-format.md:36` still says severity is "assigned by Samika's
+   rules, not by the AI". The rule agreed above is subtly different — checks
+   default it, `risk` may re-rate. The behaviour is settled; the sentence is
+   not. **PR #59 fixes it and carries a ratification table: 2 of 4 signed
+   (Arsh, Ankeet), needs Shubham and Samika.** An F-1 edit takes all four, and
+   merging the PR is not the same as ratifying the amendment — the table is.
+3. **Parse strictness.** `find_parse_problems()` currently treats any status
    other than `PASSED` as fatal, including `PARTIALLY_UNRECOGNIZED`. Safe for
    test configs, likely too strict for real ones. The fix is to run the checks
    and attach a loud "results may be incomplete" finding — never to ignore it.
+
+   It used to carry a second argument: that it was *the only thing catching a
+   mis-converted PF Sense config*. **That is no longer true** — #58 catches
+   ambiguous rule order in the converter itself, where the fault actually is.
+   Relaxing parse strictness is now a question about parse strictness alone,
+   which is the shape it should always have had.
