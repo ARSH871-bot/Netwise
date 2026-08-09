@@ -8,7 +8,7 @@
 #   protect anyone.
 #
 # WHAT IT RUNS
-#   pytest tests/ -- currently 47 tests. They need NEITHER Batfish NOR Ollama,
+#   pytest tests/ -- the whole suite. It needs NEITHER Batfish NOR Ollama,
 #   which is what makes this cheap enough to run on every push. Keeping the
 #   suite free of those dependencies is worth protecting; if a test ever needs
 #   a live service, put it behind a separate, manually-triggered workflow
@@ -45,6 +45,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Node
+        # tests/test_chat_rendering.py drives the real web/static/app.js through
+        # a small Node DOM shim, and SKIPS itself if `node` is missing. The
+        # ubuntu-latest image happens to ship Node today, so those tests were
+        # already running -- but "happens to" is not a guarantee, and a skipped
+        # test is indistinguishable from a passing one in the summary line.
+        # Since they are what stops a refusal rendering as a confident answer,
+        # depending on an incidental property of the runner image is the wrong
+        # trade. This makes it explicit.
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
