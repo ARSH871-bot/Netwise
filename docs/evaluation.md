@@ -153,10 +153,66 @@ away has the wrong impression.
    text is *good* is a separate question from whether the findings are *correct*.
    That needs human judgement, and it should be its own evaluation.
 
-6. **The natural-language question feature is not evaluated here.** It landed on
-   10 August (#66), and it deserves its own measurement of how many reasonable
-   questions it answers versus refuses.
+6. **The explanation *wording* is still unevaluated.** See the section below for
+   the question feature, which now is measured.
 
 **The honest one-line summary:** *the checks reliably detect the faults they were
 built to detect and do not fire on clean configurations — which is a necessary
 result, not a sufficient one.*
+
+---
+
+## Part 2 — the natural-language question feature (US-11)
+
+Measured 10 August, 20 questions across three fixtures. Four outcomes, and only
+one of them is dangerous:
+
+| Outcome | Count | |
+|---|---|---|
+| **Answered, correct** | 11 | 55% |
+| **Refused, correctly** | 9 | 45% |
+| **Refused, but should have answered** | 0 | 0% |
+| **Answered, and wrong** | **0** | **0%** |
+
+The last row is the one that matters. A tool that refuses too often is annoying;
+a tool that answers confidently and wrongly about a firewall is the thing this
+whole project is built to avoid.
+
+The 45% refusal rate is **not** a failure figure. Nine of those questions genuinely
+cannot be mapped — *"what is the weather today"*, a source given as an IP rather
+than a device, a device not in the snapshot — and three are questions a real user
+would plausibly type that we simply do not support yet:
+
+```
+"is port 443 open to the internal server"   -> refused
+"which rule blocks DNS"                     -> refused
+"is my firewall secure"                     -> refused
+```
+
+Each refusal names what it could not do rather than failing vaguely. That is the
+designed behaviour, not a gap in it — but the three above are the best available
+list of what to build next.
+
+### This evaluation found a real bug
+
+Worth recording, because it is the strongest argument for having done it at all.
+
+```
+can rtr-hq reach 10.20.20.5      ->  Yes.
+can rtr-hq reach 10.20.20.0/24   ->  No.   <-- same network, same fixture
+```
+
+Asking about a **subnet** reports unreachable while every **host** in it reports
+reachable. Batfish resolves a CIDR to the network address, which is not a live
+host, so the trace ends in `EXITS_NETWORK` — which we deliberately treat as
+failure elsewhere for good reasons.
+
+**Nothing hallucinated and no guard failed.** The query was well-formed, really
+ran, was answered truthfully, and `question_understood` echoed exactly what was
+asked. It was simply not the question the user meant — which is precisely the
+failure `docs/design/query-grounding-problem.md` predicted before this code
+existed. Tracked as **#70**.
+
+The scoring above counts that case as answered-correct, because the tool
+reported what Batfish said. Judged by what a *user* meant, it is wrong. Both
+readings are recorded rather than picking the flattering one.
