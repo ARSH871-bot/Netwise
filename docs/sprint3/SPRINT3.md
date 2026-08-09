@@ -49,9 +49,10 @@ re-checked, the AI layer degrading correctly with Ollama down, and zero
 
 **Still open, and each waiting on one person:**
 
-1. **#59** — the F-1 severity amendment. Signed by Arsh and Ankeet; **needs
-   Shubham**. It is an F-1 edit, so it takes all four, and it is the last
-   outstanding piece of the shapes decision.
+1. **#59** — the F-1 severity amendment. **3 of 4 signed** (Arsh, Ankeet,
+   Samika); **needs Shubham alone**. It is an F-1 edit, so it takes all four,
+   it is the last outstanding piece of the shapes decision, and it is the only
+   open item with no work attached to it at all.
 2. **#51** — one commit from Samika moving `playwright` to
    `requirements-dev.txt`, then it merges.
 3. **#63** — the merge rules, approved by Ankeet with one change requested and
@@ -94,6 +95,7 @@ we actually have (10, 11, 12 August).
 | ~~**#64 — decide the query-grounding shape**~~ | **DECIDED** | Ankeet chose **A (constrained selection) + C (show the question back)** on #64, with reasoning, and has taken #11 |
 | **#11 — the template surface** | **Yes** | Ankeet's first task: enumerate which of the five questions map cleanly to a natural-language pattern, which parameters validate against `snapshot.py`, and what "cannot map, refuse" looks like as a response. Analysis, not model integration |
 | **#11 — model integration** | **No** | Deliberately after the surface is known and reviewed. Building the generation side before the thing it selects from is how the guard gets skipped |
+| **Refining the risk ruleset** | **Yes** | Samika's, proposed on this PR and verified: R-2 flattens the list when one blanket permit causes everything. `rtr-us5-insecure` renders **5 high**, so ranking stops discriminating; `rtr-us5-messy` renders 1 high / 3 medium / 2 low and does. Already documented in `docs/severity-rules.md` §6, independent of anyone else's story, and it directly strengthens what #15 can demonstrate |
 | **#13 / #14** | No | Config generation on top of the same unsolved problem |
 | **#30 change-impact** | No | Design agreed, nothing written, and no one free |
 
@@ -101,15 +103,20 @@ we actually have (10, 11, 12 August).
 
 1. **Unblock everything** — the six open PRs. It costs a signature, a commit and
    a few reactions, and it clears the board.
-2. **#15**, as the sprint's one delivered story. It is the only story that turns
+2. **Refining the risk ruleset — Samika.** He raised on this PR that the plan
+   named no Sprint 3 work for him once #11 became Ankeet's, which was a fair
+   catch and a gap in my planning rather than in his workload. The weakness is
+   already measured in `docs/severity-rules.md` §6 and I confirmed it against
+   the fixtures before adding it here.
+3. **#15**, as the sprint's other delivered story. It is the only story that turns
    "the checks work" into something a capstone panel can see, and it is the
    cheapest remaining item precisely because the evidence already exists.
-3. ~~Decide #64.~~ **Done.** Ankeet chose A + C on #64 and took #11.
-4. **#11 — the template surface only**, reported back for review before any
+4. ~~Decide #64.~~ **Done.** Ankeet chose A + C on #64 and took #11.
+5. **#11 — the template surface only**, reported back for review before any
    model integration. That is Ankeet's own sequencing and it is the right one:
    the thing that selects queries cannot be built before the set it selects
    from is known.
-5. **#11's model integration moves to Sprint 4** — not as a failure. We
+6. **#11's model integration moves to Sprint 4** — not as a failure. We
    discovered mid-sprint that the story contained a design problem nobody had
    costed, chose a shape for it, and scoped the first honest piece of work. That
    is what a sprint is for.
