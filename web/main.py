@@ -30,9 +30,11 @@ from typing import Any, Dict, List
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from ai.explain import explain
-from analysis import pipeline as analysis_pipeline
+from ai.query import answer_question
+from analysis import findings, pipeline as analysis_pipeline
 from web import mock_findings
 
 # --- Upload validation rules ------------------------------------------------
@@ -310,6 +312,50 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
             "analysis. Refresh findings to see real results."
         ),
     }
+
+
+class AskRequest(BaseModel):
+    question: str
+
+
+@app.post("/api/ask")
+def ask_question(request: AskRequest) -> Dict[str, Any]:
+    """Answer one plain-English question about the uploaded config (US-11).
+
+    Always returns ai.query.answer_question()'s three keys
+    (question_understood, answer, grounded), whether the question was
+    answerable or refused. Never a 500 for an operational failure -- an
+    empty question, no upload yet, an unreachable Batfish, or a config
+    that will not load are all refusals in the same shape, the same
+    convention analysis.pipeline.analyse() already holds for
+    /api/findings and explain() now holds for an unreachable Ollama.
+
+    Connects and loads the snapshot fresh on every call rather than
+    reusing a cached session, the same choice /api/findings already
+    makes for analyse() -- consistency over a caching optimisation
+    nothing here has needed yet.
+    """
+    if not _uploaded:
+        return {
+            "question_understood": None,
+            "answer": "Upload a config first, there is nothing to ask about yet.",
+            "grounded": False,
+        }
+
+    try:
+        bf = analysis_pipeline.connect()
+        analysis_pipeline.load_snapshot(bf, SNAPSHOT_DIR, "netwise", SNAPSHOT_NAME)
+    except Exception as error:
+        return {
+            "question_understood": None,
+            "answer": (
+                "Could not reach Batfish or load the snapshot. The "
+                "underlying reason: " + findings.describe_error(error)
+            ),
+            "grounded": False,
+        }
+
+    return answer_question(request.question, bf)
 
 
 class NoCacheStatic(StaticFiles):
