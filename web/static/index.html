@@ -58,9 +58,15 @@
       <!-- ============ RIGHT PANE: chat ============ -->
       <section class="pane pane-chat" aria-labelledby="chat-heading">
         <h2 id="chat-heading">Ask a question</h2>
+        <!-- No model is involved here, in either direction -- the question is
+             matched against a closed set of three, and the answer is built from
+             Batfish's own result. Saying "a local model" would have been both
+             wrong and reassuring in the wrong way. See CLAUDE.md §7c. -->
         <p class="hint">
-          Answers come from a local model, grounded strictly in the findings on
-          the left. It is never asked to guess about your network.
+          Questions are answered by running a real check against the uploaded
+          config. The question understood is always shown back, so you can see
+          what was actually asked. Anything that cannot be translated is
+          refused rather than guessed.
         </p>
 
         <div id="chat-log" class="chat-log" aria-live="polite"></div>

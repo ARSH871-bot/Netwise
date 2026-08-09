@@ -320,41 +320,123 @@ function setUpUpload() {
 }
 
 /* ------------------------------------------------------------------------ *
- * Chat
+ * Chat -- asking a question (US-11)
  *
- * The panel works; the model behind it does not exist yet. So it says so.
+ * Wired to POST /api/ask, which always returns the same three keys whether it
+ * answered or refused:
  *
- * It deliberately does NOT reply with a plausible-sounding placeholder answer.
- * A security tool that invents network behaviour is broken in the worst way,
- * and a mock that invents it during a demo teaches everyone watching to trust
- * an answer nothing produced. The honest stub is the one that admits it.
+ *     { question_understood: string | null, answer: string, grounded: bool }
+ *
+ * TWO RULES THIS SECTION EXISTS TO ENFORCE
+ *
+ *   1. The translated question is always shown back, above the answer.
+ *      CLAUDE.md §7c: no model is called in either direction, and the intent
+ *      is matched against a closed set of three. That narrow scope is only
+ *      SAFE, rather than merely limited, because the person who asked can see
+ *      what was actually run and say "that is not what I meant". A confidently
+ *      wrong QUERY produces a real, evidenced, confidently wrong answer that
+ *      every other guard in this project passes.
+ *
+ *   2. A refusal never looks like an answer.
+ *      grounded=false means nothing ran, or nothing could. That is the same
+ *      claim as an amber "could not check" card, and it is rendered with the
+ *      same vocabulary. The failure this prevents is F-4 in the chat pane:
+ *      "I could not work out what you meant" sitting in the log styled
+ *      exactly like a fact about the network.
  * ------------------------------------------------------------------------ */
+
+/** Append one chat bubble. Returns the node so callers can remove it later. */
 function addMessage(text, who) {
   const log = document.getElementById("chat-log");
-  log.appendChild(el("div", `message ${who}`, text));
+  const node = el("div", `message ${who}`, text);
+  log.appendChild(node);
+  log.scrollTop = log.scrollHeight;
+  return node;
+}
+
+/**
+ * Render one response: the translated question, then the answer.
+ *
+ * Both are built with el(), so textContent -- an answer quotes Batfish output
+ * and a config's own device names, which are other people's strings.
+ */
+function addResponse(result) {
+  const log = document.getElementById("chat-log");
+  const exchange = el("div", "exchange");
+
+  // Shown whenever the server translated the question at all. On a refusal
+  // question_understood is null, because there is no query to show -- the
+  // answer itself then carries the reason.
+  if (result.question_understood) {
+    exchange.appendChild(el("div", "understood", result.question_understood));
+  }
+
+  // `!== true` rather than `=== false` on purpose. A missing, misspelled or
+  // malformed `grounded` key lands on the CAUTIOUS side: it renders as a
+  // refusal rather than as a confident answer. Defaulting the other way would
+  // mean a backend bug silently upgrades "we do not know" into "here is a
+  // fact about your network".
+  const refused = result.grounded !== true;
+  exchange.appendChild(
+    el("div", `message system${refused ? " refusal" : ""}`, result.answer)
+  );
+
+  log.appendChild(exchange);
   log.scrollTop = log.scrollHeight;
 }
 
 function setUpChat() {
   addMessage(
-    "The explanation layer is not connected yet. Once it is, answers here " +
-      "will be grounded strictly in the findings on the left.",
+    "Ask a question about the uploaded network. I'll always show you the " +
+      "question I understood before giving an answer.",
     "system"
   );
 
-  document.getElementById("chat-form").addEventListener("submit", (event) => {
+  const form = document.getElementById("chat-form");
+  const input = document.getElementById("chat-input");
+  const button = form.querySelector("button");
+
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const input = document.getElementById("chat-input");
     const question = input.value.trim();
     if (!question) return;
 
     addMessage(question, "user");
     input.value = "";
-    addMessage(
-      "Not connected yet — no model has seen this question, so there " +
-        "is no answer to give.",
-      "system"
-    );
+
+    // Locked while in flight. /api/ask connects to Batfish and loads the
+    // snapshot on every call, so this takes seconds -- long enough that
+    // someone would otherwise send a second question and watch two answers
+    // arrive in an order neither of them chose.
+    input.disabled = true;
+    button.disabled = true;
+    const pending = addMessage("Checking against the network…", "system pending");
+
+    try {
+      const response = await fetch("/api/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question }),
+      });
+      if (!response.ok) throw new Error(`server returned ${response.status}`);
+      pending.remove();
+      addResponse(await response.json());
+    } catch (error) {
+      // The request never completed, so nothing was checked. Rendered through
+      // the same refusal path rather than as a bare error string, because
+      // "the question could not be asked" and "the question was refused" are
+      // the same thing to the person reading: no answer, and no grounds.
+      pending.remove();
+      addResponse({
+        question_understood: null,
+        answer: `Could not ask that question: ${error.message}. Nothing was checked, so nothing is known either way.`,
+        grounded: false,
+      });
+    } finally {
+      input.disabled = false;
+      button.disabled = false;
+      input.focus();
+    }
   });
 }
 
