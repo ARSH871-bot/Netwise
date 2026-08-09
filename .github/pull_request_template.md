@@ -27,6 +27,8 @@ Measured, not asserted. Paste the actual output.
 
 - [ ] **Someone else approved it.** Never merge your own PR.
 - [ ] **CI is green**, not pending. `UNSTABLE` means the checks have not finished.
+- [ ] If this rebases someone else's branch, **they said yes first** — asked and
+      waited, not disclosed afterwards
 - [ ] The suite passes locally: `pytest tests/ -q`
 - [ ] No config data added outside `tests/fixtures/` — see `.gitignore`
 - [ ] If this depends on another PR, the description says which, and in what order they must merge

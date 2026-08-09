@@ -160,11 +160,21 @@ is not a substitute — the entire point of CI is that it runs somewhere that is
 not your machine, on both 3.12 and 3.13. *(Broken on #58, #54, #62: all merged
 while pending. They passed afterwards, which was luck.)*
 
-**3. Ask before rewriting someone else's branch.**
-If their PR needs a rebase, ask them. If they are unavailable and it is
-genuinely blocking, use `--force-with-lease` (never bare `--force`) and comment
-on the PR saying exactly what you did and why. Disclosure afterwards is the
-mitigation, not the fix. *(Broken on #54 and #58.)*
+**3. Ask before rewriting someone else's branch — every time, no exception.**
+If their PR needs a rebase, ask them and wait. Not "ask unless it is blocking":
+**asked and waited, always.** If it is genuinely holding up a queue, say that
+when you ask and they can prioritise it — that is their call to make, not
+yours.
+
+This rule is stricter than the first draft, at Ankeet's request on #63. The
+draft let you rebase without asking when the author was unavailable and it was
+blocking, with `--force-with-lease` and a comment afterwards. His answer, and it
+is the right one: *"I'd just rather be asked before it happens than told
+after."* Disclosure after the fact is a mitigation, not consent, and the escape
+hatch would have covered the exact case where it was broken.
+
+If you ever do rewrite a branch — with permission — use `--force-with-lease`,
+never bare `--force`. *(Broken on #54 and #58.)*
 
 **4. Merge small and merge often.**
 A queue of fourteen approved PRs produced three simultaneous conflicts in the
