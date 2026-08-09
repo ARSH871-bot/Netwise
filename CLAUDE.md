@@ -218,6 +218,52 @@ CI (`.github/workflows/tests.yml`) runs the suite on every pull request, on
 Python 3.12 and 3.13. It cannot block a merge — branch protection needs GitHub
 Pro or a public repo — so a red cross is a signal rather than a gate.
 
+## 7c. Asking questions (US-11) — the other direction, and why it refuses
+
+`ai/explain.py` goes **findings → English**: a finding already exists, produced
+by a check that ran a specific Batfish question with parameters a human wrote.
+`ai/query.py` goes **English → findings**, and something has to choose the query
+first. That choice is more dangerous than a wrong finding, and
+**`docs/design/query-grounding-problem.md` explains why — read it before
+changing anything here.**
+
+In one line: every other guard in this project checks that the *answer* is
+grounded in the *query*. None of them check that the query was the right one. A
+mistranslated question produces a real, evidenced, confidently wrong answer that
+passes all of them.
+
+So `answer_question(question, bf) -> dict` is built to refuse:
+
+- **Intent is matched against a closed set, not inferred.** Three intents —
+  reachability (`traceroute`), dead rules (`filterLineReachability`), undefined
+  references (`undefinedReferences`). `testFilters` and `searchFilters` are
+  deliberately unreachable: both need a filter name up front, and nobody asks a
+  question that names an ACL.
+- **No model is called, in either direction.** Not to classify the question, not
+  to write the answer. Classifying with a model is guessing at intent in the one
+  place guessing is worst; the answer text is built from Batfish's own
+  disposition and path. This is why the whole feature is testable with no Ollama
+  running.
+- **Every parameter is resolved against the real snapshot.** The source must
+  resolve to a device Batfish actually found (`analysis/snapshot.py`); the
+  destination must be a literal IP or CIDR. Anything else is refused with a
+  reason, not approximated.
+- **The translated question is always shown back** — `question_understood`. This
+  is not decoration. It is the only thing in the design that lets the person who
+  asked notice a mistranslation, which is what makes a narrow scope safe rather
+  than merely limited. **If the UI ever hides or shrinks it, the safety argument
+  goes with it.**
+
+The return shape is three keys — `question_understood`, `answer`, `grounded` —
+and it keeps F-4's distinction: a query that could not run comes back with
+`grounded=False` and an answer saying so, never a confident sentence.
+
+**Known and deliberate:** this is narrower than CLAUDE.md §4's own example. "Can
+the guest network reach the finance server" is **refused**, because resolving a
+plain-English name to an address needs interface enumeration the project does
+not have. Refusing it is the correct behaviour today; widening it is future work
+that must keep the refusal path intact.
+
 ## 8. Repository layout
 
 **What each folder is _for_. Deliberately no build status here** — that lives in
@@ -323,7 +369,7 @@ sprint rather than reconstructed after it.
 | Piece | Owner | Note |
 |---|---|---|
 | `change_impact` | Shubham | Not started, and does not fit the `run(bf)` contract |
-| AI: natural-language questions | Ankeet | Not started — the other half of Layer 2. **Read `docs/design/query-grounding-problem.md` first**: every safety guard we have sits downstream of the query being the right one, and nothing yet chooses or checks that query |
+| AI: natural-language questions | Ankeet + Samika | **Backend built** (#66) — `ai/query.py` + `/api/ask`. The dashboard wiring is Samika's half and is not done. See §7c |
 
 ### End to end — what is joined, and what is not
 

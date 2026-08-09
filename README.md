@@ -55,7 +55,7 @@ invents network behaviour.
 | Web dashboard + upload | **Built** — upload a config, get real findings |
 | PF Sense conversion | **Built** — interfaces and filter rules, and it refuses rather than guesses on anything it cannot translate faithfully |
 | Risk prioritisation | **Built** — findings are rated by a written ruleset and sorted worst-first |
-| Answering typed questions | Not started — see `docs/design/query-grounding-problem.md` |
+| Answering typed questions | **Backend built** — ask in plain English, get a grounded answer; the chat pane is not wired up yet |
 | Change-impact analysis | Not started |
 
 **Upload a config and you get real findings, explained in plain English.** All
@@ -117,7 +117,7 @@ pytest tests/ -v
 | Path | Contents |
 |---|---|
 | `analysis/` | Batfish orchestration — the pipeline, the finding format, one module per check, the PF Sense converter, and snapshot helpers |
-| `ai/` | Local LLM layer — `explain.py` turns a finding into plain English; `Modelfile` defines the model it calls |
+| `ai/` | Layer 2 — `explain.py` turns a finding into plain English; `query.py` turns a plain-English question into a grounded Batfish answer; `Modelfile` defines the model `explain.py` calls |
 | `web/` | FastAPI backend and dashboard frontend |
 | `tests/` | Test suite, plus synthetic configs used as fixtures |
 | `docs/` | Sprint records, the finding contract, design notes |
