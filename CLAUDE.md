@@ -294,8 +294,10 @@ that once blocked it is **settled**: the team agreed F-1 (see §7a). Do not
 reopen it casually. The record is `docs/sprint2/SPRINT2.md`, written inside the
 sprint rather than reconstructed after it.
 
-**Sprint 3 — starting.** Not yet planned or recorded. Anything below describing
-work in flight is Sprint 2 carry-over until a `docs/sprint3/` record exists.
+**Sprint 3 — in progress** (6–12 August 2026, dates agreed by all four).
+**Scope is not yet agreed**, and four of the seven days went on landing Sprint
+2's carry-over — ten pull requests merged on 8 August. The planning proposal is
+`docs/sprint3/SPRINT3.md`; it is a proposal until its header says otherwise.
 
 ### What is built and on `main`
 
@@ -306,19 +308,22 @@ work in flight is Sprint 2 carry-over until a `docs/sprint3/` record exists.
 | `access_control` check | Arsh | Done — four analyses: `testFilters`, `searchFilters`, `filterLineReachability`, `undefinedReferences` |
 | `policy_compliance` check | Shubham | Done — see `docs/policy-rules.md` |
 | `routing` check | Ankeet | Done — `traceroute`-based reachability, two-router fixtures |
-| **AI explanation layer** | Ankeet | Done — `ai/explain.py` + `ai/Modelfile` (Warden, local Ollama). Explains one finding; the natural-language-question direction is not started |
+| **AI explanation layer** | Ankeet | Done — `ai/explain.py` + `ai/Modelfile` (Warden, local Ollama). Explains one finding, and **never raises**: an unreachable Ollama, an unbuilt model, or a finding with no real evidence all degrade to deterministic text (#52) |
+| **AI explanation on screen** | Ankeet + Samika | Done (#56, closing #31). `/api/findings` attaches an `explanation` to every `status="found"` finding — **not** an F-1 field, added downstream of validation so the contract is untouched |
+| **`risk` scoring** | Samika | Done (#60) — `POST_PROCESSORS`, ruleset in `docs/severity-rules.md`. Re-rates severity and sorts worst-first; the two limits are enforced in `pipeline.run_post_processors()`, not trusted |
 | Dashboard + secure upload | Samika | Done — real findings on screen since #39 |
-| PF Sense conversion | Ankeet | Done — `analysis/pfsense_convert.py`. **Read the rule-order caveat in §7** before using it on a real export |
+| PF Sense conversion | Ankeet | Done — `analysis/pfsense_convert.py`, and **hardened**: refuses config injection and path traversal via free-text fields (#53), an unbound ACL / empty rule set / unvalidated addressing (#54), and ambiguous rule order (#58, closing #47). See §7 |
 | Test suite | team | Needs neither Batfish nor Ollama. For the count, run it — a number written here rots the next time anyone adds a test |
+
+**All five features are now on `main` together**, which first became true on
+8 August.
 
 ### What is NOT built
 
 | Piece | Owner | Note |
 |---|---|---|
-| `risk` scoring | Samika | Not started. **No longer blocked** — the post-processor stage it plugs into is built (#44) and `POST_PROCESSORS` is waiting for one line. See §7b |
 | `change_impact` | Shubham | Not started, and does not fit the `run(bf)` contract |
-| AI: natural-language questions | Ankeet | Not started — the other half of Layer 2 |
-| AI explanation on screen | Samika + Ankeet | Slot built (#40); `explain()` not yet called — #31 |
+| AI: natural-language questions | Ankeet | Not started — the other half of Layer 2. **Read `docs/design/query-grounding-problem.md` first**: every safety guard we have sits downstream of the query being the right one, and nothing yet chooses or checks that query |
 
 ### End to end — what is joined, and what is not
 
@@ -340,10 +345,19 @@ devices actually present — `access_control` (#45), `policy_compliance` (#50),
 instead of one amber card each. It stays a `status="error"`: not applicable is
 not the same as checked and clean.
 
-**One link is still open: the AI explanation does not render.** `ai/explain.py`
-works and the dashboard has a slot for it (#40), deliberately marked *"not
-generated yet"* so a placeholder can never be mistaken for model output. Joining
-those two is #31, and it is now a small job rather than a redesign.
+**The last link closed on 8 August.** The AI explanation now renders: #56 joined
+`ai/explain.py` to the dashboard slot built in #40, closing #31. Three rules are
+enforced in that join rather than assumed:
+
+- only `status="found"` findings are explained — the model is never *called* for
+  a `none` or an `error`, so a card that could not be checked can never acquire
+  prose that reads as if it had been
+- the explanation is an extra key on the JSON response, **not** a new F-1 field,
+  so `analyse()` still returns and validates exactly the shape it always has
+- one explanation failing cannot take down the response, and the frontend
+  inserts it with `textContent`, never `innerHTML`
+
+Nothing in Layer 1 or 2 is now unjoined. What remains is features, not plumbing.
 
 ### Settled — do not reopen without the team
 
@@ -368,10 +382,13 @@ those two is #31, and it is now a small job rather than a redesign.
    `policy_compliance`, so their findings collide.
    `pipeline.duplicate_id_findings()` detects it; only a distinct prefix makes
    it impossible. Amending F-1 needs all four members.
-2. **The F-1 wording on severity.** `docs/finding-format.md:36` still says
-   severity is "assigned by Samika's rules, not by the AI". The rule agreed
-   above is subtly different — checks default it, `risk` may re-rate. The
-   behaviour is settled; the sentence is not.
+2. **The F-1 wording on severity — amendment A-1 is in flight.**
+   `docs/finding-format.md:36` still says severity is "assigned by Samika's
+   rules, not by the AI". The rule agreed above is subtly different — checks
+   default it, `risk` may re-rate. The behaviour is settled; the sentence is
+   not. **PR #59 fixes it and carries a ratification table: 2 of 4 signed
+   (Arsh, Ankeet), needs Shubham and Samika.** An F-1 edit takes all four, and
+   merging the PR is not the same as ratifying the amendment — the table is.
 3. **Parse strictness.** `find_parse_problems()` currently treats any status
    other than `PASSED` as fatal, including `PARTIALLY_UNRECOGNIZED`. Safe for
    test configs, likely too strict for real ones. The fix is to run the checks
