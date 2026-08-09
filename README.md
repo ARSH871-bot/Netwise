@@ -50,18 +50,20 @@ invents network behaviour.
 | Access-control analysis | **Built** — four analyses |
 | Policy-compliance analysis | **Built** |
 | Routing analysis | **Built** |
-| AI explanation layer | **Built** — explains a finding in plain English; answering typed questions is still to come |
+| AI explanation layer | **Built** — explains a finding in plain English, and degrades to safe fixed text rather than failing when the model is unavailable |
+| AI explanation on screen | **Built** — findings arrive with their explanation attached |
 | Web dashboard + upload | **Built** — upload a config, get real findings |
-| PF Sense conversion | **Built** — interfaces and filter rules; see the caveat in `analysis/pfsense_convert.py` |
-| Risk prioritisation | Not started |
+| PF Sense conversion | **Built** — interfaces and filter rules, and it refuses rather than guesses on anything it cannot translate faithfully |
+| Risk prioritisation | **Built** — findings are rated by a written ruleset and sorted worst-first |
+| Answering typed questions | Not started — see `docs/design/query-grounding-problem.md` |
 | Change-impact analysis | Not started |
 
-**Upload a config and you get real findings.** The one link still open is the
-AI explanation: the dashboard reserves a place for it and labels it *"not
-generated yet"*, so a placeholder is never mistaken for something the model
-produced. Connecting `explain()` to that slot is the next piece of work.
+**Upload a config and you get real findings, explained in plain English.** All
+five analysis features are joined end to end; what remains is new features
+rather than plumbing.
 
-See [`docs/sprint1/SPRINT1.md`](docs/sprint1/SPRINT1.md) for the Sprint 1 record.
+Sprint records: [`docs/sprint1/SPRINT1.md`](docs/sprint1/SPRINT1.md),
+[`docs/sprint2/SPRINT2.md`](docs/sprint2/SPRINT2.md).
 
 ## Requirements
 
