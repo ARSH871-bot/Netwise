@@ -78,8 +78,25 @@ def main(path: str) -> None:
             (r.findtext(field) or "").strip() for r in rules if r.find(field) is not None
         )
         for value, n in sorted(seen.items()):
-            mark = " " if value in allowed else " <-- NOT SUPPORTED"
-            print(f"  {field}={value!r:<18}{n:>4}{mark}")
+            # Print a value ONLY if it is in the expected vocabulary; count and
+            # redact anything else. Found by Ankeet on #74: the first version
+            # printed whatever text was in the element and then annotated it,
+            # so a crafted <type>internal-hostname.corp.local</type> printed
+            # that hostname directly above this tool's own closing line,
+            # "Nothing above contains an address, hostname, or description" --
+            # false in that run.
+            #
+            # These two fields are dropdown-constrained in a real PF Sense GUI
+            # export, so it would not trigger there. That is not the point: the
+            # docstring states "It NEVER prints a value" as a guarantee, and a
+            # guarantee that holds only for well-behaved input is not one.
+            if value in allowed:
+                print(f"  {field}={value!r:<18}{n:>4}")
+            else:
+                print(
+                    f"  {field}=<present, outside expected vocabulary, redacted>"
+                    f"{n:>4} <-- NOT SUPPORTED"
+                )
 
     print("\nsections present at the top level:")
     out_of_scope = {"nat", "dhcpd", "openvpn", "ipsec", "aliases", "shaper"}
