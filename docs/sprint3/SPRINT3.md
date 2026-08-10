@@ -1,13 +1,29 @@
-# Sprint 3 — planning proposal
+# Sprint 3 — the plan, and how it changed
 
-**Status:** Dates AGREED by all four. Scope still open.
+**Status:** **AGREED.** Dates by all four; scope engaged by all three
+teammates, every argument incorporated, no objection outstanding. See the
+sign-off note below.
 **Sprint dates:** **6–12 August 2026** — agreed, not inferred.
 **Written:** 6 August 2026, the day after Sprint 2 closed
 **Updated:** 10 August 2026 (NZST), after the queue landed, Ankeet's review, and US-11's backend
 
-> **⚠️ The dates are confirmed, so the clock is real: today is day 5 of 7.**
-> Three days remain, counting today (10, 11, 12 August). Scope is still not
-> agreed.
+> **Day 5 of 7.** Three days remain counting today (10, 11, 12 August).
+>
+> **How this was agreed, recorded rather than asserted.** Every teammate
+> engaged with a specific argument and each one changed the document:
+>
+> - **Ankeet** — #11 is not "cheap"; the translation step is the hard part and
+>   a confidently wrong *query* beats a confidently wrong finding. Became #64,
+>   which he then took and built.
+> - **Samika** — the plan named no Sprint 3 work for him once #11 became
+>   Ankeet's. Proposed refining the risk ruleset, with the weakness already
+>   measured in `docs/severity-rules.md` §6.
+> - **Shubham** — #13/#14 is *neither*, not "together"; the empty-answer
+>   pattern has now bitten us three times; #30's stated primitive does not
+>   work. Approved.
+>
+> Nobody objected to the scope. "Agreed" here means three people argued it and
+> were answered, not that three people said nothing.
 >
 > Four of the seven days went on Sprint 2's carry-over — ten pull requests
 > merged on 8 August, all of it real work, none of it work Sprint 3 chose.
@@ -19,8 +35,8 @@
 > actually fits in three days" — the arithmetic, not the ambition, is what
 > moved.
 >
-> Scope is still a team decision, not the SCRUM Master's to settle alone.
-> Replace this line with `**Status:** Agreed` once scope is settled too.
+> Scope was a team decision, not the SCRUM Master's to settle alone, and it
+> was settled that way.
 
 ---
 
