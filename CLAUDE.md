@@ -144,11 +144,28 @@ Batfish runs in Docker container `batfish` (image `batfish/allinone`), exposing
   `<quick/>` — also what a PF Sense GUI normally produces — and a test strips
   the tag from a copy to prove the refusal still fires.
 
-  **Still open, and it is a client question, not a code one:** does the client's
-  real export mark its rules `quick`? If it does, we can convert and analyse it
-  as it stands. If it does not, the converter will now correctly refuse, and
-  teaching it PF Sense's real evaluation order becomes a piece of work nobody
-  has scoped.
+  **ANSWERED, 10 August, and it is the answer that reorders the roadmap.** The
+  client provided an anonymised export. Measured with `tools/pfsense_shape.py`,
+  which reports structure and never a value: **zero of seven filter rules are
+  marked `quick`.** Last-match-wins applies to his whole rule set, so the
+  converter's first-match-wins model disagrees with his firewall wherever two
+  overlapping rules differ.
+
+  **And rule order is not even the first blocker.** The converter refuses
+  earlier: his rules span four interface values across three interfaces, and it
+  supports a single-interface rule set. His export is 1,998 elements against our
+  fixture's 54, and carries `nat`, `openvpn`, `ipsec`, `aliases`, `dhcpd` and
+  `shaper` — none of which we handle.
+
+  Analysing his firewall now needs, in order: multi-interface rule sets, real
+  PF Sense evaluation order, a decision on NAT (two of his rules carry
+  `associated-rule-id` and are meaningless without it), and rules that omit
+  `<type>` or `<protocol>`. **That is a sprint, plausibly more.** See #78.
+
+  **What it does not change:** the converter did not emit a plausible, wrong ACL
+  for a real firewall. It stopped and named the construct it could not handle.
+  That is #53, #54 and #58 working on the first real file they have ever seen,
+  and the strongest evidence yet that refusing rather than guessing was right.
 
 ## 7a. The finding format (F-1) — the one contract
 
