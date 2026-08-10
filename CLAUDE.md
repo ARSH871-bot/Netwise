@@ -417,6 +417,12 @@ Nothing in Layer 1 or 2 is now unjoined. What remains is features, not plumbing.
   are enforced in `pipeline.run_post_processors()` rather than trusted. Only
   the `docs/finding-format.md:36` wording still needs changing, and that is an
   F-1 edit needing all four — see below.
+- **F-1 amendment A-1 — RATIFIED by all four** (#59, merged 10 August). Severity
+  is set by the check as a **default**, `risk` may **re-rate** it, and the AI
+  **never** sets it. The ratification table lives in `docs/finding-format.md`,
+  because "agreed" should be a fact anyone can check rather than something
+  inferred from a merge. This closes the last outstanding piece of the shapes
+  decision.
 - **PF Sense rule order** (issue #47, closed by #58). The converter refuses to
   convert when two overlapping rules disagree and the earlier is not `quick`,
   instead of silently mistranslating them. See §7. What remains is a **client
@@ -428,14 +434,7 @@ Nothing in Layer 1 or 2 is now unjoined. What remains is features, not plumbing.
    `policy_compliance`, so their findings collide.
    `pipeline.duplicate_id_findings()` detects it; only a distinct prefix makes
    it impossible. Amending F-1 needs all four members.
-2. **The F-1 wording on severity — amendment A-1 is in flight.**
-   `docs/finding-format.md:36` still says severity is "assigned by Samika's
-   rules, not by the AI". The rule agreed above is subtly different — checks
-   default it, `risk` may re-rate. The behaviour is settled; the sentence is
-   not. **PR #59 fixes it and carries a ratification table: 2 of 4 signed
-   (Arsh, Ankeet), needs Shubham and Samika.** An F-1 edit takes all four, and
-   merging the PR is not the same as ratifying the amendment — the table is.
-3. **Parse strictness.** `find_parse_problems()` currently treats any status
+2. **Parse strictness.** `find_parse_problems()` currently treats any status
    other than `PASSED` as fatal, including `PARTIALLY_UNRECOGNIZED`. Safe for
    test configs, likely too strict for real ones. The fix is to run the checks
    and attach a loud "results may be incomplete" finding — never to ignore it.
