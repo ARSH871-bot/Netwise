@@ -49,10 +49,10 @@ re-checked, the AI layer degrading correctly with Ollama down, and zero
 
 **Still open, and each waiting on one person:**
 
-1. **#59** — the F-1 severity amendment. **3 of 4 signed** (Arsh, Ankeet,
-   Samika); **needs Shubham alone**. It is an F-1 edit, so it takes all four,
-   it is the last outstanding piece of the shapes decision, and it is the only
-   open item with no work attached to it at all.
+1. ~~#59 — the F-1 severity amendment.~~ **RATIFIED by all four and merged**
+   (10 August). Severity is set by the check as a default, `risk` may re-rate,
+   the AI never sets it. The last outstanding piece of the shapes decision is
+   now closed.
 2. **#51** — one commit from Samika moving `playwright` to
    `requirements-dev.txt`, then it merges.
 3. **#63** — the merge rules, approved by Ankeet with one change requested and
@@ -132,6 +132,55 @@ estimate — not in production, and not after the code was written. Ankeet raise
 it on #61, it became `docs/design/query-grounding-problem.md`, and he then chose
 a shape and took the story. That is the review culture doing exactly what it is
 for.
+
+## Why #13/#14 is *neither*, not "together"
+
+Raised by Shubham reviewing this document, and it is a sharper argument than
+the one it replaces.
+
+"Together or neither" is true but leaves a door open: if the days look like
+they fit, someone takes them together. The stronger reason to say **neither**
+is that #13/#14 stack **config generation on top of the translation layer that
+is itself new and unproven**.
+
+The failure mode is not a bad suggestion. It is the tool proposing a
+configuration change based on a question it misunderstood — two unproven
+layers composed, where the outer one produces something a person might apply
+to a firewall.
+
+Recorded explicitly so it is not reopened on day 6 when #11 looks close.
+
+## The empty-answer pattern — name it before building on it
+
+Also Shubham's, and it is the most useful thing anyone has generalised on this
+project. The same fault has now appeared three times:
+
+| Where | Question asked | An empty answer was read as |
+|---|---|---|
+| `policy_compliance` | `reachability` | "policy holds" — actually no route |
+| `change_impact` (#30) | `differentialReachability` | "nothing changed" — actually no route |
+| Query layer (#11) | whichever question is selected | "no problem found" — actually the wrong question |
+
+**An empty result that means "we asked something which could not have answered"
+gets read as good news.** That is F-4's lesson — `none` is not `error` —
+appearing one level up, in the *question* rather than the *status*.
+
+The concrete consequence for #11's template surface: **a template should carry
+what its empty answer is entitled to mean**, so "no results" can never render
+as "you are fine" for a question that could not have produced results either
+way. Cheaper to build in now than to retrofit.
+
+## #30 is deferred, and its stated primitive does not work
+
+If #30 is deferred without this recorded, whoever picks it up next reads the
+issue text and walks into the same dead end Shubham already measured:
+
+> `differentialReachability` reports **zero difference** between a config that
+> denies everything and one that permits everything. `compareFilters` does not.
+
+The story text still names the primitive that fails. That is worth carrying
+into Sprint 4's version of this document rather than leaving in a comment
+thread.
 
 ## The shape I would argue for
 
@@ -221,7 +270,11 @@ Recorded plainly, not as failure — this is ordinary carry-over.
 3. Scope, and it is the only big one left: given three days, is the answer
    "unblock the six PRs, deliver #15, and take #11 as far as its template
    surface"? See "What actually fits in three days".
-4. Whether #13 and #14 are taken together or not at all.
+4. ~~Whether #13 and #14 are taken together or not at all.~~ **Answered:
+   neither, this sprint.** Shubham argued it harder than the original framing
+   and he is right — see "Why #13/#14 is *neither*" below. "Together or
+   neither" invites taking them together if the days look like they fit;
+   saying **neither**, explicitly, stops it being reopened on day 6.
 5. Whether anyone has asked Senaka about `quick` yet.
 6. ~~Who takes the query-grounding problem.~~ **Ankeet, and he has chosen the
    shape: A (constrained selection) + C (show the question back).** Recorded on
