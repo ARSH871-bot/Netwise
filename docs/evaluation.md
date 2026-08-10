@@ -1,6 +1,7 @@
 # Evaluation — does Netwise find the flaws it is meant to find?
 
-**Measured:** 10 August 2026, against `main` at `b0ce0c5` (197 tests passing).
+**Measured:** 10 August 2026, re-run the same day against `main` at `62d8fc7`
+(211 tests passing) after #73 fixed the bug this evaluation found.
 **Story:** US-15 (#15). This is the evidence chapter of the report.
 **How to reproduce:** every number below comes from `python -m analysis.pipeline
 <fixture>`. Nothing here is recalled or estimated; re-run the commands and you
@@ -193,7 +194,7 @@ Each refusal names what it could not do rather than failing vaguely. That is the
 designed behaviour, not a gap in it — but the three above are the best available
 list of what to build next.
 
-### This evaluation found a real bug
+### This evaluation found a real bug — since fixed
 
 Worth recording, because it is the strongest argument for having done it at all.
 
@@ -211,8 +212,22 @@ failure elsewhere for good reasons.
 ran, was answered truthfully, and `question_understood` echoed exactly what was
 asked. It was simply not the question the user meant — which is precisely the
 failure `docs/design/query-grounding-problem.md` predicted before this code
-existed. Tracked as **#70**.
+existed. Filed as **#70**, fixed by @patelankeet2 in **#73**, and re-measured
+here rather than assumed:
 
-The scoring above counts that case as answered-correct, because the tool
-reported what Batfish said. Judged by what a *user* meant, it is wrong. Both
-readings are recorded rather than picking the flattering one.
+```
+can rtr-hq reach 10.20.20.5      ->  Yes. Traffic from rtr-hq reaches 10.20.20.5.
+can rtr-hq reach 10.20.20.0/24   ->  Yes. Traffic from rtr-hq reaches a host in
+                                     10.20.20.0/24 (checked 10.20.20.1).
+```
+
+**The top-line counts are unchanged — 11 / 9 / 0 / 0 — but one of them changed
+meaning.** Before the fix, that case scored answered-correct only because the
+tool faithfully reported what Batfish said; judged by what a *user* meant it was
+wrong, and this document recorded both readings rather than the flattering one.
+After the fix the two readings agree, and the substitution is disclosed in both
+the restated question and the answer text.
+
+That is the sequence worth keeping: an evaluation found a defect in shipped
+code, the defect was fixed the same day, and the evaluation was re-run rather
+than edited to match.
