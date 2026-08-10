@@ -287,6 +287,24 @@ POST_PROCESSORS = {
 _SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
 
 
+
+def _check_registry_names() -> None:
+    """Fail fast if a POST_PROCESSORS key is not a valid F-1 check name.
+
+    See run_post_processors()'s docstring for why this matters (#75). Raised
+    rather than reported, deliberately: this can only be wrong because someone
+    registered a post-processor under a name F-1 does not know, which is a bug
+    to fix at development time, not a condition to tell a user about.
+    """
+    unknown = sorted(set(POST_PROCESSORS) - set(findings.VALID_CHECKS))
+    if unknown:
+        raise ValueError(
+            "POST_PROCESSORS keys must also be valid F-1 check names, because "
+            "a violation is reported with check=<key>. Unknown: "
+            f"{', '.join(unknown)}. Valid: {', '.join(sorted(findings.VALID_CHECKS))}."
+        )
+
+
 def run_post_processors(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Run each post-processor over the combined findings, enforcing F-4.
 
@@ -309,7 +327,33 @@ def run_post_processors(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     A violation is not silently corrected. The original finding is restored AND
     an error finding is added saying what was attempted, because a
     post-processor trying to bury a blind spot is itself worth seeing.
+    A REGISTRY KEY MUST ALSO BE A VALID F-1 CHECK NAME (#75)
+        Both failure paths below report a misbehaving post-processor by
+        building a finding with `check=name` -- the registry key. F-1 rejects
+        any `check` outside `findings.VALID_CHECKS`, so the key is silently
+        load-bearing.
+
+        Found by Shubham while verifying the two guarantees before signing
+        A-1. It is latent today, because `risk` is the only post-processor and
+        happens to be a valid check name -- the invariant holds by coincidence
+        of naming, which is not a guarantee.
+
+        Left alone it fails in the worst possible place: the error paths.
+        `_restore_protected_findings()` is called OUTSIDE the try, and
+        `analyse()` does not wrap this function, so an unregistered key turns
+        a contained, reportable fault into an uncaught ValueError out of the
+        entry point the web layer calls -- breaking `analyse()`'s own promise
+        that it never raises for an operational failure.
+
+        So the names are checked ONCE, up front, before any post-processor
+        runs. This is a programming error at registration, not a runtime
+        condition, so it fails loudly and immediately rather than becoming a
+        finding: turning it into a finding would hide a bug rather than
+        surface one. The point is that it can no longer happen *while*
+        reporting something else going wrong.
     """
+    _check_registry_names()
+
     for name, refine in POST_PROCESSORS.items():
         before = {f["id"]: f for f in results}
 
