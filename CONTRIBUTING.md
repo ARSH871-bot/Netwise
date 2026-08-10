@@ -200,6 +200,68 @@ you depend on, say so in the description, and name the merge order. Writing
 documentation that describes behaviour not yet on `main` is how this repo has
 gone wrong before.
 
+## 5b. Releases, tags, and why there are no packages
+
+We tag a release at the **end of each sprint**, once that sprint's work is
+actually on `main`. Nothing else gets a tag.
+
+```bash
+git tag -a v0.3.0 -m "Sprint 3"      # on the real last commit of the sprint
+git push origin v0.3.0
+gh release create v0.3.0 --title "Sprint 3" --notes-file docs/sprint3/SPRINT3.md
+```
+
+**Version numbers are sprint-aligned and pre-1.0.** `v0.<sprint>.<patch>`.
+There is no 1.0 until the client can run this against his own firewall.
+
+### Why a tag is worth the two minutes
+
+Without one, *"the product as it was when we demoed to Senaka"* is only
+recoverable by reading merge dates and guessing. With one it is a fixed,
+citable commit — which matters in the report and matters more in a defence.
+
+### The tag goes on the last commit of the sprint's WORK, not its record
+
+Checked before writing this rule, because the obvious choice is wrong.
+`SPRINT2.md` was committed on the sprint's last day, and it **does not contain
+#39** — the upload-to-findings integration that the record itself calls the
+headline achievement. It landed after the record was written.
+
+Tag the commit that actually has the work. Verify it:
+
+```bash
+git merge-base --is-ancestor <the-feature-merge> <the-tag-candidate>
+```
+
+### We are not tagging Sprints 1 and 2 retroactively
+
+Deliberate, not an oversight. Sprint 1's boundary commit contains **zero Python
+files** — it was environment setup, so `v0.1.0` would announce a release with no
+software in it. Sprint 2's honest boundary falls after the sprint ended.
+
+Both options mean encoding a boundary we know to be wrong. **A label that looks
+like a fact and is not is the failure mode this project keeps finding**, so we
+start tagging from Sprint 3 and leave the earlier history un-labelled rather
+than mislabelled.
+
+### No CHANGELOG.md
+
+Our PR descriptions are thorough and the sprint records already narrate each
+sprint. A changelog would be the same facts in a third place, and *a fact stored
+twice is the documented cause of every staleness bug we have had* (§6 and
+`CLAUDE.md` §11). GitHub Releases render the history without us maintaining it.
+
+### No Packages, and this is a decision rather than an omission
+
+Netwise is not a library anyone installs. It is an application you run against
+your own Batfish and Ollama on your own machine, and the whole premise is that
+nothing leaves it. Publishing to a registry would add a distribution channel
+nobody wants and invite exactly the "just pip install it" workflow the offline
+constraint exists to prevent.
+
+Recorded here so a reviewer can tell "we chose not to" from "nobody thought of
+it" — those look identical in an empty Packages tab.
+
 ## 6. This is an agreement, not an enforcement
 
 We cannot turn on branch protection — it needs GitHub Pro or a public repo, and
