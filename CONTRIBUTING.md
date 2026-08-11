@@ -222,27 +222,47 @@ citable commit — which matters in the report and matters more in a defence.
 
 ### The tag goes on the last commit of the sprint's WORK, not its record
 
-Checked before writing this rule, because the obvious choice is wrong.
-`SPRINT2.md` was committed on the sprint's last day, and it **does not contain
-#39** — the upload-to-findings integration that the record itself calls the
-headline achievement. It landed after the record was written.
+The obvious choice — the commit that adds `SPRINTn.md` — is wrong, and this
+document got it wrong first time round. Ankeet and Samika both caught it.
 
-Tag the commit that actually has the work. Verify it:
+**State the timezone.** The team is in NZT (+1200), and a bare date is
+ambiguous: `--before=2026-08-06` returned a commit that is 6 August in *both*
+NZT and UTC, i.e. outside the sprint. If `merge-base` is meant to remove
+ambiguity about the boundary, the window feeding it cannot reintroduce it.
 
 ```bash
-git merge-base --is-ancestor <the-feature-merge> <the-tag-candidate>
+LAST=$(git log origin/main   --since="2026-07-30T00:00:00+12:00"   --until="2026-08-06T00:00:00+12:00"   --format='%h' -1)
+
+git merge-base --is-ancestor <the-sprint-s-headline-merge> $LAST   # verify
 ```
 
-### We are not tagging Sprints 1 and 2 retroactively
+### Both earlier sprints ARE tagged retroactively, and here is the correction
 
-Deliberate, not an oversight. Sprint 1's boundary commit contains **zero Python
-files** — it was environment setup, so `v0.1.0` would announce a release with no
-software in it. Sprint 2's honest boundary falls after the sprint ended.
+An earlier draft of this section argued *against* retroactive tags, on two
+worked examples that were both wrong — and wrong by using the record commit as
+the boundary, which is the exact mistake the rule above exists to prevent. The
+document was demonstrating the error it was written to stop.
 
-Both options mean encoding a boundary we know to be wrong. **A label that looks
-like a fact and is not is the failure mode this project keeps finding**, so we
-start tagging from Sprint 3 and leave the earlier history un-labelled rather
-than mislabelled.
+Corrected, measured with the recipe above:
+
+| | Real last commit (NZT) | Python files | Contains the headline merge |
+|---|---|---|---|
+| **Sprint 1** | `3b08a4c`, 29 Jul 00:27 | 1 (`analysis/smoke_test.py`) | n/a |
+| **Sprint 2** | `a2d36fd`, 5 Aug 22:22 | 18 | **yes** — `#39` is an ancestor |
+
+So the case against tagging dissolved once the facts were right:
+
+- **Sprint 2's boundary does contain #39.** The record was written, then
+  corrected the same day *because of* #39 — six minutes after it merged — and
+  `SPRINT2.md` still carries that sentence. Nothing about it falls outside the
+  sprint.
+- **Sprint 1 has one Python file**, not zero — a connectivity smoke test. That
+  does not make "a release with no software" right in substance, but the number
+  was wrong and the reasoning rested on it.
+
+**Tag both**, with release notes that say what each sprint actually delivered —
+Sprint 1's deliverable was a verified environment, not an application, and the
+note should say so rather than let a version number imply otherwise.
 
 ### No CHANGELOG.md
 
