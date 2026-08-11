@@ -282,6 +282,49 @@ constraint exists to prevent.
 Recorded here so a reviewer can tell "we chose not to" from "nobody thought of
 it" — those look identical in an empty Packages tab.
 
+## 5c. Keeping the record honest after a change
+
+A document that lags reality does not merely mislead — it gets quoted into a
+team update, a client report, or the capstone write-up before anyone notices.
+Every staleness incident on this project was caught by someone reading
+carefully, never by a tool.
+
+**After a change lands, update what records it:**
+
+| Changed | Also update |
+|---|---|
+| a check, the pipeline, the AI layer | `CLAUDE.md` §11, and §7a/§7b/§7c if behaviour changed |
+| anything measured | `docs/evaluation.md` — **re-run it, do not reword it** |
+| a decision | move it from "Open decisions" to "Settled" in `CLAUDE.md` |
+| what an issue really is | the issue, its milestone, and the board's columns and fields |
+| work landing | the sprint record in `docs/sprintN/` |
+| the contract | `docs/finding-format.md` **and** its ratification table (all four) |
+
+Board fields that get forgotten: **Start date and Target date** — the Roadmap
+view is blank without them — plus Priority, Size, and adding open PRs as items.
+Merged PRs move themselves; the seven automation workflows are enabled.
+
+### But the real fix is removing the duplicate
+
+Every one of those incidents had the same cause: **a fact stored in two places
+and only one copy updated.** A longer checklist fights the symptom.
+
+So before writing a fact into a second file, ask whether the first can be its
+only home. `CLAUDE.md` §11 says *"for the count, run it"* rather than quoting a
+test number, precisely because a number written there rots the next time anyone
+adds a test.
+
+### Do not trust the documents — re-derive
+
+```bash
+sed -n '/^CHECKS = {/,/^}/p' analysis/pipeline.py   # what actually runs
+pytest tests/ -q                                     # what is actually tested
+git log --oneline origin/main -1                     # where main actually is
+gh pr list --state open && gh issue list --state open
+```
+
+**If a document disagrees with those, the document is the bug.**
+
 ## 6. This is an agreement, not an enforcement
 
 We cannot turn on branch protection — it needs GitHub Pro or a public repo, and

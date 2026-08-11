@@ -295,6 +295,8 @@ analysis/   Layer 1 — Batfish orchestration
 ai/         Layer 2 — local LLM explanation and Q&A
 web/        Layer 3 — FastAPI backend and dashboard
 tests/      pytest suite + synthetic fixtures (committed, see §7b)
+tools/      Standalone helpers, run by hand, not imported by the product
+              pfsense_shape.py  describe an export's structure, never its values
 docs/       Sprint records, design notes, evidence for reviews
 configs/    Config files under test — GIT-IGNORED, never committed
 ```
@@ -390,10 +392,13 @@ sprint rather than reconstructed after it.
 
 ### End to end — what is joined, and what is not
 
-**The product runs.** Uploading a config produces real findings on screen, as
-of 5 August (#39). `web/main.py` stages the upload and calls
-`analysis.pipeline.analyse()` on it; mocks are served only until the first
-upload. Verified against opposite fixtures:
+**The product runs.** Uploading a config stages it; clicking **Scan Now** runs
+the analysis and puts real findings on screen. The upload no longer analyses by
+itself — #82 separated them, so a staged file is never confused with a checked
+one, and stale findings are cleared on upload rather than left sitting under a
+success message for a different network. `web/main.py` stages the upload;
+`/api/findings` calls `analysis.pipeline.analyse()`. Mocks are served only until
+the first upload. Verified against opposite fixtures:
 
 ```
 upload rtr-us5-insecure  ->  5 problems found, 1 could not check
