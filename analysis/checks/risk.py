@@ -29,6 +29,7 @@ WHAT IT DELIBERATELY LEAVES ALONE
     wrong and merely supervised, so the rules below simply never touch them.
 """
 
+import re
 from typing import Any, Callable, Dict, List, Optional
 
 CHECK_NAME = "risk"
@@ -68,6 +69,26 @@ def _rule_dead_rule_is_low(finding: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+# The phrases our checks use to ATTRIBUTE a violation to the ACL line that
+# decided it. Taken from the code that builds the evidence, not guessed:
+#
+#   access_control.py:319     "decided by: {Line_Content}"
+#   access_control.py:404     "allowed by: {Line_Content}"
+#   access_control.py:468     "Blocked by: {blocking}"
+#   policy_compliance.py:260  "Decided by: {Line_Content}"
+#
+# After one of these, the ACL line is a CITATION -- the reason some other
+# violation happened -- not the subject of the finding. Spacing is allowed to
+# vary; the colon is required, because that is what every producer emits and
+# matching more loosely would suppress promotions we have no evidence for.
+_ATTRIBUTED_PERMIT = re.compile(
+    r"(?:decided|allowed|blocked)\s+by\s*:\s*permit\s+ip\s+any\s+any",
+    re.IGNORECASE,
+)
+
+_BLANKET_PERMIT = re.compile(r"permit\s+ip\s+any\s+any", re.IGNORECASE)
+
+
 def _rule_blanket_permit_is_high(finding: Dict[str, Any]) -> Optional[str]:
     """R-2: a permit of any source to any destination is high.
 
@@ -75,9 +96,32 @@ def _rule_blanket_permit_is_high(finding: Dict[str, Any]) -> Optional[str]:
     most often arrives innocuously -- added to fix a connectivity complaint and
     never removed. It defeats every rule after it on the same filter, so
     whatever else the config says, this is what the device actually does.
+
+    ONLY WHEN THE PERMIT IS THE SUBJECT, NOT A CITATION
+        This used to be a bare substring test, which fired whenever the string
+        appeared anywhere in the evidence -- including in the trailing
+        "decided by: ..." clause that names the line responsible for a
+        DIFFERENT violation. Measured on rtr-us5-insecure: all five findings
+        end with that clause, quoting the same `permit ip any any`, so R-2
+        fired on all five and the list collapsed to 5 high from 4 high + 1
+        medium. Every finding became top priority, which is not prioritisation.
+
+        None of those five is ABOUT the blanket permit. They are five
+        different exposures that share one cause, and the shared cause is
+        already reported on its own finding where R-2 rates it high on its own
+        merits. Promoting the citations as well says the same thing five times
+        and destroys the ordering the rest of the ruleset produces.
+
+        So attributed mentions are removed before looking. What remains is a
+        mention of the permit that is not explained as the reason for
+        something else -- which is the permit as subject.
+
+        docs/severity-rules.md section 6.2 proposed exactly this and left it
+        open for the team to decide; this implements it.
     """
     detail = _evidence(finding)
-    return "high" if "permit ip any any" in detail else None
+    unattributed = _ATTRIBUTED_PERMIT.sub(" ", detail)
+    return "high" if _BLANKET_PERMIT.search(unattributed) else None
 
 
 def _rule_routing_is_medium(finding: Dict[str, Any]) -> Optional[str]:
