@@ -64,9 +64,19 @@ separately, on its own finding, by R-2.
 
 ### R-2 — A blanket permit is high
 
-**Matches:** `status="found"` and the evidence contains a permit of any source
-to any destination.
+**Matches:** `status="found"` and the evidence mentions a permit of any source
+to any destination **as its subject** — that is, a mention not preceded by an
+attribution phrase (`decided by:`, `allowed by:`, `blocked by:`).
 **Sets:** `high`
+
+**The attribution exclusion is the whole of the rule's precision.** Our checks
+end a violation's evidence by naming the ACL line responsible for it — *"…
+Decided by: permit ip any any"*. There the permit is a **citation**: the reason
+some *other* violation happened, not the thing being reported. A finding about
+the permit itself names it as its subject instead.
+
+Matching either way is the difference between prioritising and flattening —
+see §6.2, where it is measured.
 
 This is the client's own example of a serious misconfiguration, and it is the
 one that most often appears innocuously — added to fix a connectivity complaint
@@ -118,32 +128,49 @@ registry order, which is alphabetical by accident rather than meaningful.
 
 ## 6. Open, and deliberately not settled here
 
-1. **`docs/finding-format.md:36` still says severity is "Assigned by Samika's
-   rules, not by the AI".** That was accurate about the AI and wrong about the
-   checks, which have always set their own. The shapes proposal's §7 flagged the
-   correction — checks set a default, `risk` may re-rate, never the AI — as an
-   F-1 edit needing all four members. **It has not happened.** This ruleset is
-   written to the corrected wording; the document should catch up.
-2. **R-2 flattens the list when one blanket permit causes everything.**
-   Measured on the fixtures, not predicted:
+1. ~~**`docs/finding-format.md:36` still says severity is "Assigned by Samika's
+   rules, not by the AI".**~~ **SETTLED.** Amendment **A-1** merged in #59 with
+   all four signatures, and `docs/finding-format.md` now says what this ruleset
+   was always written against: the check sets a **default**, `risk` may
+   **re-rate**, the AI never sets it. Its "The severity field — who sets it"
+   section is the authority; this document implements it rather than
+   anticipating it.
 
-   | Fixture | `found` before | `found` after |
-   |---|---|---|
-   | `rtr-us5-insecure` | 4 high, 1 medium | **5 high** |
-   | `rtr-us5-messy` | 1 high, 5 medium | 1 high, 3 medium, 2 low |
+   Kept as a struck-through entry rather than deleted, because this item was
+   cited as an open question in review and a reader who followed that citation
+   needs to find the answer, not a gap.
+2. ~~**R-2 flattens the list when one blanket permit causes everything.**~~
+   **FIXED — R-2 now ignores a permit that is merely cited.** Recorded rather
+   than deleted, because the measurement is the argument for the current rule.
 
-   On `rtr-us5-insecure` every violation traces to the same `permit ip any
-   any`, so R-2 fires on all of them and the priority list stops
-   discriminating. That is arguably honest — one line is genuinely the cause of
-   all five, and fixing it fixes all five — but "everything is high" is not
-   prioritisation, and if a real client config behaves like this the ranking
-   earns its keep only on `rtr-us5-messy`.
+   R-2 was a bare substring test, so it fired on the trailing *"Decided by:
+   permit ip any any"* clause that names the line responsible for a violation.
+   On `rtr-us5-insecure` all five findings carry that clause, quoting the same
+   line, so all five were promoted. Measured, not predicted:
 
-   The narrower alternative is to escalate only the finding that is *about* the
-   blanket permit, not every finding whose evidence merely quotes it as the
-   deciding line. That is a smaller claim and would keep the spread. Left as
-   written for now because I would rather the team see the flattening and
-   decide, than pre-emptively narrow a rule the client explicitly asked for.
+   | Fixture | `found` before | after (old R-2) | after (current R-2) |
+   |---|---|---|---|
+   | `rtr-us5-insecure` | 4 high, 1 medium | **5 high** | **4 high, 1 medium** |
+   | `rtr-us5-messy` | 1 high, 5 medium | 1 high, 3 medium, 2 low | 1 high, 3 medium, 2 low |
+
+   The spread is restored on `rtr-us5-insecure` and `rtr-us5-messy` is
+   untouched — R-2 never fired there in either version, so the change is
+   provably confined to the case it was aimed at.
+
+   **What this leaves open, and it is a real question:** on both fixtures R-2
+   now promotes **nothing at all**. The four `high` values on
+   `rtr-us5-insecure` are the checks' own defaults, reached through R-4. So the
+   rule the client explicitly asked for currently has no observed effect on any
+   fixture we have.
+
+   That is not evidence the rule is wrong — a finding whose *subject* is a
+   blanket permit is exactly what `access_control`'s `undefinedReferences` and
+   `searchFilters` arms would produce on a config shaped slightly differently,
+   and it is tested directly in `tests/test_severity_rules.py`. But it does
+   mean **R-2 is unexercised by our fixtures**, and a rule that never fires is
+   indistinguishable from a rule that does not work. A fixture whose evidence
+   names the permit as its subject would close that gap, and is worth adding
+   before anyone relies on R-2 in a review.
 
 3. **F-1 has no informational status.** A record of "these three findings were
    re-rated, and why" is not `found`, not `none`, and not `error`, so there is

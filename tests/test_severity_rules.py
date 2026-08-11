@@ -57,16 +57,66 @@ def test_dead_rule_beats_the_blanket_permit_it_quotes():
 
 
 def test_blanket_permit_is_rated_high():
+    """The permit is the SUBJECT here -- the finding is about the line itself,
+    with no attribution phrase making it the reason for something else."""
     f = a_finding("access_control", "low",
-                  "Expected DENY but got PERMIT, decided by: permit ip any any")
+                  "The external interface permits everything: permit ip any any")
     assert risk.severity_for(f) == "high"
 
 
 def test_blanket_permit_escalates_a_medium_from_another_check():
-    """The point of a post-processor: one rule, applied across every check."""
+    """The point of a post-processor: one rule, applied across every check.
+
+    Still the subject, just reported by a different check.
+    """
+    f = a_finding("policy_compliance", "medium",
+                  "Filter acl_in ends with an unrestricted rule: permit ip any any")
+    assert risk.severity_for(f) == "high"
+
+
+# --- R-2: a CITATION is not the subject (the flattening bug) ----------------
+#
+# Measured on rtr-us5-insecure before this was fixed: all five findings end
+# with a "decided by:"/"allowed by:" clause quoting the same `permit ip any
+# any`, so R-2 fired on every one and 4 high + 1 medium collapsed to 5 high.
+# None of those findings is ABOUT the permit -- they are five exposures that
+# share one cause, and that cause is reported separately on its own finding.
+
+
+def test_permit_cited_via_decided_by_does_not_promote():
+    """`policy_compliance` and `access_control` both emit this form."""
     f = a_finding("policy_compliance", "medium",
                   "Flow start=rtr-us5 [10.10.10.0->8.8.8.8:80 TCP] is permitted "
                   "but policy forbids it. Decided by: permit ip any any")
+    assert risk.severity_for(f) == "medium", "a cited permit must not promote"
+
+
+def test_permit_cited_via_allowed_by_does_not_promote():
+    """`access_control`'s searchFilters arm emits "allowed by:"."""
+    f = a_finding("access_control", "medium",
+                  "Example permitted flow: start=rtr-us5 "
+                  "[10.10.10.0:49152->8.8.8.8:80 TCP (SYN)], allowed by: permit ip any any")
+    assert risk.severity_for(f) == "medium", "a cited permit must not promote"
+
+
+def test_attribution_matching_tolerates_spacing_and_case():
+    """The producers are consistent today, but the rule should not depend on
+    that -- it is matching prose, and prose drifts."""
+    for detail in (
+        "... is permitted. DECIDED BY:permit ip any any",
+        "... is permitted. decided  by :  permit  ip  any  any",
+        "... is permitted. Allowed By: permit ip any any",
+    ):
+        f = a_finding("policy_compliance", "medium", detail)
+        assert risk.severity_for(f) == "medium", f"should not promote: {detail!r}"
+
+
+def test_a_cited_permit_and_a_real_one_together_still_promotes():
+    """If the evidence names the permit as the subject AND cites it as the
+    reason, the subject wins. Suppression must not swallow a real mention."""
+    f = a_finding("access_control", "medium",
+                  "The filter ends with permit ip any any. "
+                  "Decided by: permit ip any any")
     assert risk.severity_for(f) == "high"
 
 
