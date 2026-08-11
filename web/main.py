@@ -307,13 +307,18 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
         "filename": display_name,
         "size_bytes": size,
         "accepted": True,
-        # The dashboard re-fetches findings itself as soon as this returns, so
-        # this no longer tells anyone to refresh. Saying "refresh" when nothing
-        # needs refreshing is a small lie that makes the tool look broken to
-        # whoever follows the instruction and sees nothing change.
+        # Uploading stages the file and stops there -- the analysis starts when
+        # the user clicks Scan Now. So this says what has happened and what has
+        # NOT: accepted and staged, nothing checked yet. It previously said
+        # "Loading results now...", which was true when the upload triggered
+        # the analysis itself and would now describe work nobody has started.
+        #
+        # Naming the button matters. "Staged for analysis" alone reads like
+        # something is already underway, which is the impression this whole
+        # flow change exists to remove.
         "message": (
-            f"'{display_name}' accepted ({size:,} bytes) and staged for "
-            "analysis. Loading results now..."
+            f"'{display_name}' accepted ({size:,} bytes) and staged. "
+            "Nothing has been analysed yet — click Scan Now to check it."
         ),
     }
 

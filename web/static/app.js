@@ -249,12 +249,55 @@ function showUploadMessage(text, ok) {
   box.className = `upload-message ${ok ? "ok" : "bad"}`;
 }
 
+/**
+ * Run the analysis on whatever config is currently staged, and show it.
+ *
+ * This is the block that used to run automatically at the end of a successful
+ * upload. It is unchanged in what it does -- clear, show the loading state,
+ * fetch -- and changed only in what starts it: a click rather than an upload.
+ */
+async function runScan() {
+  const button = document.getElementById("scan-now");
+
+  // Locked for the duration. /api/findings runs Batfish for real, so a second
+  // click part-way through would start an overlapping analysis and the two
+  // would race to render into the same container.
+  button.disabled = true;
+  document.getElementById("summary").replaceChildren();
+  document.getElementById("findings").replaceChildren(
+    el(
+      "div",
+      "notice loading",
+      "Analysing your upload, this can take up to 15 seconds..."
+    )
+  );
+
+  // loadFindings() replaces this message with the real results, and handles
+  // its own failure -- so a failed fetch shows its own notice rather than
+  // leaving "Analysing..." on screen forever.
+  await loadFindings();
+
+  // Re-enabled so the same staged config can be scanned again -- useful after
+  // a failure, and harmless otherwise.
+  button.disabled = false;
+}
+
 function setUpUpload() {
   const input = document.getElementById("file-input");
+  const scanButton = document.getElementById("scan-now");
+
+  scanButton.addEventListener("click", runScan);
 
   input.addEventListener("change", async () => {
     const file = input.files[0];
     if (!file) return;
+
+    // Choosing a file invalidates whatever was staged before it, so the button
+    // goes off here and is turned back on in exactly one place: a successful
+    // server-side accept. Every rejection path below -- wrong extension, PF
+    // Sense, too large, empty, and the server's own refusal -- therefore
+    // leaves it disabled without having to remember to say so.
+    scanButton.disabled = true;
 
     const name = file.name;
     const extension = name.slice(name.lastIndexOf(".")).toLowerCase();
@@ -310,31 +353,26 @@ function setUpUpload() {
       if (response.ok) {
         showUploadMessage(result.message, true);
 
-        // Clear the old findings BEFORE fetching the new ones.
+        // The upload no longer starts the analysis -- Scan Now does. But the
+        // old findings must still go, and for the SAME reason they always did:
+        // whatever is on screen describes the PREVIOUS config, and a success
+        // message about this file sitting above another network's results is a
+        // false claim regardless of what triggered the analysis. The summary
+        // tiles go too; three stale counts are the same claim in smaller type.
         //
-        // Whatever is on screen right now describes the PREVIOUS config. The
-        // upload has already been accepted, so leaving it there puts a success
-        // message above results that do not belong to the file just uploaded --
-        // and the analysis takes seconds, not milliseconds, because
-        // /api/findings runs Batfish for real. Someone reading during that gap
-        // would be looking at another network's findings under the heading of
-        // this one.
-        //
-        // The summary tiles go too. Three stale counts beside a "loading"
-        // message are the same false claim in smaller type.
+        // What replaces them is a neutral prompt rather than a loading state,
+        // because nothing is running yet and saying otherwise would be the
+        // same lie in the other direction.
         document.getElementById("summary").replaceChildren();
         document.getElementById("findings").replaceChildren(
           el(
             "div",
-            "notice loading",
-            "Analysing your upload, this can take up to 15 seconds..."
+            "notice staged",
+            "Config staged, nothing analysed yet. Click Scan Now to check it."
           )
         );
 
-        // loadFindings() replaces this message with the real results, and
-        // handles its own failure -- so a failed fetch shows its own notice
-        // rather than leaving "Analysing..." on screen forever.
-        await loadFindings();
+        scanButton.disabled = false;
       } else {
         showUploadMessage(result.detail, false);
         input.value = "";

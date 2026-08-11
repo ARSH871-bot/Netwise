@@ -157,6 +157,36 @@ body {
   border: 1px solid var(--high);
 }
 
+/* The action that actually runs the analysis. Styled as the primary control
+   in this panel, because it is now the only way to start one.
+
+   The disabled state is deliberately obvious rather than subtly greyed: it is
+   the resting state before any config is staged, so it has to communicate
+   "not yet" rather than look like a rendering fault. */
+.scan-now {
+  margin-top: 0.75rem;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.45rem 1.1rem;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.scan-now:hover:not(:disabled) {
+  background: var(--ink-soft);
+}
+
+.scan-now:disabled {
+  background: var(--page);
+  border-color: var(--line);
+  color: var(--ink-soft);
+  cursor: not-allowed;
+}
+
 /* --- Coverage summary ----------------------------------------------------
    Three separate tiles. There is deliberately no combined "N checks passed"
    number, because any such number would have to decide whether an errored
@@ -438,6 +468,16 @@ body {
   border: 1px solid var(--line);
   color: var(--ink-soft);
   font-style: italic;
+}
+
+/* "Staged, not yet analysed" -- shown between an accepted upload and a click
+   of Scan Now. Neutral for the same reason .notice.loading is: nothing has
+   failed. But NOT italic, because this is a resting state waiting on the
+   user rather than work in progress, and the two should not read alike. */
+.notice.staged {
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
 }
 
 /* --- Chat ---------------------------------------------------------------- */
