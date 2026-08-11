@@ -439,3 +439,46 @@ def test_the_error_path_no_longer_depends_on_the_key_being_valid(monkeypatch):
     assert "POST_PROCESSORS keys" in str(caught.value), (
         "must fail on the registry name, not deep inside make_finding()"
     )
+
+
+# --- The enforcement path cannot take down the run it protects (#75, part two) --
+#
+# Found by Samika reviewing part one. Rejecting a bad registry NAME was only
+# half of it: a post-processor with a VALID name can still return a malformed
+# shape, and _restore_protected_findings() reads f["id"] on whatever came back.
+#
+# Left outside the try, that KeyError escaped run_post_processors() and out of
+# analyse() -- the entry point the web layer calls, and the one function
+# documented never to raise for an operational failure. Because `risk` runs in
+# this stage, an escape does not spoil one finding; it takes down findings
+# delivery for the whole dashboard.
+
+
+@pytest.mark.parametrize(
+    "bad_return, label",
+    [
+        ([{"no_id_key": True}], "a list of dicts with no id"),
+        (None, "None"),
+        ("nonsense", "a string"),
+    ],
+)
+def test_a_malformed_post_processor_return_becomes_a_finding(bad_return, label, monkeypatch):
+    monkeypatch.setattr(pipeline, "POST_PROCESSORS", {"risk": lambda r: bad_return})
+    original = [a_finding("access_control", 1, "error"),
+                a_finding("access_control", 2, "found")]
+
+    results = pipeline.run_post_processors([dict(f) for f in original])
+
+    ids = {f["id"] for f in results}
+    assert {"AC-001", "AC-002"} <= ids, f"the originals must survive ({label})"
+    assert any(f["status"] == "error" and f["check"] == "risk" for f in results), (
+        "the failure must be reported, not swallowed"
+    )
+
+
+def test_a_well_behaved_post_processor_is_unaffected(monkeypatch):
+    """The containment must not add a finding on the happy path."""
+    monkeypatch.setattr(pipeline, "POST_PROCESSORS", {"risk": lambda r: r})
+    original = [a_finding("access_control", 1, "found")]
+    results = pipeline.run_post_processors([dict(f) for f in original])
+    assert [f["id"] for f in results] == ["AC-001"]

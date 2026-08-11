@@ -372,7 +372,27 @@ def run_post_processors(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             ]
             continue
 
-        results, complaints = _restore_protected_findings(name, before, refined)
+        # Inside the try's blast radius by design (#75, second half — found by
+        # Samika reviewing the first). A post-processor with a VALID name can
+        # still return a malformed shape, and this call reads f["id"] on
+        # whatever it returned. Left outside, a KeyError escaped
+        # run_post_processors() and out of analyse() — the entry point the web
+        # layer calls, and the one function documented never to raise for an
+        # operational failure. Because `risk` runs in this stage, an escape
+        # here does not spoil one finding, it takes down findings delivery for
+        # the whole dashboard.
+        try:
+            results, complaints = _restore_protected_findings(name, before, refined)
+        except Exception as error:
+            results = results + [
+                findings.error_finding(
+                    check=name,
+                    summary=f"The {name.replace('_', ' ')} stage returned something unusable",
+                    detail=findings.describe_error(error),
+                    source=f"analysis/checks/{name}.py",
+                )
+            ]
+            continue
         results.extend(complaints)
 
     return results
