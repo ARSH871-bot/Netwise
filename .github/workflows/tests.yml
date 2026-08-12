@@ -77,17 +77,26 @@ jobs:
           pip install -r requirements.txt
 
       - name: Lint
-        # Ruff's default rule set, which this codebase already passes with no
-        # changes. Pinned here so it cannot drift, NOT to start a cleanup.
+        # BOTH the version and the rule set are pinned, deliberately.
         #
-        # Deliberately not stricter: --select E,F,W,I,UP,B,SIM finds 256 issues
-        # and `ruff format` would rewrite 10 files. Reformatting four people's
-        # modules mid-sprint, with open PRs against every one of them, buys
-        # tidiness at the cost of conflicts in everybody's work. Widening the
-        # rule set is a Sprint 4 conversation, once the queue is empty.
+        # The first version of this step ran a bare `pip install ruff` and a
+        # bare `ruff check`, relying on "ruff's default rule set". That was
+        # clean on the author's machine (0.14.14) and produced 207 errors on
+        # 0.16.2 -- Ankeet installed fresh and found it on #84. The gate would
+        # have arrived red, and a lint gate that is red on arrival teaches
+        # everyone to ignore it.
+        #
+        # Same shape as the #74 finding: a guarantee ("ruff clean") that held
+        # against an unstated condition -- whichever ruff happened to be
+        # installed that day -- rather than anything the repo enforces.
+        #
+        # --select makes the intent explicit rather than inherited, and the pin
+        # stops a new release widening it underneath us. Widening the set is a
+        # deliberate change with its own PR, not something that arrives on a
+        # Tuesday.
         run: |
-          python -m pip install ruff
-          ruff check analysis/ ai/ web/ tools/ tests/
+          python -m pip install "ruff==0.14.14"
+          ruff check --select E4,E7,E9,F analysis/ ai/ web/ tools/ tests/
 
       - name: Run tests
         run: pytest tests/ -v
