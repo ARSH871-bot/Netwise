@@ -22,13 +22,19 @@ SCOPE -- TIMEBOXED ON PURPOSE, PER CLAUDE.md SECTION 7
     analyses without error."
 
     OUT OF SCOPE, stated here rather than silently dropped: NAT, aliases with
-    ranges or CIDR groups, DHCP, VPN, traffic shaping, IPv6, combined
-    "tcp/udp" rules, and rules split across more than one interface. None of
-    that is attempted. Where the input needs one of these to convert
-    correctly, this module raises PfSenseConversionError rather than
-    producing something that looks plausible and is wrong -- the same
-    "refuse rather than guess" discipline analysis/checks/routing.py's
+    ranges or CIDR groups, DHCP, VPN, traffic shaping, IPv6, and combined
+    "tcp/udp" rules. None of that is attempted. Where the input needs one of
+    these to convert correctly, this module raises PfSenseConversionError
+    rather than producing something that looks plausible and is wrong -- the
+    same "refuse rather than guess" discipline analysis/checks/routing.py's
     _compute_dead_rule_outcome() and ai/Modelfile both already commit to.
+
+    Rules split across more than one interface WERE out of scope until #78:
+    the client's real export uses four, and a converter that cannot read its
+    only real firewall is not finished. Each interface with rules gets its
+    own ACL; an interface with an address but no rules of its own gets an
+    explicit deny-all, matching PF Sense's real fail-closed default rather
+    than leaving it unbound. See convert() and _acl_name().
 
 A SIMPLIFYING ASSUMPTION, NO LONGER A SILENT ONE (issue #47)
     PF Sense's real rule evaluation is "last matching rule wins" unless a
@@ -91,10 +97,15 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
-# The only ACL name every other fixture in this project already uses for the
-# LAN-inbound filter. Reusing it, rather than inventing a new name, is what
-# lets tests/fixtures/pfsense-source/config.xml's converted output be
-# compared directly against tests/fixtures/rtr-us5-secure's hand-written one.
+# The ACL name every other fixture in this project already uses for a single
+# inbound filter. Reusing it, rather than inventing a new name, is what lets
+# tests/fixtures/pfsense-source/config.xml's converted output be compared
+# directly against tests/fixtures/rtr-us5-secure's hand-written one.
+#
+# Still used when there is exactly one interface with rules (#78 item 1 added
+# support for more than one) -- the single-interface case converts identically
+# to before, byte for byte, rather than gaining a role suffix nobody asked
+# for. See _acl_name() for what a second or later ACL is called.
 ACL_NAME = "acl_in"
 
 _PFSENSE_TO_CISCO_ACTION = {"pass": "permit", "block": "deny", "reject": "deny"}
@@ -261,6 +272,31 @@ def _assign_cisco_interface_names(interfaces: Dict[str, Dict[str, str]]) -> Dict
     return {role: f"GigabitEthernet0/{i}" for i, role in enumerate(interfaces)}
 
 
+def _acl_name(role: str, *, rule_bearing_roles: "set[str]") -> str:
+    """The Cisco ACL name bound to one interface's inbound filter (#78 item 1).
+
+    The one case that must convert exactly as it did before multi-interface
+    support existed: a single interface with rules and nothing else needing a
+    name. That ACL stays `acl_in`, matching every existing fixture and the
+    hand-written tests/fixtures/rtr-us5-secure config this module is
+    deliberately verified against -- see ACL_NAME above.
+
+    Any other ACL -- a second or later rule-bearing interface, or a
+    synthesised deny-all for an interface with an address but no rules of its
+    own (see convert()) -- gets its own name built from PF Sense's own role,
+    the same convention _assign_cisco_interface_names() already uses for
+    interface names, rather than a second naming scheme.
+
+    `role` is an XML tag name (see _parse_interfaces()), not free text pulled
+    from an element's content the way <descr> or <hostname> are, so it is
+    already constrained by XML's own tag-name grammar and does not need the
+    separate validation those fields do.
+    """
+    if role in rule_bearing_roles and len(rule_bearing_roles) == 1:
+        return ACL_NAME
+    return f"acl_{role}_in"
+
+
 def _resolve_endpoint(el: ET.Element, interfaces: Dict[str, Dict[str, str]]) -> str:
     """Convert a PF Sense <source> or <destination> element into a Cisco ACL
     address clause: "any", "host 1.2.3.4", or "NETWORK WILDCARD-MASK".
@@ -414,10 +450,12 @@ def _check_rule_order_is_unambiguous(
     on top of a config that would otherwise have converted, it never turns
     an already-invalid rule into a different error.
 
-    O(n^2) in the rule count. PF Sense rule sets in scope for this converter
-    are small (single-interface, no aliases, no ranges -- see the module's
-    own SCOPE section), so this is not a performance concern; correctness
-    is what matters here, not asymptotic elegance.
+    O(n^2) in the rule count. Called once per interface's own rule list, not
+    once for the whole file (#78 item 1) -- n is one ACL's rule count, not the
+    file's. PF Sense rule sets in scope for this converter are small (no
+    aliases, no ranges -- see the module's own SCOPE section), so this is not
+    a performance concern; correctness is what matters here, not asymptotic
+    elegance.
     """
     parsed = []
     for rule_el, line in zip(rule_els, acl_lines):
@@ -542,28 +580,19 @@ def convert(xml_path: Union[str, Path]) -> str:
             "the source firewall's actual security posture"
         )
 
-    # All rules must be on ONE interface role. Batfish/Cisco applies one ACL
-    # per interface direction; supporting rules split across several
-    # interfaces would mean building several ACLs and is out of scope for
-    # this pass. Raise rather than silently merging rules from different
-    # interfaces into one ACL, which would change what the config means.
+    # Rules may now span more than one interface role (#78 item 1) -- each
+    # gets its own ACL, built and checked independently below. Batfish/Cisco
+    # still applies one ACL per interface direction; what changed is that
+    # this module now builds several instead of refusing past one.
     rule_roles = {_text(r, "interface") for r in rule_els}
     rule_roles.discard(None)
-    if len(rule_roles) > 1:
-        raise PfSenseConversionError(
-            f"filter rules span multiple interfaces {sorted(rule_roles)}; "
-            "only a single-interface rule set is supported"
-        )
 
     # WHY A RULE SET WITH NO <interface> AT ALL IS REFUSED
-    #   Found in the same QA pass. rule_roles is empty here in exactly one
-    #   other case: every rule is missing <interface>. Before this check,
-    #   acl_role then defaulted to None, the "if role == acl_role" test in
-    #   the interface-emission loop below never matched any real interface,
-    #   and "ip access-group ACL_NAME in" was never written anywhere -- but
-    #   the ACL's own deny/permit lines WERE still emitted, present in the
-    #   file, bound to nothing. A config that looks like it has a filter and
-    #   silently enforces none of it.
+    #   Found in a senior-level adversarial QA pass. rule_roles is empty here
+    #   in exactly one case: every rule is missing <interface>. Before this
+    #   check, such a config still emitted ACL deny/permit lines -- present in
+    #   the file, bound to nothing. A config that looks like it has a filter
+    #   and silently enforces none of it.
     if not rule_roles:
         raise PfSenseConversionError(
             "no filter rule names an <interface> -- the resulting ACL would "
@@ -571,15 +600,43 @@ def convert(xml_path: Union[str, Path]) -> str:
             "enforce nothing"
         )
 
-    acl_role = next(iter(rule_roles), None)
-    if acl_role is not None and acl_role not in interfaces:
+    # A rule with NO <interface> at all, alongside others that DO name one, is
+    # ambiguous about which ACL it belongs to. Under the old single-interface
+    # restriction this could only ever mean one thing; with several ACLs now
+    # possible it genuinely is not knowable. Refuse rather than guess, same
+    # discipline as everywhere else in this module.
+    unassigned = [r for r in rule_els if _text(r, "interface") is None]
+    if unassigned:
         raise PfSenseConversionError(
-            f"filter rules apply to interface {acl_role!r}, which has no "
-            "static address configured"
+            f"{len(unassigned)} filter rule(s) name no <interface> while "
+            f"{len(rule_els) - len(unassigned)} other(s) do "
+            f"({sorted(rule_roles)}) -- which ACL they belong to is not "
+            "knowable, refusing rather than guessing"
         )
 
-    acl_lines = [_rule_to_acl_line(r, interfaces) for r in rule_els]
-    _check_rule_order_is_unambiguous(rule_els, interfaces, acl_lines)
+    unknown_roles = rule_roles - set(interfaces)
+    if unknown_roles:
+        raise PfSenseConversionError(
+            f"filter rules apply to interface(s) {sorted(unknown_roles)}, "
+            "which have no static address configured"
+        )
+
+    # One bucket of rules per interface, in document order within each --
+    # rule ORDER only matters relative to other rules on the same ACL, never
+    # across interfaces, since no real firewall ever compares them that way.
+    rules_by_role: Dict[str, List[ET.Element]] = {role: [] for role in rule_roles}
+    for r in rule_els:
+        rules_by_role[_text(r, "interface")].append(r)
+
+    # Each interface's rule-order ambiguity is checked against only ITS OWN
+    # rules (#47/#58's guard, now run once per ACL instead of once globally).
+    # A rule on "lan" cannot be ambiguous against a rule on "wan" -- they are
+    # never evaluated against the same traffic by any real firewall.
+    acl_lines_by_role: Dict[str, List[str]] = {}
+    for role, rules in rules_by_role.items():
+        lines_for_role = [_rule_to_acl_line(r, interfaces) for r in rules]
+        _check_rule_order_is_unambiguous(rules, interfaces, lines_for_role)
+        acl_lines_by_role[role] = lines_for_role
 
     lines: List[str] = [f"hostname {hostname}", "!"]
     for role, info in interfaces.items():
@@ -588,13 +645,23 @@ def convert(xml_path: Union[str, Path]) -> str:
         lines.append(f"interface {cisco_name}")
         lines.append(f" description {info['descr']} (PF Sense: {info['if']})")
         lines.append(f" ip address {info['ipaddr']} {net.netmask}")
-        if role == acl_role:
-            lines.append(f" ip access-group {ACL_NAME} in")
+        # WHY EVERY INTERFACE GETS A BOUND ACL, NOT JUST THE ONES WITH RULES
+        #   PF Sense fails CLOSED with no rules configured on an interface --
+        #   the same reasoning the empty-<filter> refusal above applies to the
+        #   whole file, just reachable per-interface now that more than one
+        #   is possible. Left unbound, an address-only interface with no
+        #   rules of its own would read to Cisco/Batfish as unfiltered, fail
+        #   OPEN -- the exact inversion that refusal exists to prevent.
+        lines.append(f" ip access-group {_acl_name(role, rule_bearing_roles=rule_roles)} in")
         lines.append("!")
 
-    if acl_lines:
-        lines.append(f"ip access-list extended {ACL_NAME}")
-        lines.extend(f" {line}" for line in acl_lines)
+    for role in interfaces:
+        acl_name = _acl_name(role, rule_bearing_roles=rule_roles)
+        lines.append(f"ip access-list extended {acl_name}")
+        if role in acl_lines_by_role:
+            lines.extend(f" {line}" for line in acl_lines_by_role[role])
+        else:
+            lines.append(" deny ip any any")
         lines.append("!")
 
     return "\n".join(lines) + "\n"
