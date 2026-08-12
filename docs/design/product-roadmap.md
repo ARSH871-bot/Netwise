@@ -39,6 +39,19 @@ nothing else:
 that need no policy — dead rules and undefined references. Everything that
 makes Netwise more than a linter is unavailable to anybody but us.
 
+Reproduce it — copy the fixture, rewrite the one name, run the pipeline on both:
+
+```bash
+cp -r tests/fixtures/rtr-us5-messy /tmp/stranger
+sed -i 's/rtr-us5/acme-edge-fw/g' /tmp/stranger/configs/*
+python -m analysis.pipeline tests/fixtures/rtr-us5-messy   # 6 found, 1 error
+python -m analysis.pipeline /tmp/stranger                  # 3 found, 3 error
+```
+
+The three errors in the second run are `AC-001` (3 access policy statements),
+`PC-050` (5 policy rules) and `RT-050` (2 route assertions) — **ten policy
+statements, none of which can be checked**, which is the whole of our policy.
+
 The device-scoping work (#29, #45, #50) made that *honest* — the user is told
 "could not check" rather than shown a green tick. It did not make it *useful*.
 Honest and useless is better than dishonest, and still not a product.
