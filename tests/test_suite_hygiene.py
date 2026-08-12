@@ -22,11 +22,25 @@ WHY THIS FILE EXISTS
     green" stood in for "the behaviour is checked".
 
 THE RULE
-    Every test must be able to fail. A test with no assertion and no
-    `pytest.raises` cannot, so it is not a test.
+    Every test must state what it proves, with an assertion or a
+    `pytest.raises`.
 
-    This does not prove a test checks the RIGHT thing -- nothing automated
-    can. It proves each one checks something, which is the floor that was
+    An earlier version of this paragraph said "a test with no assertion and no
+    pytest.raises CANNOT fail". That is overstated, and worth correcting in a
+    file about overstated claims: a test whose body calls the code under test
+    does fail if that code raises, assertion or not. Merging #89 surfaced
+    exactly such a test -- a bare `_require_port_open(...)` call using "it did
+    not raise" as its proof.
+
+    The rule is still right, for a different reason. A bare call leaves the
+    intent invisible: a reader cannot tell a deliberate does-not-raise test
+    from one whose assertions were removed in a rebase. That ambiguity is the
+    accident this file exists because of, and requiring the assertion removes
+    it. So this is a heuristic that also improves readable intent, not a proof
+    that the flagged test is broken.
+
+    It does not prove a test checks the RIGHT thing -- nothing automated can.
+    It proves each one says what it checks, which is the floor that was
     missing.
 
 These need neither Batfish nor Ollama.
