@@ -424,6 +424,38 @@ def test_an_unregistered_key_fails_before_anything_runs(monkeypatch):
     assert "risk" in message, "and list what would have been valid"
 
 
+def test_a_bad_key_is_caught_even_when_batfish_is_down(monkeypatch):
+    """The guarantee was conditional on the container being up.
+
+    `analyse()`'s docstring calls an invalid registry key a programming
+    mistake that "fails loudly and immediately". It did not. The check lived
+    only inside `run_post_processors()`, which `analyse()` reaches at the very
+    end -- so with Batfish unreachable, `analyse()` returned early via
+    `_every_check_failed()` and the bad key was **never detected at all**.
+
+    Found by verifying the docstring rather than reading it, while the Batfish
+    container happened to be OOM-killed (`Exited (137)`, the third time this
+    week). A registration bug could therefore sit undiscovered on a machine
+    where Batfish was down and surface first on someone else's -- the worst
+    place for a programming error to appear, and precisely the "works on my
+    machine" shape #84 was about.
+
+    `analyse()` now validates both registries before it connects.
+    """
+    def unreachable(*args, **kwargs):
+        raise ConnectionError("Batfish is not running")
+
+    monkeypatch.setattr(pipeline, "connect", unreachable)
+    monkeypatch.setattr(pipeline, "POST_PROCESSORS", {"evil": lambda r: r})
+
+    with pytest.raises(ValueError) as caught:
+        pipeline.analyse("tests/fixtures/rtr-us5-messy")
+
+    assert "POST_PROCESSORS keys" in str(caught.value), (
+        "a registration mistake must not be masked by Batfish being down"
+    )
+
+
 def test_the_error_path_no_longer_depends_on_the_key_being_valid(monkeypatch):
     """The original bug: a dropped finding triggers the restore path, which
     builds a finding with check=<key> and raised on an unregistered name --

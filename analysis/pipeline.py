@@ -184,9 +184,18 @@ def analyse(
         check_names: which checks to run; None means all registered ones
 
     Raises:
-        ValueError: if you ask for a check that is not registered. That is a
-            programming mistake, not a runtime condition, so it fails loudly
-            and immediately rather than being reported as a finding.
+        ValueError: for either of two registration mistakes, both of which are
+            programming errors rather than runtime conditions, so they fail
+            loudly and immediately rather than being reported as findings:
+
+            1. you asked for a check that is not registered in `CHECKS`;
+            2. a key in `POST_PROCESSORS` is not a valid F-1 check name (#75).
+
+            Both are checked before connecting, so neither depends on Batfish
+            being reachable. The second is listed here because this docstring
+            is how the rest of the team learned the contract, and a caller
+            reading it would otherwise know only one of the two ways this
+            function can raise -- noted by Shubham on #76.
     """
     config_dir = Path(config_dir)
     names = list(check_names) if check_names is not None else list(CHECKS)
@@ -197,6 +206,18 @@ def analyse(
             f"Unknown check(s): {', '.join(unknown)}. "
             f"Registered checks are: {', '.join(CHECKS)}"
         )
+
+    # Both registration mistakes are now caught in the same place, before any
+    # work starts. run_post_processors() checks this too, for anyone calling it
+    # directly -- but relying on that alone made the guarantee conditional on
+    # Batfish being up, which is the opposite of what this docstring promised.
+    #
+    # Found by verifying the claim rather than reading it: with the container
+    # OOM-killed, analyse() returned early via _every_check_failed() and an
+    # invalid POST_PROCESSORS key was never detected at all. A registration bug
+    # could therefore sit undiscovered on a machine where Batfish happened to
+    # be down, and surface for the first time on someone else's.
+    _check_registry_names()
 
     # --- Connect ------------------------------------------------------------
     try:
