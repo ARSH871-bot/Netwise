@@ -104,24 +104,44 @@ function describeSections(container) {
 
 /* --- The case under test ------------------------------------------------ */
 
-// The exact collision that lives in web/mock_findings.py: policy_compliance
-// clean and change_impact errored, both numbering their sentinel 000.
+// A collision WITHIN ONE CHECK, which is the kind no ID prefix can remove.
+//
+// The first version of this used the cross-check pair from
+// web/mock_findings.py -- policy_compliance clean against change_impact
+// errored, both numbering their sentinel 000. @shubhamkataria2005's A-2
+// (#102) gives change_impact its own `CH-` prefix, so that pair stops
+// colliding. His own argument against the old test_finding_ids.py applies
+// here unchanged:
+//
+//     "it does not depend on a contract quirk we have just fixed, and it is
+//      what the guard actually has to catch from here on"
+//
+// So this uses a pair A-2 cannot separate. Both helpers default to
+// number=0, so ONE check emits the same id twice -- verified, not assumed:
+//
+//     no_issues_finding(check="routing")  -> RT-000  status=none
+//     error_finding(check="routing")      -> RT-000  status=error
+//     SAME CHECK, COLLIDE: True
+//
+// That is the F-4 shape exactly: "we checked and found nothing" against "we
+// could not check", indistinguishable by id. Keying by id drops one of them,
+// and which one depends only on ordering.
 const COLLIDING_PAIR = [
   {
-    id: "PC-000",
-    check: "policy_compliance",
+    id: "RT-000",
+    check: "routing",
     severity: "low",
     device: "rtr-us5",
-    summary: "No issues found by policy compliance",
+    summary: "No issues found by routing",
     evidence: { detail: "d", source: "s" },
     status: "none",
   },
   {
-    id: "PC-000",
-    check: "change_impact",
+    id: "RT-000",
+    check: "routing",
     severity: "high",
     device: "rtr-us5",
-    summary: "Change impact check could not run: no baseline",
+    summary: "Routing check could not run: Batfish unreachable",
     evidence: { detail: "d", source: "s" },
     status: "error",
   },

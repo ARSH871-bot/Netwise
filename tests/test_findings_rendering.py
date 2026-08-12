@@ -10,12 +10,23 @@ WHAT THIS PROTECTS
          'policy compliance: all clear' with no sign that the change-impact
          check never ran."
 
-    `policy_compliance` and `change_impact` share the `PC-` prefix and both
-    number their sentinel finding 000, so a run where one is clean and the
-    other errored produces two findings called `PC-000`. That collision is
-    real today -- it is in `web/mock_findings.py`, which is what every user
-    sees before their first upload -- and it stays until the A-2 amendment
-    gives `change_impact` its own prefix (#95).
+    The collision used here is WITHIN ONE CHECK, which is the kind no ID
+    prefix can remove. `no_issues_finding()` and `error_finding()` both default
+    to `number=0`, so one check emits the same id twice -- verified, not
+    assumed:
+
+        no_issues_finding(check="routing")  -> RT-000  status=none
+        error_finding(check="routing")      -> RT-000  status=error
+        SAME CHECK, COLLIDE: True
+
+    That is the F-4 shape exactly: "we checked and found nothing" against "we
+    could not check", indistinguishable by id.
+
+    An earlier version used the cross-check `PC-000` pair from
+    `web/mock_findings.py`. A-2 (#102) gives `change_impact` its own `CH-`
+    prefix, so that pair stops colliding -- and @shubhamkataria2005's own
+    objection to the old `test_finding_ids.py` applies here unchanged: a test
+    should not depend on a contract quirk we have just fixed.
 
 WHY THIS FILE WAS NEEDED
     The comment ended: *"The mock data keeps that collision on purpose so this
@@ -120,7 +131,7 @@ def test_the_errored_card_says_in_words_that_it_is_not_a_clean_result(rendered):
     text = " ".join(blind["cardText"])
 
     assert "not a clean result" in text
-    assert "change_impact" in text, "the card must name the check that failed"
+    assert "routing" in text, "the card must name the check that failed"
 
 
 @needs_node
