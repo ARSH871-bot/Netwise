@@ -169,14 +169,22 @@ def test_a_rule_that_holds_on_every_arm_reports_all_clear(two_arm_rule):
     assert results[0]["id"] == "PC-000"
 
 
-def test_error_band_cannot_reach_change_impacts_ids():
-    """policy_compliance owns PC-000..099; change_impact starts at PC-100.
+def test_the_two_bands_cannot_overlap_or_reach_the_guards_id():
+    """Violations and check-errors must stay disjoint, and clear of PC-999.
 
-    The offset is what keeps the error band inside our half, so it is worth
-    asserting rather than trusting the arithmetic to stay true if either the
-    offset or the rule numbers change.
+    This used to assert the error band stayed below PC-100, because
+    change_impact owned PC-100..199. Amendment A-2 gave change_impact its own
+    CH- prefix, so that boundary is gone -- but the arithmetic still has to
+    hold WITHIN this check, which is what the offset is actually for.
+
+    PC-999 is pipeline.duplicate_id_findings()'s own complaint id. Colliding
+    with it would mean the guard against duplicate ids emitted a duplicate id.
     """
-    highest = max(r["number"] for r in policy_compliance.POLICY_RULES)
-    assert highest + policy_compliance.ERROR_NUMBER_OFFSET < 100, (
-        "error ids must stay below PC-100, which change_impact owns"
-    )
+    numbers = [r["number"] for r in policy_compliance.POLICY_RULES]
+    offset = policy_compliance.ERROR_NUMBER_OFFSET
+
+    violations = set(numbers)
+    errors = {n + offset for n in numbers}
+    assert not violations & errors, "a rule's violation and error ids must differ"
+    assert policy_compliance.SKIPPED_NUMBER not in violations | errors
+    assert max(errors) < 999, "the error band must stay clear of the guard's PC-999"

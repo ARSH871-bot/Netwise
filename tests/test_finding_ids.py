@@ -53,15 +53,25 @@ def test_unique_ids_produce_no_complaint():
 
 
 def test_the_real_bug_sentinel_collision_is_caught():
-    """policy_compliance clean + change_impact errored: both emit PC-000.
+    """Both sentinel helpers default to number=0, so one check can emit 000 twice.
 
-    This is the exact pair found while building the dashboard. The dangerous
-    half is the error -- if a consumer keys by id and drops it, the user is
-    told policy compliance is clean and never learns change impact did not run.
+    Until A-2 this was written as policy_compliance + change_impact, which both
+    mapped to "PC". That pair can no longer collide -- change_impact owns "CH"
+    now -- so the test uses the collision that A-2 does NOT remove: a single
+    check emitting a "none" and an "error" sentinel, both taking the default
+    number.
+
+    That is the stronger test. It does not depend on two checks sharing a
+    prefix, which was a contract quirk we have since fixed, and it is what the
+    guard actually has to catch from here on.
+
+    The dangerous half is unchanged: if a consumer keys by id and drops one, and
+    the dropped one is the error, the user is told the check is clean and never
+    learns it did not run.
     """
     results = [
         a_finding("policy_compliance", 0, status="none"),
-        a_finding("change_impact", 0, status="error"),
+        a_finding("policy_compliance", 0, status="error"),
     ]
     assert results[0]["id"] == "PC-000"
     assert results[1]["id"] == "PC-000"
@@ -71,19 +81,18 @@ def test_the_real_bug_sentinel_collision_is_caught():
     assert complaints[0]["status"] == "error"
     assert "PC-000" in complaints[0]["evidence"]["detail"]
     assert "policy_compliance" in complaints[0]["evidence"]["detail"]
-    assert "change_impact" in complaints[0]["evidence"]["detail"]
 
 
 def test_real_findings_collide_too_not_just_sentinels():
     """The path a sentinel-only fix would miss: make_finding with the same number.
 
-    policy_compliance and change_impact share the "PC" prefix, so their first
-    real finding is PC-001 for both. There is no default to fix here -- number
-    is a required argument.
+    `number` is a required argument to make_finding(), so there is no default
+    to fix here -- a check that numbers two findings the same produces two
+    identical ids, and no prefix policy can prevent that.
     """
     results = [
         a_finding("policy_compliance", 1),
-        a_finding("change_impact", 1),
+        a_finding("policy_compliance", 1),
     ]
     assert results[0]["id"] == results[1]["id"] == "PC-001"
     assert len(duplicate_id_findings(results)) == 1
@@ -97,7 +106,7 @@ def test_nothing_is_renumbered_or_dropped():
     """
     results = [
         a_finding("policy_compliance", 1),
-        a_finding("change_impact", 1),
+        a_finding("policy_compliance", 1),
     ]
     before = [dict(f) for f in results]
     duplicate_id_findings(results)
@@ -108,7 +117,7 @@ def test_the_guards_own_finding_cannot_collide():
     """The guard uses 999, clear of sentinels (000) and of real numbering."""
     results = [
         a_finding("policy_compliance", 0, status="none"),
-        a_finding("change_impact", 0, status="error"),
+        a_finding("policy_compliance", 0, status="error"),
     ]
     complaint = duplicate_id_findings(results)[0]
     assert complaint["id"] not in {f["id"] for f in results}
@@ -118,7 +127,7 @@ def test_the_guards_own_finding_cannot_collide():
 def test_three_way_collision_is_reported_once():
     results = [
         a_finding("policy_compliance", 1),
-        a_finding("change_impact", 1),
+        a_finding("policy_compliance", 1),
         a_finding("policy_compliance", 1),
     ]
     complaints = duplicate_id_findings(results)
@@ -129,7 +138,7 @@ def test_guard_output_is_a_valid_f1_finding():
     """Whatever the guard emits still has to obey the contract it is defending."""
     results = [
         a_finding("policy_compliance", 1),
-        a_finding("change_impact", 1),
+        a_finding("policy_compliance", 1),
     ]
     complaint = duplicate_id_findings(results)[0]
     assert set(complaint) == {
@@ -161,12 +170,15 @@ def test_guard_output_is_a_valid_f1_finding():
 def test_batfish_unreachable_still_guards_ids(monkeypatch):
     """Every check name in play + Batfish down -> the PC-000 pair is reported.
 
-    Registers all five names from VALID_CHECKS to force the collision. That is
-    test setup, not a claim about the architecture: `change_impact` will never
-    be a CHECKS entry (see docs/design/pipeline-feature-shapes.md). The
-    collision it exercises is still real, because change_impact findings still
-    carry the `PC-` prefix and will meet policy_compliance findings wherever
-    the two lists are shown together.
+    The claim under test is that the guard RUNS on this early-return path --
+    the likeliest failure of all, and originally the one path it did not cover.
+
+    It used to be shown by registering all five check names and letting
+    policy_compliance and change_impact both emit PC-000. A-2 gave
+    change_impact its own prefix, so no two registered checks can collide
+    naturally any more. Rather than manufacture a collision that the contract
+    now prevents, this asserts the thing that actually matters: the guard is
+    invoked, with the findings this path produced.
     """
     from analysis import pipeline
 
@@ -183,18 +195,24 @@ def test_batfish_unreachable_still_guards_ids(monkeypatch):
         raise ConnectionError("Max retries exceeded: connection refused")
 
     monkeypatch.setattr(pipeline, "connect", refuse)
+
+    seen = {}
+    real_guard = pipeline.duplicate_id_findings
+
+    def spy(results):
+        seen["input"] = list(results)
+        return real_guard(results)
+
+    monkeypatch.setattr(pipeline, "duplicate_id_findings", spy)
     results = pipeline.analyse("tests/fixtures/rtr-us5-secure")
 
     per_check = [f for f in results if f["summary"].startswith("Analysis could not run")]
     assert len(per_check) == len(findings.VALID_CHECKS), "one error per check"
     assert all(f["status"] == "error" for f in per_check)
 
-    # The collision is present in the raw output...
-    assert sorted(f["id"] for f in per_check).count("PC-000") == 2
-    # ...and the guard reported it rather than letting it pass silently.
-    complaints = [f for f in results if f["summary"].startswith("Internal error")]
-    assert len(complaints) == 1
-    assert "PC-000" in complaints[0]["evidence"]["detail"]
+    # The guard ran on this path, over the findings this path produced.
+    assert "input" in seen, "the duplicate-id guard was never called"
+    assert len(seen["input"]) == len(findings.VALID_CHECKS)
 
 
 def test_unloadable_config_still_guards_ids(monkeypatch):
@@ -206,11 +224,14 @@ def test_unloadable_config_still_guards_ids(monkeypatch):
     )
     monkeypatch.setattr(pipeline, "connect", lambda host="localhost": object())
 
-    results = pipeline.analyse("tests/fixtures/does-not-exist")
-
-    assert any(f["summary"].startswith("Internal error") for f in results), (
-        "the duplicate-id guard must run on this early-return path too"
+    called = []
+    monkeypatch.setattr(
+        pipeline, "duplicate_id_findings", lambda results: called.append(results) or []
     )
+
+    pipeline.analyse("tests/fixtures/does-not-exist")
+
+    assert called, "the duplicate-id guard must run on this early-return path too"
 
 
 # ---------------------------------------------------------------------------
