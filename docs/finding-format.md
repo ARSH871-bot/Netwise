@@ -224,5 +224,5 @@ amendment nobody had scheduled. A-1 took six days to collect four signatures.
 |---|---|---|
 | **Shubham** | Owns both checks; `policy_compliance` is the one that collides, and `change_impact` is the one being renumbered | ✅ |
 | **Arsh** | Owns `findings.py` and `pipeline.duplicate_id_findings()`, the guard this makes redundant for this pair | ⬜ |
-| **Samika** | The dashboard renders `id`, and `web/mock_findings.py` carries the colliding pair deliberately | ⬜ |
+| **Samika** | The dashboard renders `id`, and `web/mock_findings.py` carries the colliding pair deliberately | ✅ |
 | **Ankeet** | The AI layer refers to findings by `id` | ⬜ |
