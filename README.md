@@ -88,7 +88,22 @@ docker run -d --name batfish -p 9997:9997 -p 9996:9996 -p 8888:8888 batfish/alli
 pip install -r requirements.txt
 ```
 
-**3. Run an analysis** on one of the bundled synthetic configs:
+**3. Check your environment is actually ready:**
+
+```bash
+python -m tools.preflight
+```
+
+Worth doing before the first analysis rather than after it fails. It reports
+Python, packages, the Docker daemon, the Batfish container and the Batfish
+service separately — because they fail separately, and `docker start batfish`
+cannot fix a stopped Docker daemon. Optional pieces (Ollama, Node) are
+reported as optional, with what their absence costs, and never fail the check.
+
+Exit code is 0 when everything required works, so it is safe to put in front of
+a demo script.
+
+**4. Run an analysis** on one of the bundled synthetic configs:
 
 ```bash
 python -m analysis.pipeline tests/fixtures/rtr-us5-insecure
@@ -98,7 +113,7 @@ You should get JSON findings describing the deliberate flaw in that fixture.
 The first run after starting the container is slow — Batfish's engine has to
 warm up and parse the configs. That is normal, not a hang.
 
-**4. Start the dashboard:**
+**5. Start the dashboard:**
 
 ```bash
 uvicorn web.main:app --reload
@@ -106,11 +121,18 @@ uvicorn web.main:app --reload
 
 Then open <http://127.0.0.1:8000>. API documentation is at `/docs`.
 
-**5. Run the tests** (these need neither Batfish nor Docker):
+**6. Run the tests** (these need neither Batfish nor Docker):
 
 ```bash
 pytest tests/ -v
 ```
+
+Two test files drive the real dashboard JavaScript through a small Node shim.
+**Without Node installed they skip rather than fail** — and a skipped test looks
+identical to a passing one in pytest's summary line, so the suite would read
+green while the dashboard's rendering rules went unchecked. `tools/preflight.py`
+reports whether Node is present for exactly this reason. CI installs it
+explicitly rather than relying on the runner image happening to ship it.
 
 ## Repository layout
 
