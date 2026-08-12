@@ -387,10 +387,15 @@ def test_a_pair_that_would_be_ambiguous_on_one_acl_is_fine_on_two():
     assert "deny tcp any any" in output
 
 
-def test_genuine_ambiguity_on_one_interface_still_raises_amid_several():
-    """The other half: scoping must not accidentally hide a real problem by
-    only checking the whole file at once. wan's own two rules are genuinely
-    ambiguous; lan being clean must not mask that."""
+def test_a_pair_with_no_quick_rules_now_converts_via_reversal_instead_of_refusing():
+    """Superseded by #78 item 2, not merely renamed. This exact pair -- wan's
+    own block-then-pass, neither quick -- used to be refused, before this
+    module could tell the two evaluation models apart with confidence. Now
+    it does not need to: with no quick rule anywhere in wan's list, the
+    final decision for any flow is simply the LAST matching rule, which is
+    exactly what evaluating the SAME rules reversed, first-match-wins,
+    produces. Nothing is left ambiguous, so it converts, correctly, rather
+    than being refused."""
     xml_text = _minimal_xml(
         interfaces_xml=_TWO_INTERFACES,
         rules_xml="""
@@ -399,6 +404,29 @@ def test_genuine_ambiguity_on_one_interface_still_raises_amid_several():
             <rule><type>block</type><interface>wan</interface><protocol>tcp</protocol>
             <source><any/></source><destination><any/></destination></rule>
             <rule><type>pass</type><interface>wan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+        """,
+    )
+    output = _convert_string(xml_text)
+    wan_block = output.split("ip access-list extended acl_wan_in")[1].split("!")[0]
+    # The later rule (pass) is the real last-match-wins winner, so it comes
+    # FIRST in the reversed, first-match-wins ACL.
+    assert wan_block.strip().splitlines()[0].strip() == "permit tcp any any"
+
+
+def test_a_genuinely_mixed_quick_pair_still_raises():
+    """The case reversal does NOT resolve: one rule quick, one not, in a
+    pattern that first-match-wins and last-match-wins can still disagree
+    about. This is the scope #78 item 2 deliberately leaves refused rather
+    than guessed -- see the module docstring."""
+    xml_text = _minimal_xml(
+        interfaces_xml=_TWO_INTERFACES,
+        rules_xml="""
+            <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+            <rule><type>block</type><interface>wan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+            <rule><type>pass</type><interface>wan</interface><protocol>tcp</protocol><quick/>
             <source><any/></source><destination><any/></destination></rule>
         """,
     )
@@ -670,16 +698,23 @@ def test_a_single_rule_never_raises():
     assert "deny ip any any" in _convert_string(xml_text)
 
 
-def test_the_real_fixture_relies_on_quick_and_would_be_wrong_without_it():
-    """Regression coverage for the gap this fix found in the fixture
-    itself, not just in new adversarial input: the real fixture's two
-    pass rules are followed by a catch-all deny, which by definition
-    overlaps both of them. Before this fix added <quick/> to the two pass
-    rules, this exact fixture converted successfully and produced a
-    config that would have been backwards under real PF Sense semantics
-    -- the trailing deny would have overridden both permits. Confirms the
-    fixture's own <quick/> tags are load-bearing, not decoration, by
-    checking a temp copy with them removed raises."""
+def test_the_real_fixture_without_quick_now_converts_correctly_instead_of_refusing():
+    """Regression coverage for the gap #58 found in the fixture itself, now
+    re-checked against #78 item 2's more capable behaviour. The real
+    fixture's two pass rules are followed by a catch-all deny, which by
+    definition overlaps both of them; before #58 added <quick/> to the two
+    pass rules, this exact fixture converted successfully and produced a
+    config that was backwards under real PF Sense semantics.
+
+    #58's fix made that refuse. #78 item 2 goes one step further: with NO
+    quick rules anywhere (the fixture minus its two <quick/> tags), the
+    result is no longer ambiguous, it is exactly determined -- last-match-
+    wins means the trailing catch-all deny genuinely does override both
+    permits on the real firewall, so the correct conversion DENIES DNS and
+    HTTPS, not refuses to say. Confirmed live against Batfish before writing
+    this assertion: both testFilters calls returned DENY, and
+    filterLineReachability reported both permit lines as dead, correctly
+    reflecting that they never take effect once the deny is evaluated last."""
     original = Path(FIXTURE).read_text()
     without_quick = original.replace("<quick/>\n      ", "")
     assert without_quick != original, "the fixture must actually contain <quick/> for this test to mean anything"
@@ -690,10 +725,20 @@ def test_the_real_fixture_relies_on_quick_and_would_be_wrong_without_it():
         f.write(without_quick)
         path = Path(f.name)
     try:
-        with pytest.raises(PfSenseConversionError):
-            convert(path)
+        output = convert(path)
     finally:
         path.unlink()
+
+    # The catch-all deny is now first (last original rule, reversed), so it
+    # decides for every flow, including the two the permits were written for.
+    acl_block = output.split("ip access-list extended acl_in")[1]
+    lines = [ln.strip() for ln in acl_block.strip().splitlines() if ln.strip() and ln.strip() != "!"]
+    assert lines[0] == "deny ip any any", (
+        "the trailing catch-all deny must be evaluated first once nothing "
+        f"is quick, real PF Sense semantics say it overrides both permits. Got: {lines}"
+    )
+
+
 def test_a_rule_with_no_interface_raises_rather_than_producing_an_unbound_acl():
     """Confirmed live before this fix: acl_role defaulted to None, so
     "ip access-group ACL_NAME in" was never written to any interface, but
