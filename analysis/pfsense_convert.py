@@ -272,6 +272,20 @@ def _assign_cisco_interface_names(interfaces: Dict[str, Dict[str, str]]) -> Dict
     return {role: f"GigabitEthernet0/{i}" for i, role in enumerate(interfaces)}
 
 
+def _is_quick(rule_el: ET.Element) -> bool:
+    """True if `rule_el` carries PF Sense's <quick/> marker.
+
+    Pulled out on its own (#78 item 2) because it is now read from two
+    places that must agree with each other: _check_rule_order_is_unambiguous()
+    already used this exact test inline, and convert() needs the same
+    question answered once per interface, before generating any ACL line,
+    to decide whether that interface's rules can be modelled exactly rather
+    than checked for disagreement. One implementation, not two copies that
+    could drift.
+    """
+    return rule_el.find("quick") is not None
+
+
 def _acl_name(role: str, *, rule_bearing_roles: "set[str]") -> str:
     """The Cisco ACL name bound to one interface's inbound filter (#78 item 1).
 
@@ -469,7 +483,7 @@ def _check_rule_order_is_unambiguous(
                 # and "reject" both become "deny", and a block/reject pair
                 # is exactly as same-action-safe as a block/block pair.
                 "action": _PFSENSE_TO_CISCO_ACTION.get(pf_type),
-                "quick": rule_el.find("quick") is not None,
+                "quick": _is_quick(rule_el),
                 "protocol": pf_protocol,
                 "source": _endpoint_network(rule_el.find("source"), interfaces),
                 "destination": _endpoint_network(destination_el, interfaces),
