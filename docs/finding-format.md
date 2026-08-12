@@ -31,7 +31,7 @@ Every check any of us writes returns a **list of findings**. Each finding is a d
 
 | Field | Type | Meaning | Rules |
 |---|---|---|---|
-| `id` | string | Unique identifier for this finding | Prefix by feature: `AC-` access control, `RT-` routing, `PC-` policy/change, `RK-` risk. Number within: `AC-001`, `AC-002` … |
+| `id` | string | Unique identifier for this finding | Prefix by feature: `AC-` access control, `RT-` routing, `PC-` policy compliance, `CH-` change impact, `RK-` risk. **One prefix per check — never shared.** Number within: `AC-001`, `AC-002` … |
 | `check` | string | Which analysis produced it | One of: `access_control`, `routing`, `policy_compliance`, `change_impact`, `risk` |
 | `severity` | string | How serious | `high`, `medium`, or `low` only. Set by the check as a **default**; `risk` may re-rate it (see below). **Never set by the AI.** |
 | `device` | string | Which device it's on | The Batfish node name, e.g. `rtr-us5` |
@@ -82,6 +82,39 @@ device.
 > [`docs/design/pipeline-feature-shapes.md`](design/pipeline-feature-shapes.md)
 > was adopted; §7 of that document flagged this sentence as a separate F-1 edit
 > needing all four members, which is what this change is.
+
+---
+
+## Why one prefix per check (A-2)
+
+`id` is called a unique identifier above, and everything downstream is entitled
+to believe it — a dashboard keying findings by `id`, the AI layer referring to
+one, a diff between two runs.
+
+Two checks sharing a prefix makes that uniqueness a matter of **discipline**
+rather than structure. `policy_compliance` and `change_impact` shared `PC-`,
+and both take `SENTINEL_NUMBER = 0` by default, so a clean policy run beside a
+failed change-impact run produces `PC-000` twice:
+
+```
+change_impact     error (defaults)  ->  PC-000
+policy_compliance none  (defaults)  ->  PC-000
+```
+
+`pipeline.duplicate_id_findings()` **detects** that and reports it loudly. It
+cannot **prevent** it, and a numbering convention split across two documents is
+exactly the kind of agreement that holds until someone is in a hurry.
+
+The failure it guards against is F-4 arriving through `id` instead of through
+`status`: if a consumer keys by `id`, one of a colliding pair disappears — and
+if the one that disappears is the `error`, the user reads "policy compliance:
+all clear" and never learns that change impact did not run.
+
+**A distinct prefix makes the collision impossible rather than detectable.**
+The guards stay regardless: uniqueness is still not structurally enforced
+*within* a check, so `duplicate_id_findings()` and the "never key findings by
+`id`" rule in `web/static/app.js` remain correct and remain tested.
+
 
 ---
 
@@ -163,3 +196,33 @@ decided. It is the sentence catching up.
 | **Ankeet** | Owns the AI layer; the "never set by the AI" half is unchanged and still binding | ✅ |
 | **Shubham** | `policy_compliance` sets its own severities and continues to | ✅ |
 | **Samika** | Owns `risk` and `docs/severity-rules.md`, written against this wording | ✅ |
+
+### A-2 — `change_impact` gets its own ID prefix (`CH-`)
+
+Changes the `id` row so `PC-` means `policy_compliance` only and
+`change_impact` uses **`CH-`**, and adds the section above explaining why a
+shared prefix cannot be made safe by convention. Requires one line in
+`analysis/findings.py`:
+
+```python
+-    "change_impact": "PC",
++    "change_impact": "CH",
+```
+
+**No finding changes id.** `change_impact` is not written — nothing emits a
+`change_impact` finding today except `web/mock_findings.py`, which exists to
+demonstrate the collision. That is precisely why now: the amendment is free
+before the code exists and a migration afterwards.
+
+`CH-` rather than `CI-`: this repository runs CI, and `CI-001` in a findings
+list would read as a build identifier to anyone skimming.
+
+Raised from #95, filed after review of #86 noted that #30 is blocked on an
+amendment nobody had scheduled. A-1 took six days to collect four signatures.
+
+| Member | Why it touches them | Agreed |
+|---|---|---|
+| **Shubham** | Owns both checks; `policy_compliance` is the one that collides, and `change_impact` is the one being renumbered | ✅ |
+| **Arsh** | Owns `findings.py` and `pipeline.duplicate_id_findings()`, the guard this makes redundant for this pair | ⬜ |
+| **Samika** | The dashboard renders `id`, and `web/mock_findings.py` carries the colliding pair deliberately | ⬜ |
+| **Ankeet** | The AI layer refers to findings by `id` | ⬜ |
