@@ -69,7 +69,7 @@ item 1 is understood.
 | Who | Proposed | Why |
 |---|---|---|
 | **Ankeet** | #78 items 1 and 2 — multi-interface, then evaluation order | It is his converter, and #53/#54/#58 are all his. Item 1 blocks item 2 |
-| **Shubham** | #30 change-impact, **with `compareFilters`** | Design agreed, nothing written, and he has already measured that the story's stated primitive does not work |
+| **Shubham** | #30 change-impact, with **`compareFilters` *and* `differentialReachability`** | Design agreed, nothing written. Both primitives work; the caveat he measured is the location specifier, not the primitive |
 | **Samika** | #16 deployment & docs, the user-facing half | It is what the capstone is marked on and nobody has started it; he owns everything a user touches |
 | **Arsh** | Land the carry-over, then #16's engineering half | Two of my PRs are the queue; clearing them is worth more than starting anything |
 
@@ -78,6 +78,67 @@ has not weakened — they stack config *generation* on top of a translation laye
 that is still new. Two unproven layers, where the output is something a person
 might apply to a firewall. Recorded as **neither**, explicitly, so it is not
 reopened on day 5.
+
+---
+
+## Three corrections from review, all Shubham's, all before merge
+
+**1. His row credited him with a finding he had withdrawn.** The table said he
+had "already measured that the story's stated primitive does not work". He
+retracted that on #30 the same day: `differentialReachability` works, and his
+empty result came from constraining `startLocation` to a place an inbound ACL is
+never traversed. His measurement was correct for the question he asked; the
+question was wrong.
+
+```
+startLocation="rtr-us5"                             rows=0
+startLocation="rtr-us5[GigabitEthernet0/0]"         rows=0   <- right interface, still blind
+startLocation="@enter(rtr-us5[GigabitEthernet0/0])" rows=1
+(no pathConstraints)                                rows=1
+```
+
+The real caveat to carry into the sprint is **the location specifier, not the
+primitive** — and it is worth carrying, because it is a trap that returns an
+empty answer rather than an error. Row corrected. This matters more than a
+wording fix: a sprint record is what the evaluation report is built from, and
+this one credited a teammate with a retracted claim.
+
+**2. A constraint from the original brief was deleted, not overridden — and it
+was about exactly this sprint.** `CLAUDE.md` §7 as first written (`88dbdfb`):
+
+> The client's real firewall is **PF Sense** ... This is a known hard problem —
+> **timebox it** and fall back to supported-vendor sample configs if it stalls.
+
+Verified in the history:
+
+```
+88dbdfb   "timebox it"  present
+b2456fd   "Document the PF Sense converter, and surface its rule-order caveat"  -> 0 occurrences
+main      0 occurrences
+```
+
+**The constraint was not re-decided. It was overwritten while writing
+documentation about the thing it constrained**, in a docs PR of mine. So
+proposing a sprint (plausibly two) on #78 is not merely a scope trade — it is
+the outcome the brief specifically told us to guard against, and the guard was
+removed incidentally rather than deliberately.
+
+That does not settle it, and Shubham says so himself: circumstances changed. We
+have the real file now, and *"if it stalls"* reads differently when the
+converter **refuses cleanly** rather than flails. But **the team must re-take
+that decision explicitly**, knowing it was once made the other way, and it
+belongs in this record as a decision with reasons — the same standard we hold
+for F-1 and the shapes proposal. It must not be inherited from a document that
+quietly stopped saying it.
+
+**3. #30 is blocked on an F-1 amendment nobody has scheduled.** `change_impact`
+shares the `PC-` prefix with `policy_compliance`. Giving it its own prefix is an
+F-1 edit, and **A-1 took from 6 to 12 August to collect four signatures.** If
+#30 is Sprint 4 work, that amendment must be raised on **day 1**, or Shubham is
+either blocked mid-sprint or shipping into a collision the pipeline will
+correctly flag. He has offered to draft it, since it is his check that collides.
+
+**Added to the decisions list: who raises A-2, and when.** Tracked as #95.
 
 ---
 
@@ -93,6 +154,27 @@ file still unreadable, and "we can analyse your firewall" is a worse demo than
 I do not think that is right — the converter refusing his file is a *finding*,
 not a gap, and it is more interesting than a deployment script. But it is the
 strongest argument against my own proposal and someone should make it properly.
+
+**Shubham has now made it properly, and it is firmer than I framed it** — see
+correction 2 above. It is not a judgement call about demo value; the brief
+already made this call once. His own position:
+
+> **#16 in, #78 timeboxed to item 1 (multi-interface) with an explicit stop.**
+> Item 1 is the blocker, it is bounded, and finishing it tells us whether items
+> 2–4 are a sprint or a term. Committing to all four before item 1 lands is
+> estimating work we have not scoped.
+
+That last clause names the failure mode directly, and it is the same one that
+produced a fourteen-PR queue merged in one sitting. **I now think he is right
+and my table is wrong.** Recording that here rather than silently editing the
+table, so the disagreement and its resolution are both visible.
+
+**One further argument nobody has made yet, and it may outrank both:** #87 —
+there is no way for a user to state their own policy. Even a finished converter
+leaves the client's config producing only dead rules and undefined references,
+because a converted config is by definition a stranger's device name. #78 buys
+the ability to *read* his firewall; #87 is what makes reading it worth
+anything. Shubham reached the same conclusion independently on #88.
 
 ---
 
