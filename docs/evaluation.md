@@ -140,9 +140,30 @@ away has the wrong impression.
 2. **The sample is tiny.** Five flaws across three configurations. No statistical
    claim is possible, and none is made.
 
-3. **No real configuration has been analysed.** The client's own PF Sense export
-   would be the first, and is blocked on an open question about rule ordering
-   (see `CLAUDE.md` §7). Until then, every result here is on configs we authored.
+3. **No real configuration has been analysed *by the pipeline*.** Every result
+   here is on configs we authored.
+
+   This is narrower than it was on 10 August, and the update matters. The client
+   provided an anonymised export on 10 August and it **has** been examined —
+   structurally, with `tools/pfsense_shape.py`, which reports element names and
+   counts and never a value. What that established (#78):
+
+   - **zero of seven rules are marked `quick`**, so PF Sense's last-match-wins
+     applies to his whole rule set and our first-match-wins model disagrees
+     wherever two overlapping rules differ
+   - the converter **refuses it earlier still**: his rules span four interface
+     values across three interfaces, and we support one
+   - 1,998 elements against our fixture's 54, carrying `nat`, `openvpn`,
+     `ipsec`, `aliases`, `dhcpd` and `shaper`
+
+   So the rule-order question is **answered**, not open, and the answer is the
+   unhelpful one. Analysing his firewall needs multi-interface rule sets, real
+   PF Sense evaluation order, a NAT decision, and two field-omission questions
+   still with him (#80).
+
+   **What the converter did not do is worth as much as what it did not manage:**
+   it produced no plausible, wrong ACL. It stopped and named the construct it
+   could not handle, on the first real firewall it has ever seen.
 
 4. **The device-scoping errors are correct, but they are still gaps.** Several
    runs report *"N assertions could not be checked against this config"*. That is
