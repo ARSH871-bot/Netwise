@@ -8,6 +8,14 @@ useful to someone who is not us. It is deliberately not a feature wishlist: two
 of the six sections say "do nothing", and the largest gap is not on any story
 board.
 
+> **Two claims in the first draft of this document were wrong, and both were
+> caught by re-running them rather than by review** — see §1.1 and §2.3, where
+> the correction is left in place rather than tidied away. Both had the same
+> cause: a result *recalled* instead of *re-measured*. That is this project's
+> recurring defect family, and finding two instances of it in the document
+> arguing for quality is the strongest evidence that the habit of re-running
+> claims is worth its cost. **Every number below has been re-run on 12 August.**
+
 ---
 
 ## Tier 0 — a stranger cannot use this yet
@@ -144,13 +152,29 @@ evaluation already; repeated here because it is the ceiling on every claim.
 ### 2.3 Operational fragility
 
 The Batfish container was **OOM-killed twice** during one working day
-(`Exited (137)`). Nothing detects that except a failed run, and the product
-reports it correctly as `status="error"` — honest, and indistinguishable to the
-user from a broken tool. A demo that starts with a dead container looks like a
-demo of a dead product.
+(`Exited (137)`). A demo that starts with a dead container looks like a demo of
+a dead product.
 
-Worth: a preflight check that says "Batfish is not running: `docker start
-batfish`" rather than surfacing a connection error as a finding.
+**Measured 12 August, and this is smaller than an earlier draft of this section
+claimed.** The pipeline already handles it correctly: a simulated
+`ConnectionError` produces **3 findings, all `status="error"`**, summary
+*"Analysis could not run: Batfish is not reachable"*, and the detail already
+ends with *"Is Docker running, and the batfish container started?"* F-4 holds —
+no green tick is ever shown.
+
+So the missing preflight the earlier draft asked for is **already there in
+substance**. Two real defects remain, both narrow:
+
+1. **The actionable sentence is buried.** The detail leads with ~200 characters
+   of truncated urllib3 (`Max retries exceeded with url: /v2/question_templates
+   … NewConnectionError('<urllib3.connection.HTTPConnection�`) and the advice
+   comes last, past where a user stops reading. Put the instruction first and
+   the raw error after it.
+2. **It takes 21 seconds to say so** — pybatfish retries before giving up. On an
+   unreachable (rather than refusing) host it hung for over 120 seconds in
+   testing. The dashboard just spins.
+
+Neither is a missing feature. Both are worth a small change to `connect()`.
 
 ---
 
