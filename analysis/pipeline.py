@@ -41,6 +41,7 @@ RUN IT
 """
 
 import json
+import socket
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -67,13 +68,61 @@ CHECKS = {
 }
 
 
-def connect(host: str = "localhost") -> Session:
-    """Open a Batfish session. Raises if the service is not reachable."""
+#: The port pybatfish's v2 API talks to. Only used for the reachability probe
+#: below -- the Session works it out for itself.
+BATFISH_V2_PORT = 9996
+
+
+def connect(
+    host: str = "localhost",
+    probe_timeout: float = 2.0,
+    probe_port: int = BATFISH_V2_PORT,
+) -> Session:
+    """Open a Batfish session. Raises if the service is not reachable.
+
+    The probe exists for speed of *failure*, not for correctness. pybatfish
+    retries before it gives up, so a stopped container makes the dashboard spin
+    for a long time before saying anything. Measured 12 August:
+
+        stopped container (port refuses)    21.0s  ->   4.0s
+        wrong host (packets dropped)        88.9s  ->   2.0s
+
+    If the probe succeeds we carry on and let pybatfish do the real check -- an
+    open port is not proof that Batfish is healthy, so this only ever
+    short-circuits the negative case.
+
+    The 4.0s is not a bug: "localhost" resolves to both ::1 and 127.0.0.1, and
+    `create_connection` gives each the full timeout in turn. Halving the timeout
+    to make that number look better would also halve it for the single-address
+    case, so it is left alone and written down instead.
+
+    `probe_port` is a parameter rather than a constant because the probe is the
+    one thing here that would wrongly fail a working setup: Batfish on a
+    non-default port would be reachable to pybatfish and closed to the probe.
+    Pass the real port, or `probe_timeout=0` to skip the probe entirely.
+    """
+    if probe_timeout > 0:
+        _require_port_open(host, probe_port, probe_timeout)
+
     session = Session(host=host)
     # Cheapest call that actually proves the connection works -- constructing a
     # Session on its own does not contact the server.
     session.get_component_versions()
     return session
+
+
+def _require_port_open(host: str, port: int, timeout: float) -> None:
+    """Raise ConnectionError unless something accepts TCP on host:port."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return
+    except OSError as error:
+        # Deliberately the same exception type pybatfish raises for an
+        # unreachable server, so callers cannot tell the probe apart from the
+        # real attempt and no caller needs to learn a new failure mode.
+        raise ConnectionError(
+            f"nothing is listening on {host}:{port} ({error})"
+        ) from error
 
 
 def load_snapshot(
@@ -205,10 +254,18 @@ def analyse(
         return _every_check_failed(
             names,
             summary="Analysis could not run: Batfish is not reachable",
+            # The instruction comes FIRST and the raw error last. Measured: the
+            # underlying ConnectionError is ~200 characters of urllib3 detail
+            # ("Max retries exceeded with url: /v2/question_templates ...") and
+            # putting it first pushed the one sentence a user can act on past
+            # where anybody reads. The raw text is still here -- it is what
+            # distinguishes a stopped container from a wrong host -- just after
+            # the fix rather than in front of it.
             detail=(
-                f"Could not connect to Batfish at {host}: "
-                f"{findings.describe_error(error)}. "
-                "Is Docker running, and the batfish container started?"
+                f"Batfish is not answering at {host}. Start it with: "
+                "docker start batfish   (or, the first time: docker run --name "
+                "batfish -d -p 9996:9996 -p 9997:9997 batfish/allinone). "
+                f"Underlying error: {findings.describe_error(error)}"
             ),
             source=str(config_dir),
         )
