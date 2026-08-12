@@ -86,11 +86,30 @@ def test_every_test_can_fail(path: Path):
 
 
 def test_this_guard_would_actually_catch_a_toothless_test(tmp_path: Path):
-    """The guard mutated against itself.
+    """The guard pointed at itself -- by CALLING it, not by copying it.
 
-    A check that cannot demonstrate its own failure is the same class of
-    problem it exists to prevent, so this builds a file with a toothless test
-    in it and confirms the detection fires.
+    The first version of this test re-implemented the detection inline instead
+    of invoking `test_every_test_can_fail`. @shubhamkataria2005 found it on
+    #84 and it is worth recording exactly what he did, because the result is
+    the same failure family this whole file is about. He disabled detection in
+    the real guard, left this test untouched, and dropped a genuinely toothless
+    test into the suite:
+
+        if not has_assert and not has_call:   ->   if False:
+
+        def test_proves_nothing():
+            value = 1 + 1
+
+        14 passed in 0.43s
+
+    A hollow test sat in the suite, the guard that exists to find it was
+    disabled, and the test whose entire job is proving the guard works passed
+    anyway. It was verifying a copy of the logic while the real check could
+    break independently -- "a weaker claim standing in for a stronger one",
+    inside the file that names that pattern.
+
+    So this now calls the real function and requires it to FAIL. Break the
+    detection and this goes red, because there is no second copy left to pass.
     """
     offender = tmp_path / "test_pretend.py"
     offender.write_text(
@@ -99,15 +118,59 @@ def test_this_guard_would_actually_catch_a_toothless_test(tmp_path: Path):
         encoding="utf-8",
     )
 
-    source = offender.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    found = [
-        node.name
-        for node, segment in _test_functions(tree, source)
-        if not any(isinstance(n, _PROOF_NODES) for n in ast.walk(node))
-        and not any(call in segment for call in _PROOF_CALLS)
-    ]
+    with pytest.raises(AssertionError) as caught:
+        test_every_test_can_fail(offender)
 
-    assert found == ["test_looks_fine_but_proves_nothing"], (
-        "the guard failed to detect a test that asserts nothing"
+    # Not just "it failed" -- it must name the offender, since the message is
+    # the whole value of the guard to whoever has to fix it.
+    assert "test_looks_fine_but_proves_nothing" in str(caught.value)
+
+
+def test_the_guard_stays_quiet_on_a_healthy_test(tmp_path: Path):
+    """The other half, and also by calling the real function.
+
+    A guard that fires on everything gets switched off within a week, so the
+    negative case matters as much as the positive one.
+    """
+    fine = tmp_path / "test_fine.py"
+    fine.write_text(
+        "def test_asserts_something():\n"
+        "    assert 1 + 1 == 2\n"
+        "\n"
+        "def test_expects_a_raise():\n"
+        "    import pytest\n"
+        "    with pytest.raises(ValueError):\n"
+        "        raise ValueError('boom')\n",
+        encoding="utf-8",
+    )
+
+    test_every_test_can_fail(fine)
+
+
+def test_the_guard_is_actually_pointed_at_some_files():
+    """The failure nobody would notice: checking nothing, and passing.
+
+    `test_every_test_can_fail` is parametrised over `_python_test_files()`. If
+    that glob ever returns nothing -- a renamed directory, a changed pattern,
+    a move of this file -- pytest collects zero cases and the suite stays
+    green while the guard protects nothing at all.
+
+    That is the empty-result-reads-as-good-news pattern this project has now
+    hit several times: an empty answer meaning "we asked something that could
+    not answer" being read as "there is nothing wrong". Cheap to rule out.
+    """
+    found = _python_test_files()
+
+    assert len(found) >= 5, (
+        f"the hygiene guard is only pointed at {len(found)} file(s). "
+        "If this glob breaks, every test in it silently stops being checked."
+    )
+    names = {p.name for p in found}
+    assert "test_pfsense_convert.py" in names, (
+        "the file whose truncated tests caused this guard to exist is not "
+        f"being checked by it. Found: {sorted(names)}"
+    )
+    assert Path(__file__).name not in names, (
+        "the guard must not scan itself -- it would recurse on its own "
+        "docstring examples"
     )
