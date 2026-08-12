@@ -57,13 +57,22 @@ def test_probe_passes_when_something_is_listening():
     If this ever fails, the probe rejects a WORKING Batfish, which is far worse
     than being slow -- it is the one way this change could take down a healthy
     setup.
+
+    Written first as a bare call, relying on "it did not raise" as the proof.
+    That works, but #84's suite-hygiene guard flags it, and the guard is right
+    to: the intent is invisible, and a reader cannot tell a deliberate
+    does-not-raise test from a test whose assertions were lost in a rebase --
+    which is the exact accident #84 exists because of. So it says what it
+    proves.
     """
     with socket.socket() as server:
         server.bind(("127.0.0.1", 0))
         server.listen(1)
         port = int(server.getsockname()[1])
 
-        pipeline._require_port_open("127.0.0.1", port, timeout=2.0)
+        assert pipeline._require_port_open("127.0.0.1", port, timeout=2.0) is None, (
+            "the probe must accept a port that is genuinely open"
+        )
 
 
 def test_probe_raises_connection_error_when_nothing_listens():
