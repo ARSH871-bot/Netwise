@@ -82,10 +82,36 @@ references, because we have no way to express his policy.
 
 ### 1.1 Change-impact analysis (#30)
 
-Designed, unbuilt. Carries a measured trap: `differentialReachability` reports
-**zero difference** between a config that denies everything and one that permits
-everything. `compareFilters` is the working primitive. The issue text still
-names the broken one, so whoever picks it up walks into it.
+Designed, unbuilt, and **the primitive it needs works** — measured 12 August
+against the two opposite fixtures:
+
+```
+secure -> insecure    differentialReachability=1 row    compareFilters=1 row
+insecure -> secure    differentialReachability=1 row    compareFilters=1 row
+```
+
+and the row carries what the feature actually needs — the flow, plus the trace
+from *both* snapshots:
+
+```
+Flow              start=rtr-us5 GigabitEthernet0/0 [10.10.10.2->10.10.10.0 ICMP]
+Snapshot_Traces   RECEIVED -> PERMITTED(acl_in) -> FORWARDED
+Reference_Traces  RECEIVED -> DENIED(acl_in)
+```
+
+**An earlier draft of this section claimed the opposite** — that
+`differentialReachability` reported zero difference between a deny-all and a
+permit-all config, and that `compareFilters` was the only working primitive. It
+does not reproduce: a purpose-built deny-all/permit-all pair returns 1 row, and
+so do the real fixtures in both directions. The claim was recalled rather than
+re-run, and it would have sent whoever picked up #30 away from the correct
+primitive. Recorded rather than quietly deleted, because "a weaker claim
+standing in for a stronger one" is this project's recurring defect and **this
+one was mine, in the document about quality.**
+
+So the honest status is: no known trap, and the two primitives are
+complementary rather than rival — `compareFilters` names the changed ACL
+*lines*, `differentialReachability` shows the *traffic* whose fate changed.
 
 ### 1.2 Config change from English, and safety pushback (#13, #14)
 
