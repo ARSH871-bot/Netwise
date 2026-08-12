@@ -21,6 +21,7 @@ WHAT TO DO WITH THE OUTPUT
 from __future__ import annotations
 
 import collections
+import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -33,6 +34,35 @@ SUPPORTED_RULE_FIELDS = {
 }
 SUPPORTED_PROTOCOLS = {"tcp", "udp", "icmp", "any"}
 SUPPORTED_TYPES = {"pass", "block", "reject"}
+
+#: PF Sense's own addressing keywords. An <ipaddr> matching one of these is a
+#: KEYWORD, not an address, so it is safe to print. Anything else is treated as
+#: a real address and redacted -- the safe default, since an unrecognised token
+#: is exactly the case where guessing would leak.
+DYNAMIC_ADDRESSING = {"dhcp", "ppp", "pppoe", "pptp", "l2tp", "dhcp6", "slaac", "6rd", "6to4", "track6"}
+
+#: PF Sense's own reserved interface roles. These are the product's vocabulary,
+#: not user-chosen text, so printing one reveals nothing about the network.
+#: `optN` is matched by pattern below. ANY other role -- an interface group or
+#: a renamed interface, which users do name freely -- is redacted.
+KNOWN_ROLES = {
+    "wan", "lan", "openvpn", "ipsec", "wireguard", "l2tp", "pppoe", "enc0", "lo0",
+}
+
+
+def _safe_role(role: str) -> str:
+    """A role name, or a redaction marker if it is not PF Sense vocabulary.
+
+    Same discipline as the type/protocol printing below, and for the same
+    reason Ankeet gave on #74: this file's docstring promises it never prints
+    a value, and a rule's <interface> is element CONTENT, not a tag name. Roles
+    like "wan" or "openvpn" are PF Sense's own reserved words; an interface
+    GROUP or a renamed interface is user-chosen text and could be anything.
+    """
+    low = role.lower()
+    if low in KNOWN_ROLES or re.fullmatch(r"opt\d+", low):
+        return role
+    return "<role outside PF Sense vocabulary, redacted>"
 
 
 def _tag_census(root: ET.Element) -> collections.Counter:
@@ -64,6 +94,69 @@ def main(path: str) -> None:
     print(f"  => {verdict}")
 
     print(f"\ninterfaces                : {len(root.findall('./interfaces/*'))}")
+
+    # WHY THIS SECTION EXISTS
+    #   analysis/pfsense_convert.py SKIPS any interface with no static
+    #   <ipaddr>/<subnet> -- DHCP, PPPoE, or unconfigured. A filter rule naming
+    #   a skipped interface then hits the "no static address configured"
+    #   refusal. A DHCP WAN is the normal case for a small-site firewall, so
+    #   this decides whether multi-interface support (#78 item 1) is enough to
+    #   read a given export, or whether it still refuses for a second reason.
+    #
+    #   Reported STRUCTURALLY. An <ipaddr> is only ever printed when it is one
+    #   of PF Sense's own addressing KEYWORDS -- never when it is an address.
+    #   That ordering matters: this tool previously printed field values before
+    #   checking them against a known vocabulary, which Ankeet caught on #74.
+    #   Validate, then print.
+    print("\ninterface addressing (keywords only, never an address):")
+    rule_roles = {
+        (r.findtext("interface") or "").strip()
+        for r in rules
+        if (r.findtext("interface") or "").strip()
+    }
+    for iface_el in root.findall("./interfaces/*"):
+        role = iface_el.tag
+        ipaddr = (iface_el.findtext("ipaddr") or "").strip()
+        subnet = (iface_el.findtext("subnet") or "").strip()
+
+        if not ipaddr:
+            addressing = "<absent>"
+        elif ipaddr.lower() in DYNAMIC_ADDRESSING:
+            addressing = ipaddr.lower()
+        else:
+            addressing = "<static address present, redacted>"
+
+        convertible = bool(ipaddr) and ipaddr.lower() not in DYNAMIC_ADDRESSING and bool(subnet)
+        has_rules = role in rule_roles
+
+        note = ""
+        if has_rules and not convertible:
+            note = "  <-- HAS RULES BUT WILL BE SKIPPED: converter refuses"
+        elif not convertible:
+            note = "  <-- skipped by converter (no static address)"
+        elif not has_rules:
+            note = "  <-- converted, no rules of its own -> deny-all ACL"
+
+        print(f"  {_safe_role(role):<10} addressing={addressing:<38} rules={'yes' if has_rules else 'no ':<3}{note}")
+
+    blocked = [
+        el.tag for el in root.findall("./interfaces/*")
+        if el.tag in rule_roles
+        and (
+            not (el.findtext("ipaddr") or "").strip()
+            or (el.findtext("ipaddr") or "").strip().lower() in DYNAMIC_ADDRESSING
+            or not (el.findtext("subnet") or "").strip()
+        )
+    ]
+    orphan_roles = sorted(rule_roles - {el.tag for el in root.findall("./interfaces/*")})
+    if blocked or orphan_roles:
+        print(
+            f"  => STILL REFUSES after #78 item 1. Rules name "
+            f"{[_safe_role(r) for r in sorted(blocked) + orphan_roles]}, "
+            "which the converter cannot model."
+        )
+    else:
+        print("  => every rule-bearing interface has a static address the converter can model.")
     print("\nrule field usage (tag names only):")
     field_use = collections.Counter(
         child.tag for rule in rules for child in rule
