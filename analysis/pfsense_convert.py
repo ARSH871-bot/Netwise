@@ -36,45 +36,60 @@ SCOPE -- TIMEBOXED ON PURPOSE, PER CLAUDE.md SECTION 7
     explicit deny-all, matching PF Sense's real fail-closed default rather
     than leaving it unbound. See convert() and _acl_name().
 
-A SIMPLIFYING ASSUMPTION, NO LONGER A SILENT ONE (issue #47)
+RULE ORDER: MODELLED WHERE IT CAN BE, REFUSED WHERE IT CANNOT (issues #47, #78)
     PF Sense's real rule evaluation is "last matching rule wins" unless a
     rule is marked "quick", in which case evaluation stops there and that
-    rule's action is final. This module instead treats rules as
-    first-match-wins, top to bottom -- exactly how a Cisco ACL already
-    behaves, and how every existing check in this project already reasons
-    about rule order.
+    rule's action is final. A Cisco ACL is always first-match-wins, top to
+    bottom -- the two models only coincide on their own when there happens
+    to be nothing for them to disagree about.
 
-    For two overlapping rules A (earlier) and B (later), the two models are
-    guaranteed to agree in exactly two cases: A and B have the SAME action
-    (it does not matter which one "wins"), or A is "quick" (both models
-    stop evaluating at A the moment it matches -- Cisco because first-match
-    always stops there, PF Sense because "quick" says to). B's own "quick"
-    flag does not help on its own: PF Sense has already evaluated the
-    earlier, non-quick A and moved past it before B is ever reached, so a
-    later quick rule cannot undo the disagreement A already caused.
-    Anything else -- overlapping traffic, different actions, A not quick --
-    is genuinely ambiguous.
+    THREE CASES, per interface's rule list, not per rule pair:
+
+    1. NO rule is quick (issue #78 item 2). "Stop immediately" never fires,
+       so the final decision for any flow is simply the action of the LAST
+       rule (top to bottom) that matches it -- which is exactly what
+       evaluating the SAME rules first-match-wins, REVERSED, produces: the
+       first rule to match in the reversed list is, by construction, the
+       last to match in the original one. Not an approximation, the same
+       decision for every flow. This module reverses and converts rather
+       than checking for disagreement, because there is none left to find.
+       The client's real export measures zero of seven rules marked quick
+       -- this is his whole rule set, not a corner case.
+
+    2. EVERY rule is quick. Already exactly modelled by first-match-wins in
+       ORIGINAL order: a quick rule stops evaluation the instant it matches,
+       which is what first-match already does for every rule. Converts as
+       written, no reordering needed.
+
+    3. SOME rules are quick, some are not, in no particular pattern. This is
+       where the two models can still genuinely disagree, and where general
+       reordering does not reduce to a single case the way 1 and 2 do. For
+       two overlapping rules A (earlier) and B (later): if A and B have the
+       SAME action, there is nothing to disagree about regardless of which
+       "wins"; if A is quick, both models stop at A and agree; otherwise
+       (actions differ, A not quick) the models can disagree, and this
+       module refuses rather than guesses -- see
+       `_check_rule_order_is_unambiguous()`, called once per interface for
+       exactly this case, not the other two.
 
     Demonstrated, not hypothetical (issue #47's probe): a deny-then-permit
-    pair on the same host, neither marked "quick", converted cleanly and
-    reported the permit line as "unreachable, shadowed by the deny" -- while
-    the real firewall, evaluating last-match, lets that exact traffic
-    through. Confidently wrong is worse than refusing, so this module now
-    checks for that ambiguity rather than assuming it away: see
-    `_check_rule_order_is_unambiguous()`, called from `convert()` for every
-    rule pair.
+    pair on the same host, neither marked "quick", converted cleanly under
+    the ORIGINAL (pre-#47) version of this module and reported the permit
+    line as "unreachable, shadowed by the deny" -- while the real firewall,
+    evaluating last-match, lets that exact traffic through. Confidently
+    wrong is worse than refusing, which is what led to case 3's refusal
+    existing at all; #78 item 2 is what taught this module cases 1 and 2
+    do not need it.
 
     tests/fixtures/pfsense-source/config.xml's two "pass" rules are both
-    marked `<quick/>`, and it is load-bearing, not decoration. The file's
-    final rule is a catch-all deny, which by definition overlaps every
-    specific rule before it -- this check caught that the fixture itself
-    would have been wrong under real PF Sense semantics without `<quick/>`
-    on the two passes, the trailing deny would have overridden both of
-    them, denying the exact traffic the file exists to show as permitted.
-    "Written so every rule matches a disjoint slice" was true of the three
-    rules' intent, not of their actual address spaces once the catch-all is
-    counted -- a distinction this check exists specifically to stop anyone
-    (human or converter) from eliding again.
+    marked `<quick/>` (case 3, mixed), and it is load-bearing, not
+    decoration. The file's final rule is a catch-all deny, which by
+    definition overlaps every specific rule before it -- without `<quick/>`
+    on the two passes this fixture falls into case 1 instead (no quick
+    rules at all) and correctly CONVERTS, reversed, denying the traffic the
+    quick-marked version permits -- see
+    `test_the_real_fixture_without_quick_now_converts_correctly_instead_of_refusing`,
+    verified live against Batfish before being written as an assertion.
 
 WHY INTERFACE NAMES ARE REWRITTEN, NOT COPIED
     PF Sense identifies interfaces with FreeBSD device names (em0, em1, igb0).
@@ -646,8 +661,41 @@ def convert(xml_path: Union[str, Path]) -> str:
     # rules (#47/#58's guard, now run once per ACL instead of once globally).
     # A rule on "lan" cannot be ambiguous against a rule on "wan" -- they are
     # never evaluated against the same traffic by any real firewall.
+    #
+    # WHY AN INTERFACE WITH NO QUICK RULES AT ALL IS REVERSED, NOT CHECKED
+    # (#78 item 2)
+    #   PF Sense's real rule is: evaluate top to bottom, remember the action
+    #   of the last matching rule, and stop immediately if that rule is
+    #   quick. With NO quick rules anywhere in the list, "stop immediately"
+    #   never fires, so the final decision for any flow is simply the action
+    #   of the LAST rule (top to bottom) that matches it.
+    #
+    #   That is exactly what a Cisco ACL produces if the SAME rules are
+    #   evaluated first-match-wins in REVERSED order: the first rule to match
+    #   in the reversed list is, by construction, the last rule to match in
+    #   the original one. This is not an approximation of last-match-wins,
+    #   it is the same decision, for every possible flow -- so there is
+    #   nothing left for _check_rule_order_is_unambiguous() to be uncertain
+    #   about, and calling it here would spuriously refuse configs this
+    #   module can now convert exactly. Skipped for this case, not weakened.
+    #
+    #   The client's real export measures zero of seven rules marked quick
+    #   (#78) -- this is not a hypothetical case, it is his whole rule set.
+    #
+    #   Any OTHER rule set -- some rules quick, or every rule quick -- keeps
+    #   the existing original-order-plus-refusal behaviour. An all-quick list
+    #   is already exactly modelled by first-match-wins in original order (a
+    #   quick rule stops evaluation the instant it matches, which is what
+    #   first-match already does), and a genuinely mixed list is where this
+    #   module still refuses rather than guesses, because the general case
+    #   -- some rules quick, some not, in no particular pattern -- does not
+    #   reduce to a single reordering the way the all-or-nothing cases do.
     acl_lines_by_role: Dict[str, List[str]] = {}
     for role, rules in rules_by_role.items():
+        if not any(_is_quick(r) for r in rules):
+            rules = list(reversed(rules))
+            acl_lines_by_role[role] = [_rule_to_acl_line(r, interfaces) for r in rules]
+            continue
         lines_for_role = [_rule_to_acl_line(r, interfaces) for r in rules]
         _check_rule_order_is_unambiguous(rules, interfaces, lines_for_role)
         acl_lines_by_role[role] = lines_for_role
