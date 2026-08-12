@@ -144,11 +144,28 @@ Batfish runs in Docker container `batfish` (image `batfish/allinone`), exposing
   `<quick/>` — also what a PF Sense GUI normally produces — and a test strips
   the tag from a copy to prove the refusal still fires.
 
-  **Still open, and it is a client question, not a code one:** does the client's
-  real export mark its rules `quick`? If it does, we can convert and analyse it
-  as it stands. If it does not, the converter will now correctly refuse, and
-  teaching it PF Sense's real evaluation order becomes a piece of work nobody
-  has scoped.
+  **ANSWERED, 10 August, and it is the answer that reorders the roadmap.** The
+  client provided an anonymised export. Measured with `tools/pfsense_shape.py`,
+  which reports structure and never a value: **zero of seven filter rules are
+  marked `quick`.** Last-match-wins applies to his whole rule set, so the
+  converter's first-match-wins model disagrees with his firewall wherever two
+  overlapping rules differ.
+
+  **And rule order is not even the first blocker.** The converter refuses
+  earlier: his rules span four interface values across three interfaces, and it
+  supports a single-interface rule set. His export is 1,998 elements against our
+  fixture's 54, and carries `nat`, `openvpn`, `ipsec`, `aliases`, `dhcpd` and
+  `shaper` — none of which we handle.
+
+  Analysing his firewall now needs, in order: multi-interface rule sets, real
+  PF Sense evaluation order, a decision on NAT (two of his rules carry
+  `associated-rule-id` and are meaningless without it), and rules that omit
+  `<type>` or `<protocol>`. **That is a sprint, plausibly more.** See #78.
+
+  **What it does not change:** the converter did not emit a plausible, wrong ACL
+  for a real firewall. It stopped and named the construct it could not handle.
+  That is #53, #54 and #58 working on the first real file they have ever seen,
+  and the strongest evidence yet that refusing rather than guessing was right.
 
 ## 7a. The finding format (F-1) — the one contract
 
@@ -278,6 +295,8 @@ analysis/   Layer 1 — Batfish orchestration
 ai/         Layer 2 — local LLM explanation and Q&A
 web/        Layer 3 — FastAPI backend and dashboard
 tests/      pytest suite + synthetic fixtures (committed, see §7b)
+tools/      Standalone helpers, run by hand, not imported by the product
+              pfsense_shape.py  describe an export's structure, never its values
 docs/       Sprint records, design notes, evidence for reviews
 configs/    Config files under test — GIT-IGNORED, never committed
 ```
@@ -373,10 +392,13 @@ sprint rather than reconstructed after it.
 
 ### End to end — what is joined, and what is not
 
-**The product runs.** Uploading a config produces real findings on screen, as
-of 5 August (#39). `web/main.py` stages the upload and calls
-`analysis.pipeline.analyse()` on it; mocks are served only until the first
-upload. Verified against opposite fixtures:
+**The product runs.** Uploading a config stages it; clicking **Scan Now** runs
+the analysis and puts real findings on screen. The upload no longer analyses by
+itself — #82 separated them, so a staged file is never confused with a checked
+one, and stale findings are cleared on upload rather than left sitting under a
+success message for a different network. `web/main.py` stages the upload;
+`/api/findings` calls `analysis.pipeline.analyse()`. Mocks are served only until
+the first upload. Verified against opposite fixtures:
 
 ```
 upload rtr-us5-insecure  ->  5 problems found, 1 could not check

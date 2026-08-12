@@ -200,6 +200,131 @@ you depend on, say so in the description, and name the merge order. Writing
 documentation that describes behaviour not yet on `main` is how this repo has
 gone wrong before.
 
+## 5b. Releases, tags, and why there are no packages
+
+We tag a release at the **end of each sprint**, once that sprint's work is
+actually on `main`. Nothing else gets a tag.
+
+```bash
+git tag -a v0.3.0 -m "Sprint 3"      # on the real last commit of the sprint
+git push origin v0.3.0
+gh release create v0.3.0 --title "Sprint 3" --notes-file docs/sprint3/SPRINT3.md
+```
+
+**Version numbers are sprint-aligned and pre-1.0.** `v0.<sprint>.<patch>`.
+There is no 1.0 until the client can run this against his own firewall.
+
+### Why a tag is worth the two minutes
+
+Without one, *"the product as it was when we demoed to Senaka"* is only
+recoverable by reading merge dates and guessing. With one it is a fixed,
+citable commit — which matters in the report and matters more in a defence.
+
+### The tag goes on the last commit of the sprint's WORK, not its record
+
+The obvious choice — the commit that adds `SPRINTn.md` — is wrong, and this
+document got it wrong first time round. Ankeet and Samika both caught it.
+
+**State the timezone.** The team is in NZT (+1200), and a bare date is
+ambiguous: `--before=2026-08-06` returned a commit that is 6 August in *both*
+NZT and UTC, i.e. outside the sprint. If `merge-base` is meant to remove
+ambiguity about the boundary, the window feeding it cannot reintroduce it.
+
+```bash
+LAST=$(git log origin/main   --since="2026-07-30T00:00:00+12:00"   --until="2026-08-06T00:00:00+12:00"   --format='%h' -1)
+
+git merge-base --is-ancestor <the-sprint-s-headline-merge> $LAST   # verify
+```
+
+### Both earlier sprints ARE tagged retroactively, and here is the correction
+
+An earlier draft of this section argued *against* retroactive tags, on two
+worked examples that were both wrong — and wrong by using the record commit as
+the boundary, which is the exact mistake the rule above exists to prevent. The
+document was demonstrating the error it was written to stop.
+
+Corrected, measured with the recipe above:
+
+| | Real last commit (NZT) | Python files | Contains the headline merge |
+|---|---|---|---|
+| **Sprint 1** | `3b08a4c`, 29 Jul 00:27 | 1 (`analysis/smoke_test.py`) | n/a |
+| **Sprint 2** | `a2d36fd`, 5 Aug 22:22 | 18 | **yes** — `#39` is an ancestor |
+
+So the case against tagging dissolved once the facts were right:
+
+- **Sprint 2's boundary does contain #39.** The record was written, then
+  corrected the same day *because of* #39 — six minutes after it merged — and
+  `SPRINT2.md` still carries that sentence. Nothing about it falls outside the
+  sprint.
+- **Sprint 1 has one Python file**, not zero — a connectivity smoke test. That
+  does not make "a release with no software" right in substance, but the number
+  was wrong and the reasoning rested on it.
+
+**Tag both**, with release notes that say what each sprint actually delivered —
+Sprint 1's deliverable was a verified environment, not an application, and the
+note should say so rather than let a version number imply otherwise.
+
+### No CHANGELOG.md
+
+Our PR descriptions are thorough and the sprint records already narrate each
+sprint. A changelog would be the same facts in a third place, and *a fact stored
+twice is the documented cause of every staleness bug we have had* (§6 and
+`CLAUDE.md` §11). GitHub Releases render the history without us maintaining it.
+
+### No Packages, and this is a decision rather than an omission
+
+Netwise is not a library anyone installs. It is an application you run against
+your own Batfish and Ollama on your own machine, and the whole premise is that
+nothing leaves it. Publishing to a registry would add a distribution channel
+nobody wants and invite exactly the "just pip install it" workflow the offline
+constraint exists to prevent.
+
+Recorded here so a reviewer can tell "we chose not to" from "nobody thought of
+it" — those look identical in an empty Packages tab.
+
+## 5c. Keeping the record honest after a change
+
+A document that lags reality does not merely mislead — it gets quoted into a
+team update, a client report, or the capstone write-up before anyone notices.
+Every staleness incident on this project was caught by someone reading
+carefully, never by a tool.
+
+**After a change lands, update what records it:**
+
+| Changed | Also update |
+|---|---|
+| a check, the pipeline, the AI layer | `CLAUDE.md` §11, and §7a/§7b/§7c if behaviour changed |
+| anything measured | `docs/evaluation.md` — **re-run it, do not reword it** |
+| a decision | move it from "Open decisions" to "Settled" in `CLAUDE.md` |
+| what an issue really is | the issue, its milestone, and the board's columns and fields |
+| work landing | the sprint record in `docs/sprintN/` |
+| the contract | `docs/finding-format.md` **and** its ratification table (all four) |
+
+Board fields that get forgotten: **Start date and Target date** — the Roadmap
+view is blank without them — plus Priority, Size, and adding open PRs as items.
+Merged PRs move themselves; the seven automation workflows are enabled.
+
+### But the real fix is removing the duplicate
+
+Every one of those incidents had the same cause: **a fact stored in two places
+and only one copy updated.** A longer checklist fights the symptom.
+
+So before writing a fact into a second file, ask whether the first can be its
+only home. `CLAUDE.md` §11 says *"for the count, run it"* rather than quoting a
+test number, precisely because a number written there rots the next time anyone
+adds a test.
+
+### Do not trust the documents — re-derive
+
+```bash
+sed -n '/^CHECKS = {/,/^}/p' analysis/pipeline.py   # what actually runs
+pytest tests/ -q                                     # what is actually tested
+git log --oneline origin/main -1                     # where main actually is
+gh pr list --state open && gh issue list --state open
+```
+
+**If a document disagrees with those, the document is the bug.**
+
 ## 6. This is an agreement, not an enforcement
 
 We cannot turn on branch protection — it needs GitHub Pro or a public repo, and

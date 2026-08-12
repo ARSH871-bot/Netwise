@@ -42,6 +42,15 @@
 
           <!-- Validation result: accepted or rejected, with the reason. -->
           <p id="upload-message" class="upload-message" role="status"></p>
+
+          <!-- Runs the analysis. Disabled until a file has actually been
+               accepted by the SERVER, not merely chosen in the picker -- there
+               is nothing staged to scan until then, and an enabled button that
+               cannot work is a worse answer than a disabled one that explains
+               itself. app.js owns the enabling. -->
+          <button type="button" id="scan-now" class="scan-now" disabled>
+            Scan Now
+          </button>
         </div>
 
         <!-- ---- Coverage summary ----

@@ -1,6 +1,7 @@
 # Evaluation — does Netwise find the flaws it is meant to find?
 
-**Measured:** 10 August 2026, against `main` at `b0ce0c5` (197 tests passing).
+**Measured:** 10 August 2026, re-run the same day against `main` at `62d8fc7`
+(211 tests passing) after #73 fixed the bug this evaluation found.
 **Story:** US-15 (#15). This is the evidence chapter of the report.
 **How to reproduce:** every number below comes from `python -m analysis.pipeline
 <fixture>`. Nothing here is recalled or estimated; re-run the commands and you
@@ -139,9 +140,30 @@ away has the wrong impression.
 2. **The sample is tiny.** Five flaws across three configurations. No statistical
    claim is possible, and none is made.
 
-3. **No real configuration has been analysed.** The client's own PF Sense export
-   would be the first, and is blocked on an open question about rule ordering
-   (see `CLAUDE.md` §7). Until then, every result here is on configs we authored.
+3. **No real configuration has been analysed *by the pipeline*.** Every result
+   here is on configs we authored.
+
+   This is narrower than it was on 10 August, and the update matters. The client
+   provided an anonymised export on 10 August and it **has** been examined —
+   structurally, with `tools/pfsense_shape.py`, which reports element names and
+   counts and never a value. What that established (#78):
+
+   - **zero of seven rules are marked `quick`**, so PF Sense's last-match-wins
+     applies to his whole rule set and our first-match-wins model disagrees
+     wherever two overlapping rules differ
+   - the converter **refuses it earlier still**: his rules span four interface
+     values across three interfaces, and we support one
+   - 1,998 elements against our fixture's 54, carrying `nat`, `openvpn`,
+     `ipsec`, `aliases`, `dhcpd` and `shaper`
+
+   So the rule-order question is **answered**, not open, and the answer is the
+   unhelpful one. Analysing his firewall needs multi-interface rule sets, real
+   PF Sense evaluation order, a NAT decision, and two field-omission questions
+   still with him (#80).
+
+   **What the converter did not do is worth as much as what it did not manage:**
+   it produced no plausible, wrong ACL. It stopped and named the construct it
+   could not handle, on the first real firewall it has ever seen.
 
 4. **The device-scoping errors are correct, but they are still gaps.** Several
    runs report *"N assertions could not be checked against this config"*. That is
@@ -193,7 +215,7 @@ Each refusal names what it could not do rather than failing vaguely. That is the
 designed behaviour, not a gap in it — but the three above are the best available
 list of what to build next.
 
-### This evaluation found a real bug
+### This evaluation found a real bug — since fixed
 
 Worth recording, because it is the strongest argument for having done it at all.
 
@@ -211,8 +233,22 @@ failure elsewhere for good reasons.
 ran, was answered truthfully, and `question_understood` echoed exactly what was
 asked. It was simply not the question the user meant — which is precisely the
 failure `docs/design/query-grounding-problem.md` predicted before this code
-existed. Tracked as **#70**.
+existed. Filed as **#70**, fixed by @patelankeet2 in **#73**, and re-measured
+here rather than assumed:
 
-The scoring above counts that case as answered-correct, because the tool
-reported what Batfish said. Judged by what a *user* meant, it is wrong. Both
-readings are recorded rather than picking the flattering one.
+```
+can rtr-hq reach 10.20.20.5      ->  Yes. Traffic from rtr-hq reaches 10.20.20.5.
+can rtr-hq reach 10.20.20.0/24   ->  Yes. Traffic from rtr-hq reaches a host in
+                                     10.20.20.0/24 (checked 10.20.20.1).
+```
+
+**The top-line counts are unchanged — 11 / 9 / 0 / 0 — but one of them changed
+meaning.** Before the fix, that case scored answered-correct only because the
+tool faithfully reported what Batfish said; judged by what a *user* meant it was
+wrong, and this document recorded both readings rather than the flattering one.
+After the fix the two readings agree, and the substitution is disclosed in both
+the restated question and the answer text.
+
+That is the sequence worth keeping: an evaluation found a defect in shipped
+code, the defect was fixed the same day, and the evaluation was re-run rather
+than edited to match.
