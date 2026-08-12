@@ -128,23 +128,40 @@ def test_the_ignore_check_can_actually_fail():
 # 2. The thing the extensions are a proxy for
 # ---------------------------------------------------------------------------
 
-#: Signatures of a real device configuration. Deliberately specific: `hostname`
-#: alone appears in scripts that GENERATE config, so a single hit means
-#: nothing.
-_SIGNATURES = {
+#: DEFINITIVE signatures -- one is enough, because nothing legitimate contains
+#: them.
+#:
+#: This split exists because the first version of this file had a single
+#: threshold of two, and @shubhamkataria2005 found the hole on #98: a PF Sense
+#: export trips exactly ONE signature, since the other three are Cisco-specific
+#: and never match XML. So the threshold was calibrated on Cisco configs and
+#: silently exempted the entire PF Sense format -- **the client's actual
+#: firewall, in the actual format he sends.** The docstring below claimed the
+#: opposite, which makes it the third claim this week that was asserted rather
+#: than re-run.
+#:
+#: Measured before splitting, across all 67 tracked files: exactly one non-`.py`
+#: file contains `<pfsense>`, and it is the fixture that is already exempt. So
+#: treating it as sufficient on its own produces zero false positives today.
+_DEFINITIVE_SIGNATURES = {
+    "pfsense": re.compile(r"<pfsense>", re.I),
+}
+
+#: WEAK signatures -- each can appear in prose or in code that generates config,
+#: so two are required together.
+#:
+#: Measured across all tracked files: every real Cisco fixture scores 2-3 of
+#: these, while source files that merely mention config syntax score exactly 1.
+#: The threshold is the gap in that measurement rather than a guess.
+_WEAK_SIGNATURES = {
     "cisco-acl": re.compile(r"^\s*ip access-list (standard|extended) ", re.M),
     "cisco-interface": re.compile(
         r"^\s*interface (GigabitEthernet|FastEthernet|Vlan)\S*", re.M
     ),
     "cisco-hostname": re.compile(r"^\s*hostname \S+", re.M),
-    "pfsense": re.compile(r"<pfsense>", re.I),
 }
 
-#: Two distinct signatures, not one. Measured across all 66 tracked files:
-#: every real fixture config scores 2-3, while the two source files that merely
-#: mention config syntax score exactly 1. The threshold is the gap in that
-#: measurement rather than a guess.
-_MINIMUM_SIGNATURES = 2
+_MINIMUM_WEAK_SIGNATURES = 2
 
 #: Python is skipped because `analysis/pfsense_convert.py` exists to EMIT Cisco
 #: configuration and will always look like one. That is a real hole -- a config
@@ -155,14 +172,28 @@ _SKIP_SUFFIXES = {".py"}
 
 
 def _looks_like_a_device_config(text: str) -> list:
-    return sorted(n for n, r in _SIGNATURES.items() if r.search(text))
+    """Return the matched signature names if this text is a device config.
+
+    Empty list means it is not. One DEFINITIVE match is enough; weak matches
+    need `_MINIMUM_WEAK_SIGNATURES` of them together.
+    """
+    definitive = sorted(n for n, r in _DEFINITIVE_SIGNATURES.items() if r.search(text))
+    weak = sorted(n for n, r in _WEAK_SIGNATURES.items() if r.search(text))
+
+    if definitive:
+        return definitive + weak
+    if len(weak) >= _MINIMUM_WEAK_SIGNATURES:
+        return weak
+    return []
 
 
 def test_no_committed_file_outside_fixtures_looks_like_a_real_config():
     """Catches the extension holes without ignoring requirements.txt.
 
-    This is the test that would have caught the client's PF Sense export if it
-    had ever been committed -- regardless of what it was named.
+    Catches the client's PF Sense export regardless of what it was named --
+    but only since #98's review. The first version of this file made that
+    claim while a flat threshold of two silently exempted the entire PF Sense
+    format; see `test_the_detector_catches_the_clients_pfsense_format`.
     """
     offenders = {}
 
@@ -178,7 +209,7 @@ def test_no_committed_file_outside_fixtures_looks_like_a_real_config():
             continue
 
         matched = _looks_like_a_device_config(text)
-        if len(matched) >= _MINIMUM_SIGNATURES:
+        if matched:
             offenders[name] = matched
 
     assert not offenders, (
@@ -207,7 +238,8 @@ def test_the_detector_catches_a_config_planted_outside_fixtures(tmp_path: Path):
     )
 
     matched = _looks_like_a_device_config(planted)
-    assert len(matched) >= _MINIMUM_SIGNATURES, (
+    assert matched, "a real Cisco config was not detected at all"
+    assert len(matched) >= _MINIMUM_WEAK_SIGNATURES, (
         f"the detector scored a real Cisco config at only {len(matched)} "
         f"signature(s) ({matched}); it would not be caught"
     )
@@ -215,4 +247,38 @@ def test_the_detector_catches_a_config_planted_outside_fixtures(tmp_path: Path):
     # And the other half: source that merely mentions config syntax must not
     # trip it, or the guard gets switched off.
     mentions_only = 'CISCO_TEMPLATE = "hostname {name}\\n"\n'
-    assert len(_looks_like_a_device_config(mentions_only)) < _MINIMUM_SIGNATURES
+    assert not _looks_like_a_device_config(mentions_only)
+
+
+def test_the_detector_catches_the_clients_pfsense_format():
+    """The case the first version of this file got wrong -- and claimed it did not.
+
+    Found by @shubhamkataria2005 on #98. A PF Sense export trips exactly ONE
+    signature, because the other three are Cisco-specific and never match XML.
+    With a flat threshold of two, the file that would do the most real damage
+    -- the client's actual firewall, in the actual format he sends, under a
+    name `.gitignore` does not cover -- was the single case that walked
+    through. The docstring above claimed the opposite.
+
+    Measured on the real fixture before the fix:
+
+        signatures matched: ['pfsense']   count 1   threshold 2   -> NOT CAUGHT
+
+    `<pfsense>` is now definitive: one match is enough. Safe because nothing
+    legitimate contains it -- across all 67 tracked files exactly one non-.py
+    file does, and it is the fixture already exempt for living under
+    tests/fixtures/.
+    """
+    real_pfsense = (
+        REPO_ROOT / "tests" / "fixtures" / "pfsense-source" / "config.xml"
+    ).read_text(encoding="utf-8", errors="ignore")
+
+    assert _looks_like_a_device_config(real_pfsense), (
+        "the client's PF Sense format is not detected as a configuration at all"
+    )
+
+    # Specifically: ONE definitive hit is sufficient. That is the whole point
+    # of the split -- a flat threshold would still need two.
+    assert _looks_like_a_device_config("<pfsense><version>21.7</version></pfsense>") == [
+        "pfsense"
+    ]
