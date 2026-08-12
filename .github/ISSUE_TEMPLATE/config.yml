@@ -1,0 +1,21 @@
+# Blank issues stay ON deliberately.
+#
+# The two templates cover bugs and user stories. They do not cover a design
+# question, a decision that needs all four of us, or "this document disagrees
+# with the repo" -- and #87, the largest gap in the product, is none of the
+# three. Forcing those into a bug template would have made it a worse issue,
+# or an unfiled one.
+blank_issues_enabled: true
+
+contact_links:
+  - name: How to work on this project
+    url: https://github.com/ARSH871-bot/Netwise/blob/main/CONTRIBUTING.md
+    about: Branching, pull requests, merge rules, and how to add a check.
+
+  - name: The finding format (F-1)
+    url: https://github.com/ARSH871-bot/Netwise/blob/main/docs/finding-format.md
+    about: The one contract. Changing it needs all four members — read before proposing a change.
+
+  - name: What stands between Netwise and a product
+    url: https://github.com/ARSH871-bot/Netwise/blob/main/docs/design/product-roadmap.md
+    about: The ordered list of real gaps. Check here before filing — it may already be recorded.

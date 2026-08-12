@@ -1,0 +1,80 @@
+# Netwise -- bug report.
+#
+# The "What did you measure" field is the point of this template. Every
+# staleness and correctness defect this project has had came from a claim
+# that was recalled rather than re-run -- including two found inside
+# docs/design/product-roadmap.md, the document arguing for quality. A form
+# field will not fix that on its own, but it does make the omission visible
+# at the moment someone is about to make the claim.
+
+name: Bug report
+description: Something behaves differently from how it is documented or intended
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **If this touches F-4** — the `found` / `none` / `error` distinction —
+        say so plainly below and add the `safety` label. A check that reports
+        "clean" when it could not run is the failure mode this whole project is
+        built to prevent, and it is triaged ahead of everything else.
+
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+      description: The actual behaviour, not your theory about the cause yet.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should happen instead
+      description: >
+        And where that expectation comes from — CLAUDE.md, docs/finding-format.md,
+        a comment in the code, or your own judgement. "My own judgement" is a
+        fine answer; it just changes who needs to agree before it is fixed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: measured
+    attributes:
+      label: What did you measure, and when?
+      description: >
+        Paste the actual command and its actual output. Not a summary of it,
+        and not something you remember from last week.
+
+        This field exists because of a specific, repeated defect: a result
+        recalled instead of re-run. It has produced wrong claims in commit
+        messages, in CLAUDE.md, and twice inside the roadmap document itself.
+        If you have not run it, say "not measured" — that is honest and useful.
+        A confident sentence with nothing behind it is neither.
+      placeholder: |
+        $ python -m analysis.pipeline tests/fixtures/rtr-us5-messy
+        ...
+
+        Run on 12 August, main at 9988cff.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: Which commit
+      description: "`git rev-parse --short HEAD`. A bug report against an unknown tree cannot be reproduced."
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: environment
+    attributes:
+      label: Was anything external involved?
+      description: >
+        The suite deliberately needs neither. If a bug only appears with one of
+        them running, that is important and easy to forget to mention.
+      options:
+        - label: Batfish was running (Docker container `batfish`)
+        - label: Ollama was running
