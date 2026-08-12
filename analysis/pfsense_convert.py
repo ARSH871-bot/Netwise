@@ -301,6 +301,28 @@ def _is_quick(rule_el: ET.Element) -> bool:
     return rule_el.find("quick") is not None
 
 
+def _rule_interface(rule_el: ET.Element) -> Optional[str]:
+    """The role a rule's <interface> names, or None if it does not name one.
+
+    Found by adversarial QA on #78 item 2: `_text(rule_el, "interface")`
+    already strips whitespace, so a genuinely missing <interface> and a
+    present-but-whitespace-only one, `<interface> </interface>`, both end
+    up here -- but three call sites in convert() used to read `_text(...)`
+    directly and only one of them (the unassigned-rule refusal) checked for
+    `None`, not for "falsy after stripping". A whitespace-only tag slipped
+    past that refusal as `""`, then landed in `unknown_roles` instead,
+    which still correctly refused overall -- fail-closed, not a bypass --
+    but with a misleading message blaming "no static address configured"
+    for what was actually a malformed tag.
+
+    One normalisation, used everywhere a rule's interface is read, so
+    "not specified" means the same thing at every call site rather than
+    depending on which one happens to check for it.
+    """
+    role = _text(rule_el, "interface")
+    return role or None
+
+
 def _acl_name(role: str, *, rule_bearing_roles: "set[str]") -> str:
     """The Cisco ACL name bound to one interface's inbound filter (#78 item 1).
 
@@ -613,7 +635,12 @@ def convert(xml_path: Union[str, Path]) -> str:
     # gets its own ACL, built and checked independently below. Batfish/Cisco
     # still applies one ACL per interface direction; what changed is that
     # this module now builds several instead of refusing past one.
-    rule_roles = {_text(r, "interface") for r in rule_els}
+    # _rule_interface(), not _text(r, "interface") directly -- see that
+    # function's docstring. A whitespace-only <interface> tag used to read
+    # as "" here, not None, so it never counted as "no interface at all" and
+    # instead surfaced later as a bogus unknown-role refusal blaming "no
+    # static address configured" for what was really a malformed tag.
+    rule_roles = {_rule_interface(r) for r in rule_els}
     rule_roles.discard(None)
 
     # WHY A RULE SET WITH NO <interface> AT ALL IS REFUSED
@@ -634,7 +661,7 @@ def convert(xml_path: Union[str, Path]) -> str:
     # restriction this could only ever mean one thing; with several ACLs now
     # possible it genuinely is not knowable. Refuse rather than guess, same
     # discipline as everywhere else in this module.
-    unassigned = [r for r in rule_els if _text(r, "interface") is None]
+    unassigned = [r for r in rule_els if _rule_interface(r) is None]
     if unassigned:
         raise PfSenseConversionError(
             f"{len(unassigned)} filter rule(s) name no <interface> while "
@@ -655,7 +682,7 @@ def convert(xml_path: Union[str, Path]) -> str:
     # across interfaces, since no real firewall ever compares them that way.
     rules_by_role: Dict[str, List[ET.Element]] = {role: [] for role in rule_roles}
     for r in rule_els:
-        rules_by_role[_text(r, "interface")].append(r)
+        rules_by_role[_rule_interface(r)].append(r)
 
     # Each interface's rule-order ambiguity is checked against only ITS OWN
     # rules (#47/#58's guard, now run once per ACL instead of once globally).

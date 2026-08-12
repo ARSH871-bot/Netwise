@@ -451,6 +451,36 @@ def test_a_rule_naming_no_interface_alongside_others_that_do_raises():
         _convert_string(xml_text)
 
 
+def test_a_whitespace_only_interface_gets_the_right_refusal_message():
+    """Found by adversarial QA on #78 item 2, not anticipated up front.
+
+    <interface> </interface> -- present, but blank once stripped -- used to
+    read as "" rather than None, so it slipped past the unassigned-rule
+    refusal above and was instead reported as an unknown interface role,
+    blaming "no static address configured" for what was actually a
+    malformed tag. Still refused either way (fail-closed, never a bypass),
+    but the wrong diagnosis, which matters when someone is actually trying
+    to debug a real client export."""
+    xml_text = _minimal_xml(
+        rules_xml="""
+            <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+            <rule><type>block</type><interface> </interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+        """,
+    )
+    with pytest.raises(PfSenseConversionError) as excinfo:
+        _convert_string(xml_text)
+    message = str(excinfo.value)
+    assert "no <interface>" in message, (
+        "a blank <interface> tag must be diagnosed as naming no interface, "
+        f"not as an unknown one. Got: {message!r}"
+    )
+    assert "static address" not in message, (
+        f"wrong diagnosis -- this is a malformed tag, not a missing address. Got: {message!r}"
+    )
+
+
 # --- Rule order is preserved -----------------------------------------------------
 
 
