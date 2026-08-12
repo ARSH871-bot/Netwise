@@ -41,34 +41,65 @@ invents network behaviour.
 
 ## Status
 
-🚧 **In development — Sprint 3** (6–12 August 2026).
-
-| Layer | State |
-|---|---|
-| Batfish analysis engine | Running; core questions validated |
-| Backend analysis pipeline | **Built** — loads configs, runs checks, returns structured findings |
-| Access-control analysis | **Built** — four analyses |
-| Policy-compliance analysis | **Built** |
-| Routing analysis | **Built** |
-| AI explanation layer | **Built** — explains a finding in plain English, and degrades to safe fixed text rather than failing when the model is unavailable |
-| AI explanation on screen | **Built** — findings arrive with their explanation attached |
-| Web dashboard + upload | **Built** — upload a config, get real findings |
-| PF Sense conversion | **Built** — interfaces and filter rules, and it refuses rather than guesses on anything it cannot translate faithfully |
-| Risk prioritisation | **Built** — findings are rated by a written ruleset and sorted worst-first |
-| Answering typed questions | **Backend built** — ask in plain English, get a grounded answer; the chat pane is not wired up yet |
-| Change-impact analysis | Not started |
-
-**Upload a config and you get real findings, explained in plain English.** All
-five analysis features are joined end to end; what remains is new features
+🚧 **In development.** The product runs end to end: upload a config, click
+**Scan Now**, and real findings appear with plain-English explanations, sorted
+worst-first. All five analysis features are joined; what remains is features
 rather than plumbing.
 
-Sprint records: [`docs/sprint1/SPRINT1.md`](docs/sprint1/SPRINT1.md),
-[`docs/sprint2/SPRINT2.md`](docs/sprint2/SPRINT2.md).
+**The per-feature breakdown lives in [`CLAUDE.md`](CLAUDE.md) §11 and nowhere
+else.** It used to be duplicated here, and this copy went stale — it still
+described uploading as the thing that runs the analysis, months after #82
+separated staging a file from scanning it. Every staleness bug this project has
+had came from one fact living in two places with only one copy updated, so the
+second copy is gone rather than merely corrected.
+
+For what is *not* built and in what order, see
+[`docs/design/product-roadmap.md`](docs/design/product-roadmap.md).
+
+## What Netwise cannot do yet
+
+Stated here rather than buried, because the headline above is easy to read as a
+larger claim than it is.
+
+**The security policy is currently ours, not yours.** Two of the three analyses
+check assertions written against this project's own test fixtures — that a
+particular device denies a particular flow, and so on. There is **no way to
+supply your own policy**: no file format, no loader, no interface. Measured, on
+one config with only the device name changed:
+
+```
+our device name      6 findings   access-control + policy-compliance
+a stranger's name    3 findings   access-control only
+```
+
+So on a network that is not ours, Netwise reports **dead ACL rules** and
+**references to structures that do not exist** — both genuinely useful, and
+both a long way short of the description at the top of this file. Everything
+else says, honestly, "could not check". Tracked as
+[#87](https://github.com/ARSH871-bot/Netwise/issues/87); it is the single
+largest gap in the product.
+
+**Two further limits worth knowing before you try it:**
+
+- **PF Sense configs may be refused.** The converter handles interfaces and
+  filter rules for a single-interface rule set, and **refuses rather than
+  guesses** on NAT, aliases, VPN, IPv6, multi-interface rule sets, and rule
+  orderings where PF Sense's last-match-wins would disagree with the Cisco ACL
+  it produces. A real client export hit three of those.
+- **Nothing has been verified against a real production network.** Every
+  published result is on synthetic configs we wrote, which is a much weaker
+  claim than it sounds — see [`docs/evaluation.md`](docs/evaluation.md), whose
+  second half is about exactly this.
+
+Sprint records live in [`docs/`](docs/): [Sprint
+1](docs/sprint1/SPRINT1.md), [Sprint 2](docs/sprint2/SPRINT2.md), [Sprint
+3](docs/sprint3/SPRINT3.md).
 
 ## Requirements
 
 - Docker (for the Batfish container)
-- Python 3.11+
+- Python **3.12 or 3.13** — the two versions CI actually runs. Earlier versions
+  may work and are untested, which is not the same thing.
 - Ollama, for the local LLM that writes the plain-English explanations. Build
   the model once with `ollama create netwise-warden -f ai/Modelfile`. Only the
   explanation layer needs it — the analysis pipeline and the test suite both
@@ -105,6 +136,12 @@ uvicorn web.main:app --reload
 ```
 
 Then open <http://127.0.0.1:8000>. API documentation is at `/docs`.
+
+Upload a config, then click **Scan Now**. Those are two steps on purpose:
+uploading only *stages* the file, so a file that is merely present is never
+mistaken for one that has been checked, and any previous findings are cleared
+the moment you upload rather than left sitting under a fresh success message
+describing a different network.
 
 **5. Run the tests** (these need neither Batfish nor Docker):
 
