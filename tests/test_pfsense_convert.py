@@ -303,19 +303,119 @@ def test_unresolvable_network_reference_raises():
 # --- Rules spanning more than one interface --------------------------------------
 
 
-def test_rules_on_two_different_interfaces_raises():
-    """Batfish/Cisco needs one ACL per interface direction. Merging rules
-    from two interfaces into a single ACL would silently change what the
-    config means, so this is refused rather than attempted."""
+# --- Multi-interface rule sets (#78 item 1) -------------------------------------
+
+_TWO_INTERFACES = """
+    <wan><if>em0</if><ipaddr>1.2.3.1</ipaddr><subnet>30</subnet></wan>
+    <lan><if>em1</if><ipaddr>10.0.0.1</ipaddr><subnet>24</subnet></lan>
+"""
+
+
+def test_rules_on_two_different_interfaces_each_get_their_own_acl():
+    """The client's real export needs this -- rules across several
+    interfaces, each converting to its own ACL rather than being merged or
+    refused."""
     xml_text = _minimal_xml(
-        interfaces_xml="""
-            <wan><if>em0</if><ipaddr>1.2.3.1</ipaddr><subnet>30</subnet></wan>
-            <lan><if>em1</if><ipaddr>10.0.0.1</ipaddr><subnet>24</subnet></lan>
-        """,
+        interfaces_xml=_TWO_INTERFACES,
         rules_xml="""
             <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
             <source><any/></source><destination><any/></destination></rule>
+            <rule><type>block</type><interface>wan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+        """,
+    )
+    output = _convert_string(xml_text)
+    assert "ip access-list extended acl_lan_in" in output
+    assert "ip access-list extended acl_wan_in" in output
+    assert "ip access-group acl_lan_in in" in output
+    assert "ip access-group acl_wan_in in" in output
+    # Each ACL carries only its own interface's rule, not the other's.
+    lan_block = output.split("ip access-list extended acl_lan_in")[1].split("!")[0]
+    wan_block = output.split("ip access-list extended acl_wan_in")[1].split("!")[0]
+    assert "permit tcp any any" in lan_block
+    assert "deny tcp any any" in wan_block
+    assert "deny tcp any any" not in lan_block
+    assert "permit tcp any any" not in wan_block
+
+
+def test_a_single_interface_with_rules_still_uses_the_plain_acl_name():
+    """The common case, and the only one hand-verified against
+    tests/fixtures/rtr-us5-secure, must convert identically to before #78:
+    no role suffix nobody asked for."""
+    output = _convert_string(_minimal_xml(rules_xml=_ONE_BENIGN_LAN_RULE))
+    assert "ip access-list extended acl_in" in output
+    assert "ip access-list extended acl_lan_in" not in output
+
+
+def test_an_interface_with_an_address_but_no_rules_gets_a_deny_all():
+    """PF Sense fails CLOSED with no rules configured on an interface. Left
+    unbound, Cisco/Batfish would read that interface as unfiltered -- the
+    exact inversion the empty-<filter> refusal already exists to prevent for
+    the whole file, reachable here per-interface instead."""
+    xml_text = _minimal_xml(
+        interfaces_xml=_TWO_INTERFACES,
+        rules_xml="""
+            <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+        """,
+    )
+    output = _convert_string(xml_text)
+    assert "ip access-group acl_wan_in in" in output
+    wan_block = output.split("ip access-list extended acl_wan_in")[1].split("!")[0]
+    assert "deny ip any any" in wan_block
+
+
+def test_a_pair_that_would_be_ambiguous_on_one_acl_is_fine_on_two():
+    """The false positive this scoping exists to prevent. A block on wan
+    followed by an unrelated, broader, non-quick permit on lan is exactly
+    the shape #47/#58 flags WITHIN one ACL -- different actions, the earlier
+    one not quick, overlapping traffic. Compared globally this pair would
+    wrongly refuse a config with nothing wrong in it, because a rule on wan
+    and a rule on lan are never evaluated against the same traffic by any
+    real firewall."""
+    xml_text = _minimal_xml(
+        interfaces_xml=_TWO_INTERFACES,
+        rules_xml="""
+            <rule><type>block</type><interface>wan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+            <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+        """,
+    )
+    output = _convert_string(xml_text)
+    assert "permit tcp any any" in output
+    assert "deny tcp any any" in output
+
+
+def test_genuine_ambiguity_on_one_interface_still_raises_amid_several():
+    """The other half: scoping must not accidentally hide a real problem by
+    only checking the whole file at once. wan's own two rules are genuinely
+    ambiguous; lan being clean must not mask that."""
+    xml_text = _minimal_xml(
+        interfaces_xml=_TWO_INTERFACES,
+        rules_xml="""
+            <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+            <rule><type>block</type><interface>wan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
             <rule><type>pass</type><interface>wan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+        """,
+    )
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
+def test_a_rule_naming_no_interface_alongside_others_that_do_raises():
+    """Ambiguous under multi-interface in a way it never was under
+    single-interface: which ACL would an interface-less rule join, when more
+    than one now exists? Refuse rather than guess."""
+    xml_text = _minimal_xml(
+        interfaces_xml=_TWO_INTERFACES,
+        rules_xml="""
+            <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+            <rule><type>block</type><protocol>tcp</protocol>
             <source><any/></source><destination><any/></destination></rule>
         """,
     )
