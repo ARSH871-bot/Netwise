@@ -183,6 +183,41 @@ def test_the_fix_comes_before_the_stack_trace(monkeypatch):
     )
 
 
+def test_the_message_covers_docker_itself_being_down(monkeypatch):
+    """The regression @shubhamkataria2005 hit before this PR was written.
+
+    The first version of the message asserted `docker start batfish` as THE
+    fix. He was in the case that does not cover -- Docker Desktop itself not
+    running -- where the command fails with a daemon socket error mentioning
+    nothing about Batfish:
+
+        failed to connect to the docker API at unix:///...docker.sock;
+        check if the path is correct and if the daemon is running
+
+    Someone following the message lands on a second error, having been told
+    confidently that this was the fix. The wording it replaced ("Is Docker
+    running, and the batfish container started?") covered that case only by
+    being vague enough to send nobody anywhere; the gain in directness lost it.
+
+    @SamikaPerera pointed out this made things slightly worse rather than
+    merely no better: the probe cuts 21s to 4s, so it is *faster* delivery of
+    a dead end. It also has to do double duty, because `_require_port_open`
+    deliberately raises the same ConnectionError type as a genuine pybatfish
+    failure -- so this clause covers every unreachable case, not just a
+    stopped daemon.
+    """
+    detail = _findings_with_batfish_down(monkeypatch)[0]["evidence"]["detail"]
+
+    assert "Docker daemon" in detail
+    assert "Docker Desktop" in detail
+
+    # Order again: the recovery sequence has to read start-container-then-
+    # escalate. Naming the daemon *after* the raw error would be the same bug
+    # in a new place.
+    assert detail.index("docker start batfish") < detail.index("Docker daemon")
+    assert detail.index("Docker daemon") < detail.index("Max retries exceeded")
+
+
 def test_the_raw_error_is_still_there(monkeypatch):
     """Kept deliberately: it is what separates a stopped container from a
     wrong host. Moving it later must not become dropping it."""

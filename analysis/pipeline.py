@@ -261,10 +261,22 @@ def analyse(
             # where anybody reads. The raw text is still here -- it is what
             # distinguishes a stopped container from a wrong host -- just after
             # the fix rather than in front of it.
+            # The "if that reports..." clause is not padding. The first version
+            # of this message asserted `docker start batfish` as THE fix.
+            # Shubham hit the case it does not cover -- Docker Desktop itself
+            # not running -- where that command fails with a daemon socket
+            # error mentioning nothing about Batfish, having just been told
+            # confidently that it was the answer. The old wording ("Is Docker
+            # running, and the batfish container started?") covered it only by
+            # being vague enough to send nobody anywhere; the gain in
+            # directness lost that. One clause turns a dead end into a
+            # sequence, and keeps the instruction first.
             detail=(
                 f"Batfish is not answering at {host}. Start it with: "
-                "docker start batfish   (or, the first time: docker run --name "
-                "batfish -d -p 9996:9996 -p 9997:9997 batfish/allinone). "
+                "docker start batfish   -- if that reports it cannot reach the "
+                "Docker daemon, start Docker Desktop first, then run it again. "
+                "(First time only: docker run --name batfish -d -p 9996:9996 "
+                "-p 9997:9997 batfish/allinone.) "
                 f"Underlying error: {findings.describe_error(error)}"
             ),
             source=str(config_dir),
