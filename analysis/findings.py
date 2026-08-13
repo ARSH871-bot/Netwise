@@ -47,13 +47,15 @@ VALID_CHECKS = (
     "risk",  # Samika
 )
 
-# The ID prefix each check uses. Note policy_compliance and change_impact share
-# "PC" -- that is what the format document specifies (policy/change).
+# The ID prefix each check uses. ONE PREFIX PER CHECK, never shared -- see
+# docs/finding-format.md, amendment A-2. policy_compliance and change_impact
+# both mapped to "PC" until then, which made `id` uniqueness a matter of
+# discipline between two documents rather than something the contract enforced.
 PREFIX_BY_CHECK = {
     "access_control": "AC",
     "routing": "RT",
     "policy_compliance": "PC",
-    "change_impact": "PC",
+    "change_impact": "CH",
     "risk": "RK",
 }
 
@@ -169,18 +171,19 @@ def no_issues_finding(
     check genuinely completed. If anything stopped it running, use
     error_finding() instead -- see F-4.
 
-    `number` defaults to the 000 sentinel, which is right for every check that
-    owns its ID prefix outright. It exists because two checks do NOT:
-    policy_compliance and change_impact both map to "PC" (see PREFIX_BY_CHECK),
-    so if both used 000 for "all clear" they would emit the same `id`. The
-    agreed split is policy_compliance 000-099 and change_impact 100-199, so
-    change_impact passes number=100 here. Documented in docs/policy-rules.md.
+    `number` defaults to the 000 sentinel, which is right for every check.
 
-    That convention is enforced by discipline, not by this function -- and it
-    does not cover real findings at all, since make_finding() takes `number` as
-    a required argument. analysis.pipeline.duplicate_id_findings() is the
-    backstop that catches what slips through, and a distinct prefix for
-    change_impact is the real fix (needs all four of us).
+    It was added on #18 for a narrower reason: policy_compliance and
+    change_impact then shared the "PC" prefix, so both emitting 000 for "all
+    clear" produced the same `id`, and change_impact needed a different one.
+    Amendment A-2 gave change_impact its own prefix, so that reason is gone and
+    every check may now use the default.
+
+    The parameter stays because it is still useful -- a check that produces
+    more than one kind of check-level finding needs to number them apart, which
+    is what policy_compliance does with PC-000 and PC-050. Uniqueness WITHIN a
+    check is still not enforced by this function, so
+    analysis.pipeline.duplicate_id_findings() remains the backstop.
     """
     return make_finding(
         check=check,

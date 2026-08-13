@@ -47,8 +47,11 @@ WHY AN EMPTY ANSWER IS SAFE TO TRUST
     never a quiet pass.
 
 FINDING IDS (agreed -- see docs/policy-rules.md §4)
-    policy_compliance owns PC-000..PC-099; change_impact owns PC-100..PC-199,
-    because findings.py maps BOTH checks to the "PC" prefix.
+    policy_compliance owns the PC- prefix outright. It shared it with
+    change_impact until amendment A-2 (docs/finding-format.md), which gave
+    change_impact its own CH- prefix -- so the two checks can no longer collide
+    with each other at all. The banding below is about keeping THIS check's own
+    findings apart.
 
     IDs are pinned to RULES, not to the order violations happen to be found:
     POL-1 is always PC-001, POL-2 always PC-002. So a given id means the same

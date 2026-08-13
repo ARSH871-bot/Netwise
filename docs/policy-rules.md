@@ -312,12 +312,13 @@ consistently with POL-4.
 
 Agreed with Arsh, and requiring no change to `docs/finding-format.md`:
 
-- `analysis/findings.py` maps **both** `policy_compliance` and `change_impact` to
-  the `PC` prefix, exactly as the finding format specifies. Left unmanaged, both
-  checks would number from 001 and emit duplicate `id` values — and the
-  dashboard uses `id` as a key.
-- **`policy_compliance` uses `PC-001`–`PC-099`. `change_impact` uses
-  `PC-101`–`PC-199`.**
+- **`policy_compliance` owns the `PC-` prefix outright.** It used to share it
+  with `change_impact`, which is why the bands below were split; amendment
+  **A-2** in `docs/finding-format.md` gave `change_impact` its own `CH-`
+  prefix, so the two can no longer collide with each other at all.
+- The banding is kept anyway, because it does useful work *within* this check:
+  it keeps a rule's violation, its partial-check error, and the check-level
+  cards from ever landing on the same number.
 - **IDs are pinned to rules, not to run order.** POL-1 is always `PC-001`,
   POL-2 always `PC-002`, and so on. A finding's `id` therefore means the same
   thing on every run, which is what will later let the dashboard show what
@@ -356,8 +357,9 @@ violated *and* partly unchecked yields **`PC-002` and `PC-052`**.
 This keeps the pinning promise intact in both directions: `PC-002` always means
 "POL-2 is violated" and `PC-052` always means "POL-2 could not be fully
 checked", on every run. The offset caps the policy at 49 rules, which is far
-more than the five we have, and a test asserts the band can never reach
-`PC-100`, which `change_impact` owns.
+more than the five we have, and a test asserts the two bands cannot overlap and
+stay clear of `PC-999`, which `pipeline.duplicate_id_findings()` uses for its
+own complaint.
 
 ### Sentinel IDs — agreed fix
 
@@ -368,9 +370,13 @@ no `number` argument, so a clean `policy_compliance` run and a clean
 level down. `error_finding()` is unaffected: it already accepts `number`.
 
 **Agreed fix (Arsh):** give `no_issues_finding()` an optional
-`number: int = SENTINEL_NUMBER` parameter, so `change_impact` can use `PC-100`
-as its clean sentinel while `policy_compliance` keeps `PC-000`. Backward
-compatible, and it does not touch the F-1 contract.
+`number: int = SENTINEL_NUMBER` parameter, so `change_impact` could use
+`PC-100` as its clean sentinel while `policy_compliance` kept `PC-000`.
+Backward compatible, and it did not touch the F-1 contract.
+
+**Superseded by A-2.** `change_impact` now owns `CH-`, so it uses `CH-000` for
+its own clean sentinel and the reservation of `PC-100`–`PC-199` is retired.
+The `number` parameter stays — `policy_compliance` uses it for `PC-050`.
 
 `findings.py` is shared code. The edit is made on `feat/us17-policy-check` and
 **must be called out explicitly in the pull request description** so the
@@ -464,9 +470,11 @@ reference snapshot supplied to `answer()`, and the registry contract is
 `run(bf: Session)` with exactly one snapshot loaded, so it does not fit the
 pattern. Arsh is taking the detailed shape to the team.
 
-Recorded here only because §4 reserves `PC-101`–`PC-199` for change impact —
-that reservation still stands, and the ID scheme is unaffected by where the code
-lives. **Do not attempt to register change impact in `CHECKS`.**
+Recorded here because §4 used to reserve `PC-101`–`PC-199` for change impact.
+Amendment **A-2** replaced that reservation with a prefix of its own, `CH-`, so
+`PC-` is now `policy_compliance`'s alone. The ID scheme is unaffected by where
+the change-impact code lives. **Do not attempt to register change impact in
+`CHECKS`.**
 
 **Dropped:** POL-6 ("DNS may only go to the approved resolver"). Its flow space
 is fully covered once POL-2 spans all protocols — POL-1 catches DNS to an
