@@ -55,7 +55,7 @@ jobs:
         # Since they are what stops a refusal rendering as a confident answer,
         # depending on an incidental property of the runner image is the wrong
         # trade. This makes it explicit.
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "20"
 
