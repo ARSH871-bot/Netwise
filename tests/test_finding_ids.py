@@ -17,7 +17,10 @@ These tests need neither Batfish nor Docker: they exercise the guard directly
 with hand-built finding lists, so they run in milliseconds.
 """
 
+import pytest
+
 from analysis import findings
+from analysis import pipeline
 from analysis.pipeline import duplicate_id_findings
 
 
@@ -381,3 +384,133 @@ def test_a_post_processor_may_add_findings(monkeypatch):
     monkeypatch.setattr(pipeline, "POST_PROCESSORS", {"risk": annotate})
     out = pipeline.run_post_processors(_mixed_results())
     assert any(f["id"] == "RK-001" for f in out)
+
+
+# --- A post-processor registry key must be a valid F-1 check name (#75) ---------
+#
+# Both failure paths in run_post_processors() report a misbehaving
+# post-processor with check=<registry key>, and F-1 rejects any check outside
+# VALID_CHECKS. So the key is silently load-bearing. Found by Shubham while
+# verifying the two guarantees before signing A-1.
+#
+# Latent today -- `risk` happens to be a valid check name -- but it failed in
+# the worst possible place: while REPORTING that something else had gone
+# wrong, out of an entry point documented never to raise operationally.
+
+
+def test_a_valid_registry_key_still_works(monkeypatch):
+    """The normal case must be untouched."""
+    monkeypatch.setattr(pipeline, "POST_PROCESSORS", {"risk": lambda r: r})
+    results = [a_finding("access_control", 1, "found")]
+    assert [f["id"] for f in pipeline.run_post_processors(results)] == ["AC-001"]
+
+
+def test_an_unregistered_key_fails_before_anything_runs(monkeypatch):
+    """Not after, and not while reporting another failure.
+
+    The post-processor here would raise if it were ever called. It must not
+    be -- the names are checked first, so the failure is deterministic and
+    happens at the same point every time rather than only on the error path.
+    """
+    def must_not_run(results):
+        raise AssertionError("a post-processor ran before its name was checked")
+
+    monkeypatch.setattr(pipeline, "POST_PROCESSORS", {"evil": must_not_run})
+    with pytest.raises(ValueError) as caught:
+        pipeline.run_post_processors([a_finding("access_control", 1, "found")])
+
+    message = str(caught.value)
+    assert "evil" in message, "name the offending key"
+    assert "risk" in message, "and list what would have been valid"
+
+
+def test_a_bad_key_is_caught_even_when_batfish_is_down(monkeypatch):
+    """The guarantee was conditional on the container being up.
+
+    `analyse()`'s docstring calls an invalid registry key a programming
+    mistake that "fails loudly and immediately". It did not. The check lived
+    only inside `run_post_processors()`, which `analyse()` reaches at the very
+    end -- so with Batfish unreachable, `analyse()` returned early via
+    `_every_check_failed()` and the bad key was **never detected at all**.
+
+    Found by verifying the docstring rather than reading it, while the Batfish
+    container happened to be OOM-killed (`Exited (137)`, the third time this
+    week). A registration bug could therefore sit undiscovered on a machine
+    where Batfish was down and surface first on someone else's -- the worst
+    place for a programming error to appear, and precisely the "works on my
+    machine" shape #84 was about.
+
+    `analyse()` now validates both registries before it connects.
+    """
+    def unreachable(*args, **kwargs):
+        raise ConnectionError("Batfish is not running")
+
+    monkeypatch.setattr(pipeline, "connect", unreachable)
+    monkeypatch.setattr(pipeline, "POST_PROCESSORS", {"evil": lambda r: r})
+
+    with pytest.raises(ValueError) as caught:
+        pipeline.analyse("tests/fixtures/rtr-us5-messy")
+
+    assert "POST_PROCESSORS keys" in str(caught.value), (
+        "a registration mistake must not be masked by Batfish being down"
+    )
+
+
+def test_the_error_path_no_longer_depends_on_the_key_being_valid(monkeypatch):
+    """The original bug: a dropped finding triggers the restore path, which
+    builds a finding with check=<key> and raised on an unregistered name --
+    turning a contained fault into an uncaught ValueError from analyse()."""
+    def drops_a_finding(results):
+        return [f for f in results if f["id"] != "AC-002"]
+
+    monkeypatch.setattr(pipeline, "POST_PROCESSORS", {"evil": drops_a_finding})
+    with pytest.raises(ValueError) as caught:
+        pipeline.run_post_processors(
+            [a_finding("access_control", 1, "error"), a_finding("access_control", 2, "found")]
+        )
+    assert "POST_PROCESSORS keys" in str(caught.value), (
+        "must fail on the registry name, not deep inside make_finding()"
+    )
+
+
+# --- The enforcement path cannot take down the run it protects (#75, part two) --
+#
+# Found by Samika reviewing part one. Rejecting a bad registry NAME was only
+# half of it: a post-processor with a VALID name can still return a malformed
+# shape, and _restore_protected_findings() reads f["id"] on whatever came back.
+#
+# Left outside the try, that KeyError escaped run_post_processors() and out of
+# analyse() -- the entry point the web layer calls, and the one function
+# documented never to raise for an operational failure. Because `risk` runs in
+# this stage, an escape does not spoil one finding; it takes down findings
+# delivery for the whole dashboard.
+
+
+@pytest.mark.parametrize(
+    "bad_return, label",
+    [
+        ([{"no_id_key": True}], "a list of dicts with no id"),
+        (None, "None"),
+        ("nonsense", "a string"),
+    ],
+)
+def test_a_malformed_post_processor_return_becomes_a_finding(bad_return, label, monkeypatch):
+    monkeypatch.setattr(pipeline, "POST_PROCESSORS", {"risk": lambda r: bad_return})
+    original = [a_finding("access_control", 1, "error"),
+                a_finding("access_control", 2, "found")]
+
+    results = pipeline.run_post_processors([dict(f) for f in original])
+
+    ids = {f["id"] for f in results}
+    assert {"AC-001", "AC-002"} <= ids, f"the originals must survive ({label})"
+    assert any(f["status"] == "error" and f["check"] == "risk" for f in results), (
+        "the failure must be reported, not swallowed"
+    )
+
+
+def test_a_well_behaved_post_processor_is_unaffected(monkeypatch):
+    """The containment must not add a finding on the happy path."""
+    monkeypatch.setattr(pipeline, "POST_PROCESSORS", {"risk": lambda r: r})
+    original = [a_finding("access_control", 1, "found")]
+    results = pipeline.run_post_processors([dict(f) for f in original])
+    assert [f["id"] for f in results] == ["AC-001"]

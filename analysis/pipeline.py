@@ -184,9 +184,18 @@ def analyse(
         check_names: which checks to run; None means all registered ones
 
     Raises:
-        ValueError: if you ask for a check that is not registered. That is a
-            programming mistake, not a runtime condition, so it fails loudly
-            and immediately rather than being reported as a finding.
+        ValueError: for either of two registration mistakes, both of which are
+            programming errors rather than runtime conditions, so they fail
+            loudly and immediately rather than being reported as findings:
+
+            1. you asked for a check that is not registered in `CHECKS`;
+            2. a key in `POST_PROCESSORS` is not a valid F-1 check name (#75).
+
+            Both are checked before connecting, so neither depends on Batfish
+            being reachable. The second is listed here because this docstring
+            is how the rest of the team learned the contract, and a caller
+            reading it would otherwise know only one of the two ways this
+            function can raise -- noted by Shubham on #76.
     """
     config_dir = Path(config_dir)
     names = list(check_names) if check_names is not None else list(CHECKS)
@@ -197,6 +206,18 @@ def analyse(
             f"Unknown check(s): {', '.join(unknown)}. "
             f"Registered checks are: {', '.join(CHECKS)}"
         )
+
+    # Both registration mistakes are now caught in the same place, before any
+    # work starts. run_post_processors() checks this too, for anyone calling it
+    # directly -- but relying on that alone made the guarantee conditional on
+    # Batfish being up, which is the opposite of what this docstring promised.
+    #
+    # Found by verifying the claim rather than reading it: with the container
+    # OOM-killed, analyse() returned early via _every_check_failed() and an
+    # invalid POST_PROCESSORS key was never detected at all. A registration bug
+    # could therefore sit undiscovered on a machine where Batfish happened to
+    # be down, and surface for the first time on someone else's.
+    _check_registry_names()
 
     # --- Connect ------------------------------------------------------------
     try:
@@ -287,6 +308,24 @@ POST_PROCESSORS = {
 _SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
 
 
+
+def _check_registry_names() -> None:
+    """Fail fast if a POST_PROCESSORS key is not a valid F-1 check name.
+
+    See run_post_processors()'s docstring for why this matters (#75). Raised
+    rather than reported, deliberately: this can only be wrong because someone
+    registered a post-processor under a name F-1 does not know, which is a bug
+    to fix at development time, not a condition to tell a user about.
+    """
+    unknown = sorted(set(POST_PROCESSORS) - set(findings.VALID_CHECKS))
+    if unknown:
+        raise ValueError(
+            "POST_PROCESSORS keys must also be valid F-1 check names, because "
+            "a violation is reported with check=<key>. Unknown: "
+            f"{', '.join(unknown)}. Valid: {', '.join(sorted(findings.VALID_CHECKS))}."
+        )
+
+
 def run_post_processors(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Run each post-processor over the combined findings, enforcing F-4.
 
@@ -309,7 +348,33 @@ def run_post_processors(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     A violation is not silently corrected. The original finding is restored AND
     an error finding is added saying what was attempted, because a
     post-processor trying to bury a blind spot is itself worth seeing.
+    A REGISTRY KEY MUST ALSO BE A VALID F-1 CHECK NAME (#75)
+        Both failure paths below report a misbehaving post-processor by
+        building a finding with `check=name` -- the registry key. F-1 rejects
+        any `check` outside `findings.VALID_CHECKS`, so the key is silently
+        load-bearing.
+
+        Found by Shubham while verifying the two guarantees before signing
+        A-1. It is latent today, because `risk` is the only post-processor and
+        happens to be a valid check name -- the invariant holds by coincidence
+        of naming, which is not a guarantee.
+
+        Left alone it fails in the worst possible place: the error paths.
+        `_restore_protected_findings()` is called OUTSIDE the try, and
+        `analyse()` does not wrap this function, so an unregistered key turns
+        a contained, reportable fault into an uncaught ValueError out of the
+        entry point the web layer calls -- breaking `analyse()`'s own promise
+        that it never raises for an operational failure.
+
+        So the names are checked ONCE, up front, before any post-processor
+        runs. This is a programming error at registration, not a runtime
+        condition, so it fails loudly and immediately rather than becoming a
+        finding: turning it into a finding would hide a bug rather than
+        surface one. The point is that it can no longer happen *while*
+        reporting something else going wrong.
     """
+    _check_registry_names()
+
     for name, refine in POST_PROCESSORS.items():
         before = {f["id"]: f for f in results}
 
@@ -328,7 +393,27 @@ def run_post_processors(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             ]
             continue
 
-        results, complaints = _restore_protected_findings(name, before, refined)
+        # Inside the try's blast radius by design (#75, second half — found by
+        # Samika reviewing the first). A post-processor with a VALID name can
+        # still return a malformed shape, and this call reads f["id"] on
+        # whatever it returned. Left outside, a KeyError escaped
+        # run_post_processors() and out of analyse() — the entry point the web
+        # layer calls, and the one function documented never to raise for an
+        # operational failure. Because `risk` runs in this stage, an escape
+        # here does not spoil one finding, it takes down findings delivery for
+        # the whole dashboard.
+        try:
+            results, complaints = _restore_protected_findings(name, before, refined)
+        except Exception as error:
+            results = results + [
+                findings.error_finding(
+                    check=name,
+                    summary=f"The {name.replace('_', ' ')} stage returned something unusable",
+                    detail=findings.describe_error(error),
+                    source=f"analysis/checks/{name}.py",
+                )
+            ]
+            continue
         results.extend(complaints)
 
     return results
