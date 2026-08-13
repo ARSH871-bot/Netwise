@@ -44,7 +44,7 @@ jobs:
         python-version: ["3.12", "3.13"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node
         # tests/test_chat_rendering.py drives the real web/static/app.js through
