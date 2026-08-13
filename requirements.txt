@@ -23,7 +23,7 @@ ollama>=0.6.2
 # --- Layer 3: Web interface ------------------------------------------------
 # Chosen over Flask for the auto-generated API docs at /docs (useful evidence
 # in a review) and native async, which the streaming chat pane will need.
-fastapi>=0.110
+fastapi>=0.141.1
 uvicorn[standard]>=0.52.1
 
 # FastAPI needs this to parse multipart form data -- i.e. file uploads. Without
