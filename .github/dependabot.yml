@@ -1,0 +1,36 @@
+# Netwise dependency updates.
+#
+# WHY THIS MATTERS HERE SPECIFICALLY
+#   This is a security tool. A vulnerable dependency in something that reads
+#   firewall configurations is worse than the same vulnerability elsewhere,
+#   because of what it is trusted to look at.
+#
+#   243 packages are installed in a working environment. Nobody is tracking
+#   advisories for those by hand, and pretending otherwise is the same class
+#   of claim this project keeps refusing to make.
+#
+# WEEKLY, NOT DAILY
+#   A daily cadence on a four-person student team produces noise that gets
+#   ignored, and an ignored security alert is worse than none -- it looks
+#   like coverage. Weekly is small enough to actually read.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    # Batch the noisy ones so a patch bump does not cost a review slot.
+    groups:
+      dev-and-tooling:
+        patterns: ["pytest*", "ruff*", "playwright*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"

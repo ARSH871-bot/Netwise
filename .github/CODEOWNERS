@@ -1,0 +1,34 @@
+# Netwise code ownership.
+#
+# This encodes the vertical slices already described in CLAUDE.md section 10,
+# so GitHub requests the right reviewer automatically instead of relying on
+# whoever opens the PR remembering.
+#
+# It is a routing hint, NOT a gate -- branch protection is unavailable on a
+# private repo without GitHub Pro (CONTRIBUTING section 6), so this cannot
+# enforce anything. It makes the right review likelier, which is all it claims.
+
+# Anything not matched below: the SCRUM master sees it.
+*                               @ARSH871-bot
+
+# The shared contract and the backbone. F-1 needs ALL FOUR to change --
+# see docs/finding-format.md's amendment record, which this cannot enforce.
+/docs/finding-format.md         @ARSH871-bot @patelankeet2 @shubhamkataria2005 @SamikaPerera
+/analysis/findings.py           @ARSH871-bot
+/analysis/pipeline.py           @ARSH871-bot
+/analysis/checks/access_control.py  @ARSH871-bot
+
+# Ankeet -- routing, the AI layer, PF Sense conversion
+/analysis/checks/routing.py     @patelankeet2
+/ai/                            @patelankeet2
+/analysis/pfsense_convert.py    @patelankeet2
+/tools/pfsense_shape.py         @patelankeet2 @ARSH871-bot
+
+# Shubham -- policy compliance and change impact
+/analysis/checks/policy_compliance.py  @shubhamkataria2005
+/docs/policy-rules.md           @shubhamkataria2005
+
+# Samika -- risk, and everything the user actually sees
+/analysis/checks/risk.py        @SamikaPerera
+/docs/severity-rules.md         @SamikaPerera
+/web/                           @SamikaPerera

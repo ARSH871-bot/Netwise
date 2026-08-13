@@ -18,7 +18,7 @@ These need neither Batfish nor Docker.
 
 import pytest
 
-from analysis import findings, snapshot
+from analysis import snapshot
 from analysis.checks import access_control, policy_compliance, routing
 
 

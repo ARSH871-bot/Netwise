@@ -17,7 +17,6 @@ RUN
 """
 
 import tempfile
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -27,8 +26,28 @@ from analysis.pfsense_convert import PfSenseConversionError, convert, write_snap
 FIXTURE = "tests/fixtures/pfsense-source/config.xml"
 
 
+# A benign, single rule on "lan", and the DEFAULT rule set for _minimal_xml().
+#
+# convert() refuses an empty <filter> entirely (#54), so a config with no rules
+# is not "minimal" -- it is invalid, and it raises before reaching whatever the
+# test is actually about. That masked two guards: with the hostname sanitiser
+# disabled, test_hostname_with_an_embedded_newline_raises still passed, because
+# the empty-rules refusal fired first. A test that cannot fail when its guard is
+# removed is not testing the guard.
+#
+# So the default is a valid rule set. A test that genuinely wants zero rules
+# says so explicitly -- see test_no_filter_rules_at_all_raises.
+_ONE_BENIGN_LAN_RULE = """
+    <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+    <source><any/></source><destination><any/></destination></rule>
+"""
+
+
 def _minimal_xml(
-    *, rules_xml: str = "", interfaces_xml: str | None = None, hostname: str = "test-device"
+    *,
+    rules_xml: str = _ONE_BENIGN_LAN_RULE,
+    interfaces_xml: str | None = None,
+    hostname: str = "test-device",
 ) -> str:
     """Build a minimal, valid PF Sense config.xml string for a single test,
     so each test can vary exactly the one thing it is checking rather than
@@ -103,17 +122,6 @@ def test_the_real_fixture_uses_a_valid_cisco_interface_name_not_the_raw_pfsense_
 
 
 # --- Interfaces ----------------------------------------------------------------
-
-
-# A benign, single rule on "lan" -- these two tests are about interface
-# emission, not filtering, but convert() now refuses an empty rule set
-# entirely (see the "Free-text fields..." / F6/F7 section below), so each
-# needs at least one rule naming a real interface to exercise what it is
-# actually testing.
-_ONE_BENIGN_LAN_RULE = """
-    <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
-    <source><any/></source><destination><any/></destination></rule>
-"""
 
 
 def test_wan_and_lan_get_different_synthetic_interface_names():
@@ -365,6 +373,10 @@ def test_hostname_with_an_embedded_newline_raises():
     xml_text = _minimal_xml(
         hostname="probe\nip access-list extended acl_in\n permit ip any any"
     )
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
 # --- Rule order ambiguity (issue #47) -----------------------------------------
 # PF Sense evaluates last-match-wins unless a rule is "quick"; this module
 # converts as first-match-wins, exactly like a Cisco ACL. The two models agree
@@ -387,6 +399,10 @@ def test_a_specific_deny_before_a_broader_permit_without_quick_raises():
         <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
         <source><any/></source><destination><address>10.20.0.5</address><port>443</port></destination></rule>
     """)
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
 # --- Refuse rather than silently invert or drop the source firewall's policy -----
 # Regression coverage for three findings from a senior-level adversarial QA pass,
 # all in convert()'s interface/ACL-binding logic and _parse_interfaces().
