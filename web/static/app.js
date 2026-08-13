@@ -41,8 +41,19 @@ const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 };
   That is the F-4 failure exactly, arriving through the id field rather than
   the status field.
 
-  So: no keying by id until ids are actually unique. The mock data keeps that
-  collision on purpose so this stays tested.
+  So: no keying by id until ids are actually unique (the A-2 amendment, #95,
+  is what would make them unique).
+
+  The mock data keeps that collision on purpose -- but keeping a fixture is
+  not a test, and for a while this comment claimed otherwise. Nothing called
+  renderFindings() at all; the only Node harness drove the chat pane. The
+  refactor this paragraph warns about would have passed the whole suite.
+
+  tests/test_findings_rendering.py now drives THIS function through the real
+  file, with the colliding pair in BOTH orders. The order matters: keying by
+  id keeps the last value, so with the error first it is the ERROR that
+  disappears -- which is the dangerous direction, and the one a single-order
+  test would have missed.
 */
 
 /* ------------------------------------------------------------------------ *
