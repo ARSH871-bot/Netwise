@@ -18,7 +18,7 @@ pandas>=2.0
 # Official client for talking to a local Ollama server. Requires Ollama
 # installed and running separately (not a pip package) -- see ai/Modelfile
 # for the model this project builds and calls: netwise-warden.
-ollama>=0.4
+ollama>=0.6.2
 
 # --- Layer 3: Web interface ------------------------------------------------
 # Chosen over Flask for the auto-generated API docs at /docs (useful evidence
