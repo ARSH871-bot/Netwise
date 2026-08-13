@@ -1,0 +1,70 @@
+# Netwise -- line endings, decided here rather than per machine.
+#
+# WHY THIS EXISTS
+#   Without it, what lands in the index depends on each person's local
+#   `core.autocrlf`, which nobody agreed and nobody can see. Measured on this
+#   repository before adding it:
+#
+#       71 files   i/lf  w/crlf     (this machine: core.autocrlf=true)
+#        7 files   i/lf  w/lf
+#
+#   The index is uniformly LF today -- but only because the one person
+#   committing happens to have autocrlf on. A teammate with it unset, which is
+#   the default on macOS and Linux, commits CRLF instead. The result is a diff
+#   showing every line of a file changed when one line did.
+#
+#   That is worse here than the usual tidiness argument. A whole-file diff is
+#   exactly where a real change hides: two guard tests in this repository were
+#   truncated during a conflict resolution and asserted nothing for days,
+#   because nobody re-read a diff line by line. Anything that inflates diffs
+#   makes that class of accident more likely, not less.
+#
+#   This is the same shape as the ruff pin (#84): a guarantee that held against
+#   an unstated condition -- whichever config happened to be set that day --
+#   rather than something the repository enforces.
+#
+# WHAT IT DOES
+#   `text=auto eol=lf` normalises every text file to LF *in the index*, while
+#   leaving working trees alone. Windows editors keep seeing CRLF locally; git
+#   stores LF for everyone. Nobody has to change a personal setting, which is
+#   the point -- a convention that needs each person to remember is the kind
+#   this project keeps finding broken.
+#
+#   Adding this is a no-op for the current tree: the index is already all LF,
+#   verified with `git ls-files --eol` before committing, so it introduces no
+#   renormalisation churn.
+
+* text=auto eol=lf
+
+# --- Explicitly text, so intent is readable rather than inferred -----------
+*.py        text eol=lf
+*.md        text eol=lf
+*.txt       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.json      text eol=lf
+*.js        text eol=lf
+*.html      text eol=lf
+*.css       text eol=lf
+*.cfg       text eol=lf
+*.xml       text eol=lf
+.gitignore  text eol=lf
+Modelfile   text eol=lf
+
+# --- Binary: never touched, never diffed as text ---------------------------
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.pdf       binary
+*.ico       binary
+*.zip       binary
+*.docx      binary
+*.xlsx      binary
+*.pptx      binary
+
+# --- Fixtures are the product's input, and their bytes matter --------------
+#   A converted PF Sense config is compared against a hand-written Cisco one,
+#   and tests assert on exact ACL line content. Marking them text eol=lf keeps
+#   that comparison stable across machines rather than depending on checkout.
+tests/fixtures/**  text eol=lf

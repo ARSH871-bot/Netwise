@@ -1,0 +1,47 @@
+# Netwise -- editor defaults, so four people's editors agree.
+#
+# WHY
+#   `.gitattributes` settles what git stores. This settles what editors
+#   produce, which is the other half: a file saved with tabs by one editor and
+#   spaces by another produces a diff about whitespace, and a diff about
+#   whitespace is where a real change hides. Two guard tests in this repository
+#   were truncated during a conflict resolution and asserted nothing for days.
+#   Anything that inflates a diff makes that more likely.
+#
+#   VS Code, PyCharm and most editors honour this without a plugin. Nobody has
+#   to remember a setting, which is the point.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# PEP 8, and what the codebase already uses.
+[*.py]
+indent_size = 4
+max_line_length = 88
+
+# Web-layer convention, and what web/static/ already uses.
+[*.{js,css,html,json}]
+indent_size = 2
+
+# YAML is whitespace-significant and two-space is the near-universal norm;
+# GitHub's own workflow and Dependabot files assume it.
+[*.{yml,yaml}]
+indent_size = 2
+
+# Markdown: trailing double-space is a hard line break and must survive.
+[*.md]
+trim_trailing_whitespace = false
+
+# Fixtures are the product's INPUT. Their bytes are asserted on by tests --
+# exact ACL line content, exact XML structure -- so no editor may reformat
+# them on save.
+[tests/fixtures/**]
+trim_trailing_whitespace = false
+insert_final_newline = false
