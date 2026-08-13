@@ -22,4 +22,4 @@
 # Note the pytest suite does NOT use it today; the checks so far have been
 # standalone scripts. That is also why CI does not install this file -- see
 # .github/workflows/tests.yml, which installs requirements.txt only.
-playwright>=1.40
+playwright>=1.62.0
