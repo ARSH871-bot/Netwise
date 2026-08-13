@@ -176,6 +176,36 @@ hatch would have covered the exact case where it was broken.
 If you ever do rewrite a branch — with permission — use `--force-with-lease`,
 never bare `--force`. *(Broken on #54 and #58.)*
 
+**3a. If `main` moved since your last push, re-run the checks before merging.**
+A green tick describes this PR merged with `main` **as it was when the tick was
+earned**. GitHub's `pull_request` event tests `refs/pull/N/merge`, which is
+computed at event time — if `main` moves afterwards, the tick describes a
+combination that no longer exists.
+
+This is not theoretical. It produced two red `main`s in two days, both the same
+shape:
+
+```
+#84  and #89   each passed alone, failed together
+#104 last commit 23:51   <- its CI tested main as of 23:51
+#84  merged      00:06   <- after that
+#104 merged      00:40   <- the combination was never tested
+```
+
+Both times a test's *restoration* met a *behaviour change* that invalidated it.
+Neither author could have seen it; neither branch was wrong.
+
+`.github/workflows/tests.yml` now merges `origin/main` before running, so a
+**re-run** tests against `main` as it is now rather than repeating the stale
+answer. That makes this rule actionable rather than a plea for care:
+
+```bash
+gh pr checks <n> --watch      # after re-running, if main moved
+```
+
+It is still not a gate — branch protection needs GitHub Pro (§6). It is a
+signal that is now telling the truth about the right thing.
+
 **4. Merge small and merge often.**
 A queue of fourteen approved PRs produced three simultaneous conflicts in the
 same test file. None of them were hard; all of them were avoidable. If something

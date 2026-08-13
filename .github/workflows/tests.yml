@@ -45,6 +45,42 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full history, because the step below merges origin/main and a
+          # shallow clone has no merge base to do it from.
+          fetch-depth: 0
+
+      - name: Merge current main
+        # WHY THIS EXISTS -- two red mains in two days, same shape both times.
+        #
+        # GitHub's `pull_request` event tests refs/pull/N/merge: this PR merged
+        # with main AS IT WAS WHEN THE EVENT FIRED. If main moves afterwards,
+        # the green tick describes a combination that no longer exists.
+        #
+        # Measured on the second incident:
+        #
+        #     #104 last commit  23:51   <- its CI tested main as of 23:51
+        #     #84  merged       00:06   <- after that
+        #     #104 merged       00:40   <- the combination was never tested
+        #
+        # #84 restored a test body; #104 changed the behaviour that test
+        # asserts. Each passed alone. Together they failed, and nothing ran
+        # them together until main was already broken.
+        #
+        # This does not make CI a gate -- it cannot, branch protection needs
+        # GitHub Pro (see CONTRIBUTING section 6). What it does is make
+        # RE-RUNNING CI meaningful: a re-run now tests against main as it is
+        # now, rather than repeating the original stale answer. So "main moved
+        # since your last push -- re-run the checks before merging" becomes
+        # advice that actually does something.
+        #
+        # On a push to main this merge is a no-op, so the step is harmless
+        # there rather than needing a condition.
+        run: |
+          git config user.name  "ci"
+          git config user.email "ci@local"
+          git fetch origin main
+          git merge --no-edit origin/main
 
       - name: Set up Node
         # tests/test_chat_rendering.py drives the real web/static/app.js through
