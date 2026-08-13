@@ -24,7 +24,7 @@ ollama>=0.4
 # Chosen over Flask for the auto-generated API docs at /docs (useful evidence
 # in a review) and native async, which the streaming chat pane will need.
 fastapi>=0.110
-uvicorn[standard]>=0.27
+uvicorn[standard]>=0.52.1
 
 # FastAPI needs this to parse multipart form data -- i.e. file uploads. Without
 # it, the config upload endpoint fails at import time rather than at request
