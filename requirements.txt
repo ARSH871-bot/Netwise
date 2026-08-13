@@ -29,7 +29,7 @@ uvicorn[standard]>=0.52.1
 # FastAPI needs this to parse multipart form data -- i.e. file uploads. Without
 # it, the config upload endpoint fails at import time rather than at request
 # time, so it is a hard dependency, not an optional extra.
-python-multipart>=0.0.9
+python-multipart>=0.0.32
 
 # --- Testing ---------------------------------------------------------------
 # Run the suite from the repository root:  pytest tests/ -v
