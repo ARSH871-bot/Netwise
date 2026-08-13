@@ -120,20 +120,44 @@ Batfish runs in Docker container `batfish` (image `batfish/allinone`), exposing
   else. Interfaces and filter rules are covered; NAT, aliases, DHCP, VPN, IPv6
   and combined `tcp/udp` rules are not, and each raises rather than guessing.
 
-  **Rule order: PF Sense and Cisco disagree, and the converter now refuses
-  rather than guesses.** PF Sense evaluates *last-match-wins* unless a rule is
-  marked `quick`; a Cisco ACL — and so this converter — is *first-match-wins*.
-  Where two overlapping rules have different actions and the earlier one is not
-  `quick`, the two models decide the same traffic **differently**. Measured: a
-  block followed by a narrower HTTPS permit, neither `quick`, converts into an
-  ACL that denies traffic the real firewall permits, and Netwise then reports
-  the deciding rule as one that "never takes effect".
+  **Rule order: PF Sense and Cisco disagree, and the converter now MODELS the
+  difference where it can and refuses where it cannot.** PF Sense evaluates
+  *last-match-wins* unless a rule is marked `quick`; a Cisco ACL — and so this
+  converter — is *first-match-wins*. Where two overlapping rules have different
+  actions and the earlier one is not `quick`, the two models decide the same
+  traffic **differently**. Measured: a block followed by a narrower HTTPS
+  permit, neither `quick`, once converted into an ACL that denied traffic the
+  real firewall permits.
 
-  `_check_rule_order_is_unambiguous()` detects exactly that case and raises,
-  rather than emitting something that parses cleanly and is wrong (#58, closing
-  #47). Only the *earlier* rule's `quick` flag can make a pair safe — PF Sense
-  has already moved past a non-quick earlier rule before the later one is
-  reached.
+  **Zero `quick` rules on an interface — convert exactly (#104).** With no
+  quick rule anywhere in that interface's list, "stop immediately" never fires,
+  so PF Sense's decision for any flow is simply the action of the *last* rule
+  that matches it. Evaluating the same rules first-match-wins in *reversed*
+  order gives the first match of the reversed list, which is by construction
+  the last match of the original. **Same decision, every flow — not an
+  approximation**, so `_check_rule_order_is_unambiguous()` is skipped there
+  rather than weakened. Verified against Batfish on the exact pair above:
+
+  ```
+  emitted:  permit tcp any host 10.20.0.5 eq 443
+            deny   tcp any host 10.20.0.5
+  HTTPS -> PERMIT   (PF Sense permits: it is the last match)
+  HTTP  -> DENY
+  ```
+
+  This matters because the client's whole rule set is zero-quick.
+
+  **All `quick`** — already exactly modelled by first-match-wins in original
+  order, since a quick rule stops evaluation the instant it matches.
+
+  **Mixed — still refuses.** `_check_rule_order_is_unambiguous()` detects the
+  ambiguous pair and raises rather than emitting something that parses cleanly
+  and is wrong (#58, closing #47). Only the *earlier* rule's `quick` flag can
+  make a pair safe — PF Sense has already moved past a non-quick earlier rule
+  before the later one is reached. Getting that the wrong way round is easy;
+  `tests/test_pfsense_convert.py` carries a comment saying which is which,
+  because the author of this paragraph got it backwards while writing the test
+  for it.
 
   **Our own fixture was wrong about this until #58**, which is worth recording
   because the earlier version of this section cited it as reassurance. Its
@@ -151,11 +175,24 @@ Batfish runs in Docker container `batfish` (image `batfish/allinone`), exposing
   converter's first-match-wins model disagrees with his firewall wherever two
   overlapping rules differ.
 
-  **And rule order is not even the first blocker.** The converter refuses
-  earlier: his rules span four interface values across three interfaces, and it
-  supports a single-interface rule set. His export is 1,998 elements against our
-  fixture's 54, and carries `nat`, `openvpn`, `ipsec`, `aliases`, `dhcpd` and
-  `shaper` — none of which we handle.
+  **Two of the four blockers are now gone (#104).** Multi-interface rule sets
+  are supported — each interface gets its own ACL, checked independently — and
+  rule order is modelled as above. His export is still 1,998 elements against
+  our fixture's 54, carrying `nat`, `openvpn`, `ipsec`, `aliases`, `dhcpd` and
+  `shaper`.
+
+  What still refuses, and the message now names all of it at once rather than
+  failing at the first thing it meets:
+
+  ```
+  REFUSED: filter rules apply to interface(s) ['WireGuard', 'openvpn', 'wan'],
+           which have no static address configured
+  ```
+
+  A **DHCP WAN carrying rules** (a Cisco ACL needs an address to write rules
+  against) and **rules naming two VPN interfaces absent from `<interfaces>`**.
+  Neither was on #78's item list, which was written before we knew which
+  interfaces carried rules.
 
   Analysing his firewall now needs, in order: multi-interface rule sets, real
   PF Sense evaluation order, a decision on NAT (two of his rules carry
@@ -490,11 +527,10 @@ Nothing in Layer 1 or 2 is now unjoined. What remains is features, not plumbing.
   argument and both sentinel helpers default to 0. One check emitting a clean
   sentinel and an error sentinel in the same run still collides with itself.
   Defence in depth, not duplication.
-- **PF Sense rule order** (issue #47, closed by #58). **Modelled rather than
-  only refused in #104 — which is APPROVED and NOT YET MERGED**, so §7 above
-  still describes `main` correctly and must be updated when it lands.
+- **PF Sense rule order** (issue #47, closed by #58, **modelled in #104, merged
+  13 August**). §7 above is updated to match.
 
-  What #104 does: with **zero** quick rules the converter reverses the list,
+  With **zero** quick rules the converter reverses the list,
   which is provably the same decision as last-match-wins for every flow, and
   converts exactly the pair §7 documents as the measured failure instead of
   refusing it. Verified against Batfish, not just unit tests. Mixed
