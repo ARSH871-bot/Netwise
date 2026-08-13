@@ -426,8 +426,10 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                 # sentence would quietly start overstating what we checked.
                 detail=f"All {len(applicable)} policy rule(s) hold",
                 source=", ".join(sorted({r["node"] for r in applicable})) or "unknown",
-                # PC-000. change_impact uses 100 for its own all-clear, so the
-                # two checks cannot collide on the "PC" prefix they share.
+                # PC-000. Since A-2 (#102) change_impact has its own "CH-"
+                # prefix, so there is no cross-check collision to avoid here
+                # any more -- this is simply policy_compliance's own clean
+                # sentinel.
                 number=0,
             )
         ]

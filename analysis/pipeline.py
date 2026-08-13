@@ -557,13 +557,24 @@ def _finalise(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     the end of the happy path, and the four early returns above skipped it --
     which meant the ONE case it did not cover was "Batfish is down", by far the
     most common operational failure. Those paths emit one sentinel error per
-    registered check, and two of our checks share the "PC" prefix:
+    registered check, and until amendment A-2 two of them shared the "PC"
+    prefix:
 
         AC-000 access_control | RT-000 routing | PC-000 policy_compliance
         PC-000 change_impact  | RK-000 risk            ^^^^^^ collision
 
+    A-2 (#102) gave change_impact its own "CH-" prefix, so that particular
+    pair can no longer occur. The guard stays, and this example is kept as
+    history rather than deleted, for the reason Shubham gave when he raised
+    the amendment: uniqueness across DIFFERENT checks is now structural, but
+    uniqueness WITHIN one check is still only discipline. make_finding()
+    takes `number` as a required argument and nothing stops a check passing
+    the same one twice, and both sentinel helpers default to 0 -- so one
+    check emitting a clean sentinel and an error sentinel in the same run
+    still collides with itself. Defence in depth, not duplication.
+
     A consumer keying by id would then show four checks instead of five, with
-    change_impact simply absent -- not errored, not clean, gone. That is F-4 in
+    one of them simply absent -- not errored, not clean, gone. That is F-4 in
     its purest form on the likeliest failure path.
 
     So: if you add a return to analyse(), route it through this function.

@@ -333,7 +333,7 @@ format, to the screen. This replaced the earlier engine/frontend split.
 | **Shubham** | Policy-compliance + change-impact analysis |
 | **Samika** | Risk prioritisation + the interface + secure upload |
 
-## 11. Status — last updated 2026-08-06
+## 11. Status — last updated 2026-08-13
 
 > **⚠️ This section goes stale faster than anything else in the file.** It has
 > been wrong about `main` repeatedly, in both directions — claiming work that
@@ -359,10 +359,24 @@ that once blocked it is **settled**: the team agreed F-1 (see §7a). Do not
 reopen it casually. The record is `docs/sprint2/SPRINT2.md`, written inside the
 sprint rather than reconstructed after it.
 
-**Sprint 3 — in progress** (6–12 August 2026, dates agreed by all four).
-**Scope is not yet agreed**, and four of the seven days went on landing Sprint
-2's carry-over — ten pull requests merged on 8 August. The planning proposal is
-`docs/sprint3/SPRINT3.md`; it is a proposal until its header says otherwise.
+**Sprint 3 — complete** (6–12 August 2026). Milestone closed at 8 of 8, tagged
+`v0.3.0`. All five analysis features joined end to end, which first became true
+on 8 August. The record is `docs/sprint3/SPRINT3.md`, and its closing section
+was written the day after the sprint ended rather than reconstructed later.
+
+**Sprint 4 — in progress** (13–19 August 2026). Scope is @shubhamkataria2005's
+counter-proposal on #86, which Arsh accepted over his own: **#78 timeboxed to
+item 1 with an explicit stop**, #16 split, #30 with A-2 raised on day 1. The
+record is `docs/sprint4/SPRINT4.md`. **#87 is the open question against all of
+it** and is deliberately unassigned.
+
+**Releases exist now**, for the first time. `v0.1.0`, `v0.2.0` and `v0.3.0` were
+tagged retroactively on 13 August, each on the last commit of that sprint's
+*work* per `CONTRIBUTING.md` §5b, verified with the ancestry check the section
+prescribes. Worth recording *why* they did not exist: the convention was written
+down, reviewed, and its worked examples corrected by two people — and then never
+performed. A documented practice standing in for a performed one, which is this
+project's recurring failure family arriving through process rather than code.
 
 ### What is built and on `main`
 
@@ -464,18 +478,35 @@ Nothing in Layer 1 or 2 is now unjoined. What remains is features, not plumbing.
   because "agreed" should be a fact anyone can check rather than something
   inferred from a merge. This closes the last outstanding piece of the shapes
   decision.
-- **PF Sense rule order** (issue #47, closed by #58). The converter refuses to
+- **F-1 amendment A-2 — RATIFIED by all four** (#102, raised and written by
+  Shubham on day 1 of Sprint 4). `change_impact` moves from the `PC-` prefix to
+  its own **`CH-`**, so `id` uniqueness *across* checks is now structural rather
+  than a convention split over two documents. Done before the code existed, so
+  no finding changed id — free now, a migration later.
+
+  **The duplicate-`id` guard stays, and deleting it would be a mistake.** A
+  distinct prefix removes that particular pair; uniqueness *within* one check is
+  still only discipline, because `make_finding()` takes `number` as a required
+  argument and both sentinel helpers default to 0. One check emitting a clean
+  sentinel and an error sentinel in the same run still collides with itself.
+  Defence in depth, not duplication.
+- **PF Sense rule order** (issue #47, closed by #58, and now **modelled** by
+  #104). §7 recorded that a block followed by a narrower non-`quick` HTTPS
+  permit converted into an ACL denying traffic the real firewall permits. With
+  **zero** quick rules the converter now reverses the list, which is provably
+  the same decision as last-match-wins for every flow, and converts that pair
+  exactly instead of refusing it. Verified against Batfish, not just unit
+  tests. Mixed quick/non-quick lists still refuse. This was the client's whole
+  rule set, so it removes #78's headline blocker.
+- **PF Sense rule order, original refusal** (issue #47, closed by #58). The converter refuses to
   convert when two overlapping rules disagree and the earlier is not `quick`,
   instead of silently mistranslating them. See §7. What remains is a **client
   question, not a decision of ours**: whether the real export uses `quick`.
 
 ### Open decisions — do not settle these alone
 
-1. **`change_impact` needs its own ID prefix.** It shares `PC` with
-   `policy_compliance`, so their findings collide.
-   `pipeline.duplicate_id_findings()` detects it; only a distinct prefix makes
-   it impossible. Amending F-1 needs all four members.
-2. **Parse strictness.** `find_parse_problems()` currently treats any status
+1. **Parse strictness.** *(Was item 2; item 1 is settled — see below.)*
+   `find_parse_problems()` currently treats any status
    other than `PASSED` as fatal, including `PARTIALLY_UNRECOGNIZED`. Safe for
    test configs, likely too strict for real ones. The fix is to run the checks
    and attach a loud "results may be incomplete" finding — never to ignore it.
