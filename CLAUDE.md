@@ -490,14 +490,16 @@ Nothing in Layer 1 or 2 is now unjoined. What remains is features, not plumbing.
   argument and both sentinel helpers default to 0. One check emitting a clean
   sentinel and an error sentinel in the same run still collides with itself.
   Defence in depth, not duplication.
-- **PF Sense rule order** (issue #47, closed by #58, and now **modelled** by
-  #104). §7 recorded that a block followed by a narrower non-`quick` HTTPS
-  permit converted into an ACL denying traffic the real firewall permits. With
-  **zero** quick rules the converter now reverses the list, which is provably
-  the same decision as last-match-wins for every flow, and converts that pair
-  exactly instead of refusing it. Verified against Batfish, not just unit
-  tests. Mixed quick/non-quick lists still refuse. This was the client's whole
-  rule set, so it removes #78's headline blocker.
+- **PF Sense rule order** (issue #47, closed by #58). **Modelled rather than
+  only refused in #104 — which is APPROVED and NOT YET MERGED**, so §7 above
+  still describes `main` correctly and must be updated when it lands.
+
+  What #104 does: with **zero** quick rules the converter reverses the list,
+  which is provably the same decision as last-match-wins for every flow, and
+  converts exactly the pair §7 documents as the measured failure instead of
+  refusing it. Verified against Batfish, not just unit tests. Mixed
+  quick/non-quick lists still refuse. This was the client's whole rule set, so
+  it removes #78's headline blocker.
 - **PF Sense rule order, original refusal** (issue #47, closed by #58). The converter refuses to
   convert when two overlapping rules disagree and the earlier is not `quick`,
   instead of silently mistranslating them. See §7. What remains is a **client
