@@ -1,13 +1,17 @@
 # Sprint 3 — the plan, and how it changed
 
-**Status:** **AGREED.** Dates by all four; scope engaged by all three
-teammates, every argument incorporated, no objection outstanding. See the
-sign-off note below.
+**Status:** **COMPLETE.** Scope was agreed by all four (the sign-off note
+below); the sprint ran 6-12 August and closed with its milestone at 8 of 8.
+Tagged `v0.3.0` at `9988cff`. The closing record is at the bottom of this
+document - everything above it is the plan as it stood *during* the sprint and
+is deliberately left as it was written.
 **Sprint dates:** **6–12 August 2026** — agreed, not inferred.
 **Written:** 6 August 2026, the day after Sprint 2 closed
 **Updated:** 10 August 2026 (NZST), after the queue landed, Ankeet's review, and US-11's backend
 
-> **Day 5 of 7.** Three days remain counting today (10, 11, 12 August).
+> **Day 5 of 7 when this line was written**, on 10 August. Left in place
+> rather than deleted: this document was written inside the sprint, and the
+> point of that is visible in the tense.
 >
 > **How this was agreed, recorded rather than asserted.** Every teammate
 > engaged with a specific argument and each one changed the document:
@@ -186,17 +190,38 @@ what its empty answer is entitled to mean**, so "no results" can never render
 as "you are fine" for a question that could not have produced results either
 way. Cheaper to build in now than to retrofit.
 
-## #30 is deferred, and its stated primitive does not work
+## #30 is deferred, and there is a trap in how its primitive is called
 
-If #30 is deferred without this recorded, whoever picks it up next reads the
-issue text and walks into the same dead end Shubham already measured:
+> **RETRACTED, 12 August.** This section originally said
+> `differentialReachability` "reports zero difference between a config that
+> denies everything and one that permits everything", and that `compareFilters`
+> was the working primitive. **That is wrong.** @shubhamkataria2005 withdrew the
+> measurement himself, and it was reproduced independently before being
+> corrected here. The original claim is described rather than silently deleted,
+> because a sprint record that edits out a retracted claim is worth less than
+> one that shows the claim being retracted.
 
-> `differentialReachability` reports **zero difference** between a config that
-> denies everything and one that permits everything. `compareFilters` does not.
+Both primitives work. The real finding is narrower, and is a trap rather than a
+failure - measured on a purpose-built `deny ip any any` to `permit ip any any`
+pair, and reproduced twice:
 
-The story text still names the primitive that fails. That is worth carrying
-into Sprint 4's version of this document rather than leaving in a comment
-thread.
+```
+startLocation="rtr-us5"                              rows=0
+startLocation="rtr-us5[GigabitEthernet0/0]"          rows=0   <- the trap
+startLocation="@enter(rtr-us5[GigabitEthernet0/0])"  rows=1
+(no pathConstraints)                                 rows=1
+```
+
+The middle line is the dangerous one. It **looks like the careful thing to
+write** - it names the exact device and the exact interface the inbound ACL is
+bound to - and returns zero difference for a change that opens the network
+completely.
+
+The original error was constraining `startLocation` to a place an inbound ACL is
+never traversed. The empty result was correct for the question asked; the
+question was wrong. **`analyse_change()` must use `@enter(...)` or no path
+constraints at all**, and #30 should carry a test for it, because an empty
+result there would read as "your change is safe".
 
 ## The shape I would argue for
 
@@ -296,3 +321,98 @@ Recorded plainly, not as failure — this is ordinary carry-over.
    shape: A (constrained selection) + C (show the question back).** Recorded on
    #64 with reasoning. What is left is not a decision but a review point: he
    reports the template surface back before building the generation side.
+
+---
+
+# Closing record — written 13 August, the day after the sprint ended
+
+Everything above this line is the plan as it stood *during* Sprint 3 and is
+left exactly as written, including the parts that turned out wrong. This
+section is the outcome.
+
+**Sprint 3 ran 6–12 August 2026. Milestone closed at 8 of 8. Tagged `v0.3.0`
+at `9988cff`.**
+
+## Numbers, measured rather than recalled
+
+Every figure below comes from the repository, over the sprint window in NZT
+(`--since="2026-08-06T00:00:00+12:00" --until="2026-08-13T00:00:00+12:00"`).
+
+| | |
+|---|---|
+| Pull requests merged | **39** |
+| Commits on `main` | **113** |
+| Python files | 18 → **31** |
+| Test files | **11** |
+| Milestone issues closed | **8 of 8** |
+
+## What was delivered
+
+**All five analysis features joined end to end, which first became true on
+8 August.** Uploading a config and clicking **Scan Now** produces real findings
+on screen, explained in plain English and sorted worst-first.
+
+- **Risk prioritisation** (#60) landed as a post-processor, with the two limits
+  — never downgrade a `status="error"` finding, never drop one — *enforced* in
+  `run_post_processors()` rather than documented.
+- **The AI explanation reached the screen** (#56, closing #31). Only
+  `status="found"` findings are ever explained, so a card that could not be
+  checked can never acquire prose reading as though it had been.
+- **The natural-language query backend** (#66) shipped with `/api/ask`, built
+  to refuse: a closed intent set, no model in either direction, every parameter
+  resolved against the real snapshot, and the translated question always shown
+  back.
+- **Upload and analysis were separated** (#82). A staged file is no longer
+  confused with a checked one, and stale findings are cleared on upload rather
+  than left under a success message describing a different network.
+- **The PF Sense converter met its first real client export** and refused it
+  cleanly rather than mistranslating it.
+
+## What review caught, and it is the sprint's most important output
+
+Three of the significant defects found this sprint were in the SCRUM master's
+work, found by teammates who re-ran claims instead of reading them:
+
+| Found by | What |
+|---|---|
+| Ankeet | an estimate true of the plumbing and false about the hard part |
+| Ankeet | a document demonstrating the error it warned against |
+| Ankeet | a tool whose guarantee was verified only against known-good input |
+| Samika | a fix that was half a fix |
+| Shubham | a latent pipeline bug, found while verifying before signing A-1 |
+
+And the worst was nobody else's: **two guard tests asserted nothing for days**,
+truncated during a conflict resolution, on branches that had been asked not to
+be rebased without asking. `pytest` cannot fail a test that does nothing, so
+nothing detected it.
+
+## The pattern this sprint named
+
+**A weaker claim standing in for a stronger one.** It appeared often enough to
+stop being a coincidence: a fixture preserved instead of a behaviour tested, a
+lint gate clean against an unstated ruff version, an empty Batfish result read
+as good news, a docstring asserting coverage that did not exist.
+
+The response that worked was not more review. It was **re-running the claim** —
+which is how every instance above was found, including by the person who made
+it.
+
+## Honest limitations at close
+
+- **The policy is ours, not the user's** (#87). Rename a device in a fixture and
+  detection drops from 6 findings to 3, because everything except dead rules and
+  undefined references is checked against assertions hardcoded to our own
+  configs. This is the largest gap in the product and it had no issue until
+  after the sprint closed.
+- **No real configuration has been analysed by the pipeline.** The client's
+  export has been examined structurally only, and the converter refuses it.
+- **The explanation layer is unevaluated.** Whether the plain-English text is
+  *good* is untested — the one thing a client actually reads.
+
+## Carried into Sprint 4
+
+- #78 — the client's export, **timeboxed to item 1** with an explicit stop
+- #30 — change-impact, with the `startLocation` trap recorded above
+- #95 / A-2 — raised day 1 rather than when the code needs an ID
+- #16 — deployment and docs, split
+- #87 — the open question against all of the above
