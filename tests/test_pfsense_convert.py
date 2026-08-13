@@ -546,19 +546,74 @@ def test_hostname_with_an_embedded_newline_raises():
 # firewall, evaluating last-match, would have let that exact traffic through.
 
 
-def test_a_specific_deny_before_a_broader_permit_without_quick_raises():
-    """Issue #47's own probe, reproduced here as a regression test. Neither
-    rule is quick, their actions differ (deny vs permit), and their traffic
-    overlaps (the permit is a subset of what the deny already covers) --
-    exactly the condition PF Sense and this converter can disagree about."""
+def test_a_specific_deny_before_a_broader_permit_without_quick_is_modelled():
+    """Issue #47's own probe. It no longer raises -- it converts EXACTLY.
+
+    THIS TEST USED TO ASSERT THE OPPOSITE, and the change is the point.
+
+    Until #104 the converter refused this pair, because a Cisco ACL is
+    first-match-wins and PF Sense with no quick rules is last-match-wins, so
+    emitting the rules in their original order would have denied traffic the
+    real firewall permits. Refusing was correct while that was the only
+    option.
+
+    With NO quick rules anywhere in an interface's list, "stop immediately"
+    never fires, so PF Sense's decision for any flow is simply the action of
+    the LAST rule that matches it. Evaluating the SAME rules first-match-wins
+    in REVERSED order gives the first match of the reversed list, which is by
+    construction the last match of the original. Same decision, every flow --
+    not an approximation.
+
+    So the regression this file has always guarded is unchanged in substance:
+    the converter must never emit an ACL that decides traffic differently from
+    the source firewall. It now meets that by modelling the semantics instead
+    of refusing them, and this test asserts the modelling rather than the
+    refusal.
+
+    Verified against real Batfish before the behaviour landed:
+
+        HTTPS (PF Sense permits -- it is the last match)  ->  PERMIT
+        HTTP  (PF Sense blocks)                           ->  DENY
+    """
     xml_text = _minimal_xml(rules_xml="""
         <rule><type>block</type><interface>lan</interface><protocol>tcp</protocol>
         <source><any/></source><destination><address>10.20.0.5</address></destination></rule>
         <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
         <source><any/></source><destination><address>10.20.0.5</address><port>443</port></destination></rule>
     """)
+
+    acl = [
+        line.strip()
+        for line in _convert_string(xml_text).splitlines()
+        if line.strip().startswith(("permit", "deny"))
+    ]
+
+    # Reversed: the narrower permit must come FIRST, so a first-match-wins ACL
+    # reaches the same verdict last-match-wins would.
+    assert len(acl) == 2, acl
+    assert acl[0].startswith("permit"), (
+        f"the later PF Sense rule must be emitted first, got: {acl}"
+    )
+    assert "eq 443" in acl[0], acl
+    assert acl[1].startswith("deny"), acl
+
+    # And the guard is skipped here, not weakened. A list with ANY quick rule
+    # goes back through _check_rule_order_is_unambiguous(), which still
+    # refuses an ambiguous pair.
+    #
+    # Note WHICH rule carries <quick/> below, because getting it the other way
+    # round is easy and inverts the meaning: only the EARLIER rule being quick
+    # makes a pair safe -- PF Sense stops there and never reaches the later
+    # one. A quick rule on the LATER rule leaves the disagreement intact, so
+    # this is the shape that must still raise (CLAUDE.md section 7).
+    mixed = _minimal_xml(rules_xml="""
+        <rule><type>block</type><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/></source><destination><address>10.20.0.5</address></destination></rule>
+        <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol><quick/>
+        <source><any/></source><destination><address>10.20.0.5</address><port>443</port></destination></rule>
+    """)
     with pytest.raises(PfSenseConversionError):
-        _convert_string(xml_text)
+        _convert_string(mixed)
 
 
 # --- Refuse rather than silently invert or drop the source firewall's policy -----
