@@ -311,24 +311,182 @@ def test_unresolvable_network_reference_raises():
 # --- Rules spanning more than one interface --------------------------------------
 
 
-def test_rules_on_two_different_interfaces_raises():
-    """Batfish/Cisco needs one ACL per interface direction. Merging rules
-    from two interfaces into a single ACL would silently change what the
-    config means, so this is refused rather than attempted."""
+# --- Multi-interface rule sets (#78 item 1) -------------------------------------
+
+_TWO_INTERFACES = """
+    <wan><if>em0</if><ipaddr>1.2.3.1</ipaddr><subnet>30</subnet></wan>
+    <lan><if>em1</if><ipaddr>10.0.0.1</ipaddr><subnet>24</subnet></lan>
+"""
+
+
+def test_rules_on_two_different_interfaces_each_get_their_own_acl():
+    """The client's real export needs this -- rules across several
+    interfaces, each converting to its own ACL rather than being merged or
+    refused."""
     xml_text = _minimal_xml(
-        interfaces_xml="""
-            <wan><if>em0</if><ipaddr>1.2.3.1</ipaddr><subnet>30</subnet></wan>
-            <lan><if>em1</if><ipaddr>10.0.0.1</ipaddr><subnet>24</subnet></lan>
-        """,
+        interfaces_xml=_TWO_INTERFACES,
         rules_xml="""
             <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+            <rule><type>block</type><interface>wan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+        """,
+    )
+    output = _convert_string(xml_text)
+    assert "ip access-list extended acl_lan_in" in output
+    assert "ip access-list extended acl_wan_in" in output
+    assert "ip access-group acl_lan_in in" in output
+    assert "ip access-group acl_wan_in in" in output
+    # Each ACL carries only its own interface's rule, not the other's.
+    lan_block = output.split("ip access-list extended acl_lan_in")[1].split("!")[0]
+    wan_block = output.split("ip access-list extended acl_wan_in")[1].split("!")[0]
+    assert "permit tcp any any" in lan_block
+    assert "deny tcp any any" in wan_block
+    assert "deny tcp any any" not in lan_block
+    assert "permit tcp any any" not in wan_block
+
+
+def test_a_single_interface_with_rules_still_uses_the_plain_acl_name():
+    """The common case, and the only one hand-verified against
+    tests/fixtures/rtr-us5-secure, must convert identically to before #78:
+    no role suffix nobody asked for."""
+    output = _convert_string(_minimal_xml(rules_xml=_ONE_BENIGN_LAN_RULE))
+    assert "ip access-list extended acl_in" in output
+    assert "ip access-list extended acl_lan_in" not in output
+
+
+def test_an_interface_with_an_address_but_no_rules_gets_a_deny_all():
+    """PF Sense fails CLOSED with no rules configured on an interface. Left
+    unbound, Cisco/Batfish would read that interface as unfiltered -- the
+    exact inversion the empty-<filter> refusal already exists to prevent for
+    the whole file, reachable here per-interface instead."""
+    xml_text = _minimal_xml(
+        interfaces_xml=_TWO_INTERFACES,
+        rules_xml="""
+            <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+        """,
+    )
+    output = _convert_string(xml_text)
+    assert "ip access-group acl_wan_in in" in output
+    wan_block = output.split("ip access-list extended acl_wan_in")[1].split("!")[0]
+    assert "deny ip any any" in wan_block
+
+
+def test_a_pair_that_would_be_ambiguous_on_one_acl_is_fine_on_two():
+    """The false positive this scoping exists to prevent. A block on wan
+    followed by an unrelated, broader, non-quick permit on lan is exactly
+    the shape #47/#58 flags WITHIN one ACL -- different actions, the earlier
+    one not quick, overlapping traffic. Compared globally this pair would
+    wrongly refuse a config with nothing wrong in it, because a rule on wan
+    and a rule on lan are never evaluated against the same traffic by any
+    real firewall."""
+    xml_text = _minimal_xml(
+        interfaces_xml=_TWO_INTERFACES,
+        rules_xml="""
+            <rule><type>block</type><interface>wan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+            <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+        """,
+    )
+    output = _convert_string(xml_text)
+    assert "permit tcp any any" in output
+    assert "deny tcp any any" in output
+
+
+def test_a_pair_with_no_quick_rules_now_converts_via_reversal_instead_of_refusing():
+    """Superseded by #78 item 2, not merely renamed. This exact pair -- wan's
+    own block-then-pass, neither quick -- used to be refused, before this
+    module could tell the two evaluation models apart with confidence. Now
+    it does not need to: with no quick rule anywhere in wan's list, the
+    final decision for any flow is simply the LAST matching rule, which is
+    exactly what evaluating the SAME rules reversed, first-match-wins,
+    produces. Nothing is left ambiguous, so it converts, correctly, rather
+    than being refused."""
+    xml_text = _minimal_xml(
+        interfaces_xml=_TWO_INTERFACES,
+        rules_xml="""
+            <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+            <rule><type>block</type><interface>wan</interface><protocol>tcp</protocol>
             <source><any/></source><destination><any/></destination></rule>
             <rule><type>pass</type><interface>wan</interface><protocol>tcp</protocol>
             <source><any/></source><destination><any/></destination></rule>
         """,
     )
+    output = _convert_string(xml_text)
+    wan_block = output.split("ip access-list extended acl_wan_in")[1].split("!")[0]
+    # The later rule (pass) is the real last-match-wins winner, so it comes
+    # FIRST in the reversed, first-match-wins ACL.
+    assert wan_block.strip().splitlines()[0].strip() == "permit tcp any any"
+
+
+def test_a_genuinely_mixed_quick_pair_still_raises():
+    """The case reversal does NOT resolve: one rule quick, one not, in a
+    pattern that first-match-wins and last-match-wins can still disagree
+    about. This is the scope #78 item 2 deliberately leaves refused rather
+    than guessed -- see the module docstring."""
+    xml_text = _minimal_xml(
+        interfaces_xml=_TWO_INTERFACES,
+        rules_xml="""
+            <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+            <rule><type>block</type><interface>wan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+            <rule><type>pass</type><interface>wan</interface><protocol>tcp</protocol><quick/>
+            <source><any/></source><destination><any/></destination></rule>
+        """,
+    )
     with pytest.raises(PfSenseConversionError):
         _convert_string(xml_text)
+
+
+def test_a_rule_naming_no_interface_alongside_others_that_do_raises():
+    """Ambiguous under multi-interface in a way it never was under
+    single-interface: which ACL would an interface-less rule join, when more
+    than one now exists? Refuse rather than guess."""
+    xml_text = _minimal_xml(
+        interfaces_xml=_TWO_INTERFACES,
+        rules_xml="""
+            <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+            <rule><type>block</type><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+        """,
+    )
+    with pytest.raises(PfSenseConversionError):
+        _convert_string(xml_text)
+
+
+def test_a_whitespace_only_interface_gets_the_right_refusal_message():
+    """Found by adversarial QA on #78 item 2, not anticipated up front.
+
+    <interface> </interface> -- present, but blank once stripped -- used to
+    read as "" rather than None, so it slipped past the unassigned-rule
+    refusal above and was instead reported as an unknown interface role,
+    blaming "no static address configured" for what was actually a
+    malformed tag. Still refused either way (fail-closed, never a bypass),
+    but the wrong diagnosis, which matters when someone is actually trying
+    to debug a real client export."""
+    xml_text = _minimal_xml(
+        rules_xml="""
+            <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+            <rule><type>block</type><interface> </interface><protocol>tcp</protocol>
+            <source><any/></source><destination><any/></destination></rule>
+        """,
+    )
+    with pytest.raises(PfSenseConversionError) as excinfo:
+        _convert_string(xml_text)
+    message = str(excinfo.value)
+    assert "no <interface>" in message, (
+        "a blank <interface> tag must be diagnosed as naming no interface, "
+        f"not as an unknown one. Got: {message!r}"
+    )
+    assert "static address" not in message, (
+        f"wrong diagnosis -- this is a malformed tag, not a missing address. Got: {message!r}"
+    )
 
 
 # --- Rule order is preserved -----------------------------------------------------
@@ -586,16 +744,23 @@ def test_a_single_rule_never_raises():
     assert "deny ip any any" in _convert_string(xml_text)
 
 
-def test_the_real_fixture_relies_on_quick_and_would_be_wrong_without_it():
-    """Regression coverage for the gap this fix found in the fixture
-    itself, not just in new adversarial input: the real fixture's two
-    pass rules are followed by a catch-all deny, which by definition
-    overlaps both of them. Before this fix added <quick/> to the two pass
-    rules, this exact fixture converted successfully and produced a
-    config that would have been backwards under real PF Sense semantics
-    -- the trailing deny would have overridden both permits. Confirms the
-    fixture's own <quick/> tags are load-bearing, not decoration, by
-    checking a temp copy with them removed raises."""
+def test_the_real_fixture_without_quick_now_converts_correctly_instead_of_refusing():
+    """Regression coverage for the gap #58 found in the fixture itself, now
+    re-checked against #78 item 2's more capable behaviour. The real
+    fixture's two pass rules are followed by a catch-all deny, which by
+    definition overlaps both of them; before #58 added <quick/> to the two
+    pass rules, this exact fixture converted successfully and produced a
+    config that was backwards under real PF Sense semantics.
+
+    #58's fix made that refuse. #78 item 2 goes one step further: with NO
+    quick rules anywhere (the fixture minus its two <quick/> tags), the
+    result is no longer ambiguous, it is exactly determined -- last-match-
+    wins means the trailing catch-all deny genuinely does override both
+    permits on the real firewall, so the correct conversion DENIES DNS and
+    HTTPS, not refuses to say. Confirmed live against Batfish before writing
+    this assertion: both testFilters calls returned DENY, and
+    filterLineReachability reported both permit lines as dead, correctly
+    reflecting that they never take effect once the deny is evaluated last."""
     original = Path(FIXTURE).read_text()
     without_quick = original.replace("<quick/>\n      ", "")
     assert without_quick != original, "the fixture must actually contain <quick/> for this test to mean anything"
@@ -606,10 +771,20 @@ def test_the_real_fixture_relies_on_quick_and_would_be_wrong_without_it():
         f.write(without_quick)
         path = Path(f.name)
     try:
-        with pytest.raises(PfSenseConversionError):
-            convert(path)
+        output = convert(path)
     finally:
         path.unlink()
+
+    # The catch-all deny is now first (last original rule, reversed), so it
+    # decides for every flow, including the two the permits were written for.
+    acl_block = output.split("ip access-list extended acl_in")[1]
+    lines = [ln.strip() for ln in acl_block.strip().splitlines() if ln.strip() and ln.strip() != "!"]
+    assert lines[0] == "deny ip any any", (
+        "the trailing catch-all deny must be evaluated first once nothing "
+        f"is quick, real PF Sense semantics say it overrides both permits. Got: {lines}"
+    )
+
+
 def test_a_rule_with_no_interface_raises_rather_than_producing_an_unbound_acl():
     """Confirmed live before this fix: acl_role defaulted to None, so
     "ip access-group ACL_NAME in" was never written to any interface, but
