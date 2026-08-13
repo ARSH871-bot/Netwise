@@ -44,7 +44,7 @@ jobs:
         python-version: ["3.12", "3.13"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node
         # tests/test_chat_rendering.py drives the real web/static/app.js through
@@ -55,12 +55,12 @@ jobs:
         # Since they are what stops a refusal rendering as a confident answer,
         # depending on an incidental property of the runner image is the wrong
         # trade. This makes it explicit.
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "20"
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           # Cache pip downloads between runs. pybatfish and its dependencies

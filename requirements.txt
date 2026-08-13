@@ -18,23 +18,23 @@ pandas>=2.0
 # Official client for talking to a local Ollama server. Requires Ollama
 # installed and running separately (not a pip package) -- see ai/Modelfile
 # for the model this project builds and calls: netwise-warden.
-ollama>=0.4
+ollama>=0.6.2
 
 # --- Layer 3: Web interface ------------------------------------------------
 # Chosen over Flask for the auto-generated API docs at /docs (useful evidence
 # in a review) and native async, which the streaming chat pane will need.
-fastapi>=0.110
-uvicorn[standard]>=0.27
+fastapi>=0.141.1
+uvicorn[standard]>=0.52.1
 
 # FastAPI needs this to parse multipart form data -- i.e. file uploads. Without
 # it, the config upload endpoint fails at import time rather than at request
 # time, so it is a hard dependency, not an optional extra.
-python-multipart>=0.0.9
+python-multipart>=0.0.32
 
 # --- Testing ---------------------------------------------------------------
 # Run the suite from the repository root:  pytest tests/ -v
 # The current tests need neither Batfish nor Docker.
-pytest>=8.0
+pytest>=9.1.1
 
 # Browser-driving tools for UI tests live in requirements-dev.txt, not here.
 # They are not needed to run the product or the pytest suite, and one of them
