@@ -1,7 +1,10 @@
 # Evaluation — does Netwise find the flaws it is meant to find?
 
-**Measured:** 10 August 2026, re-run the same day against `main` at `62d8fc7`
-(211 tests passing) after #73 fixed the bug this evaluation found.
+**Measured:** 10 August 2026. **Re-run unchanged on 13 August** against `main`
+at `94c1f7e` (304 tests passing), after the Sprint 3 queue and the converter
+work landed. Every detection result below reproduced identically; only the
+client-export section in "what this does not show" needed correcting, and it
+had drifted in the direction of *understating* what the converter can now do.
 **Story:** US-15 (#15). This is the evidence chapter of the report.
 **How to reproduce:** every number below comes from `python -m analysis.pipeline
 <fixture>`. Nothing here is recalled or estimated; re-run the commands and you
@@ -149,21 +152,51 @@ away has the wrong impression.
    counts and never a value. What that established (#78):
 
    - **zero of seven rules are marked `quick`**, so PF Sense's last-match-wins
-     applies to his whole rule set and our first-match-wins model disagrees
-     wherever two overlapping rules differ
-   - the converter **refuses it earlier still**: his rules span four interface
-     values across three interfaces, and we support one
+     applies to his whole rule set
+   - his rules span four interface values across three interfaces
    - 1,998 elements against our fixture's 54, carrying `nat`, `openvpn`,
      `ipsec`, `aliases`, `dhcpd` and `shaper`
 
-   So the rule-order question is **answered**, not open, and the answer is the
-   unhelpful one. Analysing his firewall needs multi-interface rule sets, real
-   PF Sense evaluation order, a NAT decision, and two field-omission questions
-   still with him (#80).
+   **Two of those blockers are now gone (#104, 13 August), and this paragraph
+   used to say otherwise.** It said our first-match-wins model "disagrees
+   wherever two overlapping rules differ" and that the converter "refuses it
+   earlier still" on multiple interfaces. Both were true when written and are
+   not now:
 
-   **What the converter did not do is worth as much as what it did not manage:**
-   it produced no plausible, wrong ACL. It stopped and named the construct it
-   could not handle, on the first real firewall it has ever seen.
+   - **multi-interface rule sets are supported** — each interface gets its own
+     ACL, checked independently
+   - **rule order is modelled rather than refused.** With zero `quick` rules,
+     "stop immediately" never fires, so PF Sense's decision for any flow is the
+     action of the *last* matching rule — which is by construction the *first*
+     match of the reversed list under first-match-wins. Same decision, every
+     flow. Verified against Batfish on the exact pair `CLAUDE.md` §7 documents
+     as the measured failure:
+
+     ```
+     emitted:  permit tcp any host 10.20.0.5 eq 443
+               deny   tcp any host 10.20.0.5
+     HTTPS -> PERMIT   (PF Sense permits: it is the last match)
+     HTTP  -> DENY
+     ```
+
+   His export still refuses, and the refusal now names everything remaining in
+   one message rather than failing at the first thing it meets:
+
+   ```
+   REFUSED: filter rules apply to interface(s) ['WireGuard', 'openvpn', 'wan'],
+            which have no static address configured
+   ```
+
+   What is left is a **DHCP WAN carrying rules** and **rules naming two VPN
+   interfaces absent from `<interfaces>`** — plus the NAT decision and the
+   field-omission questions still with him (#80). Neither of the first two was
+   on #78's original item list, which was written before we knew which
+   interfaces carried rules.
+
+   **What the converter did not do is still worth as much as what it did not
+   manage:** it has never produced a plausible, wrong ACL. It stops and names
+   the construct it cannot handle, and it did that on the first real firewall
+   it ever saw.
 
 4. **The device-scoping errors are correct, but they are still gaps — and the
    gap is larger than this document originally implied.** Several runs report
