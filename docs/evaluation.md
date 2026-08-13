@@ -102,10 +102,36 @@ still holds and is not reported.
 
 ### Controls — configurations with nothing wrong
 
-| Fixture | Result | False positives |
-|---|---|---|
-| `rtr-us5-secure` | `AC-000` none, `PC-000` none | **0** |
-| `routing-secure` | `RT-000` none | **0** |
+| Fixture | Checked clean | Could not check | False positives |
+|---|---|---|---|
+| `rtr-us5-secure` | `AC-000`, `PC-000` | **`RT-050`** | **0** |
+| `routing-secure` | `RT-000` | **`AC-001`, `PC-050`** | **0** |
+
+> **This table used to omit the "could not check" column**, listing only the
+> `none` findings. Found by @shubhamkataria2005 (#106), reading the document
+> that describes his own check.
+>
+> **"0 false positives" was and is correct** — an `error` is not a false
+> positive, and nothing here contradicts the headline. What was wrong is that
+> the *Result* column understated what a user actually sees. A control fixture
+> was shown producing a clean result when what it produces is one clean result
+> and two checks that could not run.
+>
+> That is **F-4 being flattened inside the document whose subject is whether
+> this tool tells the truth.** A reader saw full clean coverage; the tool's own
+> output says two thirds of it was never exercised.
+
+**No fixture in this repository exercises all three checks cleanly at once**,
+and that bounds what these controls demonstrate. On `rtr-us5-secure`, `routing`
+cannot run because `ROUTES` names `rtr-hq`/`rtr-branch`. On `routing-secure`,
+`access_control` and `policy_compliance` cannot run because they name
+`rtr-us5`.
+
+So the controls show that **each check is quiet on a clean config it can
+read** — not that the system as a whole is quiet on a clean config. That is a
+weaker statement than the table implied, and it is the same root cause as #87:
+policy hardcoded to fixture device names, surfacing in the evaluation rather
+than in the product.
 
 ### Control — a configuration that cannot be read
 
@@ -128,6 +154,12 @@ the difference between a tool that is unhelpful and a tool that is dangerous.
 | False positives on clean configs | **0 of 2** |
 | Unreadable config reported as clean | **Never** — 3 errors, 0 green ticks |
 | Every detection names the responsible line | **Yes** |
+| Controls exercising **all three** checks at once | **0 of 2** |
+
+The last row is there so a reader who takes only this table away is not left
+with the impression the controls table used to give. Both controls also
+produce "could not check" findings, because no fixture in the repository
+names devices all three checks can read.
 
 ---
 
