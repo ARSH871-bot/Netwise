@@ -165,11 +165,27 @@ away has the wrong impression.
    it produced no plausible, wrong ACL. It stopped and named the construct it
    could not handle, on the first real firewall it has ever seen.
 
-4. **The device-scoping errors are correct, but they are still gaps.** Several
-   runs report *"N assertions could not be checked against this config"*. That is
-   honest — those policy statements name devices not in the snapshot — but it
-   means the checks are not covering those configs, and a real deployment would
-   need policy statements written for the real devices.
+4. **The device-scoping errors are correct, but they are still gaps — and the
+   gap is larger than this document originally implied.** Several runs report
+   *"N assertions could not be checked against this config"*. That is honest —
+   those policy statements name devices not in the snapshot — but it means the
+   checks are not covering those configs.
+
+   **Measured after this evaluation was first written.** Take `rtr-us5-messy`,
+   rename the device, change nothing else:
+
+   ```
+   our device name      6 findings   access_control + policy_compliance
+   a stranger's name    3 findings   access_control only
+   ```
+
+   **One rename removes half the detection**, because every policy assertion in
+   the product is hardcoded to our fixtures and there is no way for a user to
+   supply their own. What survives is the two analyses that need no policy —
+   dead rules and undefined references. So the results above are not merely
+   *measured on our configs*; several of them are **only obtainable** on our
+   configs. Filed as #87, and the ordering is in
+   `docs/design/product-roadmap.md`.
 
 5. **The explanation layer is not evaluated here.** Whether the plain-English
    text is *good* is a separate question from whether the findings are *correct*.

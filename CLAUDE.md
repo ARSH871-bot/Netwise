@@ -387,8 +387,27 @@ sprint rather than reconstructed after it.
 
 | Piece | Owner | Note |
 |---|---|---|
+| **A way for the user to state their own policy** | unassigned | **The biggest gap in the product** (#87). Every policy assertion is hardcoded to our fixtures. See below |
 | `change_impact` | Shubham | Not started, and does not fit the `run(bf)` contract |
 | AI: natural-language questions | Ankeet + Samika | **Backend built** (#66) — `ai/query.py` + `/api/ask`. The dashboard wiring is Samika's half and is not done. See §7c |
+
+**The policy is ours, not the user's.** `access_control` and `policy_compliance`
+name `rtr-us5`; `routing` names `rtr-hq`/`rtr-branch`. Two carry a `PLACEHOLDER`
+comment promising the real client policy will replace them, and nothing does —
+there is no file format, no loader, no UI. Measured on `rtr-us5-messy` by
+renaming the device and changing nothing else:
+
+```
+our device name      6 findings   access_control + policy_compliance
+a stranger's name    3 findings   access_control only
+```
+
+**One rename removes half the detection.** What survives is the two analyses
+that need no policy — dead rules and undefined references. The scoping work
+(#29, #45, #50) made that *honest*, not solved: the user is told "could not
+check" rather than shown a green tick. It outranks even #78, and unlike #78 it
+waits on nobody outside the team. Full ordering in
+[`docs/design/product-roadmap.md`](docs/design/product-roadmap.md).
 
 ### End to end — what is joined, and what is not
 
