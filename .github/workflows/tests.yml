@@ -60,7 +60,7 @@ jobs:
           node-version: "20"
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           # Cache pip downloads between runs. pybatfish and its dependencies
