@@ -1,14 +1,38 @@
-# Sprint 4 — planning proposal
+# Sprint 4 — the plan, and how it changed
 
-**Status:** PROPOSAL — not agreed. Argue with it.
-**Proposed dates:** 13–19 August 2026 (the seven-day cadence of Sprints 1–3)
+**Status:** **AGREED**, and running. Approved by all three teammates on #86
+(@patelankeet2, @shubhamkataria2005, @SamikaPerera). Milestone **Sprint 4**
+created, due 19 August.
+**Dates:** 13–19 August 2026 (the seven-day cadence of Sprints 1–3)
 **Written:** 12 August 2026, on Sprint 3's closing day
+**Status updated:** 13 August, day 1, once scope was settled and work had begun
 
 > Same shape as `docs/sprint3/SPRINT3.md`: a proposal the team changes, not a
-> plan handed down. Sprint 3's version was improved by all three of you, and
-> two of those changes were corrections rather than additions.
->
-> Replace this line with `**Status:** Agreed` once scope is settled.
+> plan handed down. It was changed — see "Three corrections from review" below,
+> all @shubhamkataria2005's, one of which reversed the author's own
+> recommendation.
+
+## Day 1, recorded as it happened
+
+The scope below is **not** the version first proposed. @shubhamkataria2005
+argued #78 should be timeboxed to item 1 with an explicit stop rather than
+committed whole, and the author agreed with him over his own table. That is
+what was assigned.
+
+Already delivered on day 1:
+
+| | |
+|---|---|
+| **A-2 ratified and merged** (#102) | @shubhamkataria2005 raised it on day 1 as asked, rather than when the code needed an ID. `change_impact` now owns `CH-`. |
+| **#78 items 1 AND 2 merged** (#104) | @patelankeet2. Multi-interface rule sets, and last-match-wins **modelled** rather than refused. Two of four client blockers gone. |
+
+**The timebox went past its stop, and that was right.** Item 2 turned out to be
+a reversal plus a guard rather than the sprint it might have been — knowable
+only from inside item 1. The timebox forced a re-decision with better
+information, which is what it is for, and that is worth carrying as precedent
+rather than leaving as a quiet overrun.
+
+Milestone at the time of writing: **3 closed, 10 open.**
 
 ---
 
