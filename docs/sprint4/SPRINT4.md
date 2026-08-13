@@ -69,11 +69,17 @@ its only real network is not finished, however green the suite is.
 
 ### What it needs, in dependency order
 
-1. **Multi-interface rule sets** — several ACLs, each bound to its own
-   interface, rather than one `acl_in`. **Blocks 2 and 3.**
-2. **Real PF Sense evaluation order** — last-match-wins, or a per-pair refusal
-   that is defensible rather than blanket. With zero `quick` rules, #58's
-   current check refuses every overlapping pair.
+1. ~~**Multi-interface rule sets**~~ — **DONE, #104.** Several ACLs, each bound
+   to its own interface, rather than one `acl_in`.
+2. ~~**Real PF Sense evaluation order**~~ — **DONE, #104.** With zero `quick`
+   rules the converter reverses the list, which is provably the same decision
+   as last-match-wins for every flow. Verified against Batfish. Mixed lists
+   still refuse.
+
+   *Items 1 and 2 were written as pending and delivered on day 1. Left in
+   place, struck through, because the dependency ordering below them is what
+   this list was for and deleting them would hide that two of the four are
+   gone.*
 3. **A decision on NAT** — two of his rules carry `associated-rule-id` and are
    meaningless without it. NAT is out of scope today; that may have to change,
    or we say plainly which rules we cannot interpret.
