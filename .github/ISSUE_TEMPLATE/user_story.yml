@@ -1,0 +1,86 @@
+# Netwise -- user story.
+#
+# Matches the "US-NN -- title" convention already in the issue list, and the
+# acceptance-criteria style used by #30 and #78. Two fields are here because
+# of things that actually went wrong:
+#
+#   "Which shape is it"   -- change_impact was an unticked checkbox inside
+#                            another story for weeks, because it does not fit
+#                            run(bf) and nobody had noticed the story it lived
+#                            in assumed it did (#30).
+#
+#   "Who does it need"    -- an F-1 edit needs all four signatures. Finding
+#                            that out halfway through the work is how PR #59
+#                            ended up merged but not ratified.
+
+name: User story
+description: A feature, from the point of view of whoever will use it
+labels: ["enhancement"]
+title: "US-NN — "
+body:
+  - type: textarea
+    id: story
+    attributes:
+      label: The story
+      description: Who wants this, what they want, and why it matters to them.
+      placeholder: >
+        As a network administrator, I can state my own security policy in a
+        file, so that Netwise checks my network rather than the authors' test
+        fixtures.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: shape
+    attributes:
+      label: Which shape is it?
+      description: >
+        `docs/design/pipeline-feature-shapes.md`, adopted by all four. Getting
+        this wrong is not cosmetic — a feature that cannot be a check will sit
+        as an unticked box inside somebody else's story until someone notices.
+      options:
+        - "A check — run(bf) -> list[dict], registered in CHECKS"
+        - "A post-processor — refine(results) -> results, in POST_PROCESSORS"
+        - "A separate entry point — needs something the pipeline does not hand a check"
+        - "Not a pipeline feature at all (web, AI, tooling, docs)"
+        - "Not sure — needs discussion before anyone starts"
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: >
+        Checkboxes someone other than you could tick without asking what you
+        meant. **If this produces findings, one criterion must cover F-4** —
+        that `found`, `none` and `error` stay distinguishable.
+      value: |
+        - [ ]
+        - [ ] correctly distinguishes `found` / `none` / `error`
+        - [ ] tested without needing Batfish or Ollama
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: agreement
+    attributes:
+      label: Who does this need before it can be merged?
+      description: >
+        Worth answering now rather than discovering it in review. An F-1 edit
+        takes all four signatures, and merging the PR is not the same as
+        ratifying the amendment.
+      options:
+        - label: Changes the F-1 finding format — needs all four members
+        - label: Changes the field vocabulary in `analysis/findings.py` — needs all four
+        - label: Needs an answer from the client before it can be finished
+        - label: None of these — a normal review is enough
+
+  - type: textarea
+    id: not-in-scope
+    attributes:
+      label: Explicitly not in scope
+      description: >
+        Optional, and more useful than it sounds. Netwise's scope limits are
+        the interesting part of the product — it generates and simulates config
+        changes and never pushes them to a live device.
