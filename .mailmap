@@ -1,0 +1,47 @@
+# Netwise -- canonical contributor identities.
+#
+# WHY THIS EXISTS
+#   `git shortlog -sn` listed eight authors for a four-person team. Some of
+#   that is one person committing from two machines with different
+#   `user.name` settings, which is harmless until the moment it is not: this
+#   is a capstone marked partly on individual contribution, and `git blame`
+#   is the record of who wrote what.
+#
+#   A .mailmap fixes log, shortlog and blame attribution WITHOUT rewriting
+#   history. Nothing about the commits changes; only how git reports them.
+#
+# HOW TO ADD YOURSELF
+#   Format:  Canonical Name <canonical@email>  Other Name <other@email>
+#   Then check it worked:  git shortlog -sn
+#
+# THE RULE APPLIED HERE
+#   An identity is mapped only when the EMAIL proves it is the same person.
+#   Mapping on a name alone, or on a guess about who someone is, would put a
+#   claim about authorship into the repository that nobody verified -- and
+#   authorship is exactly the thing this file exists to get right.
+
+Arsh Vhora <vhoraarsh87@gmail.com>          ARSH871-bot <Vhoraarsh87@gmail.com>
+Arsh Vhora <vhoraarsh87@gmail.com>          Arsh. <vhoraarsh87@gmail.com>
+
+Ankeet Patel <patelankeet2@gmail.com>       patelankeet2 <patelankeet2@gmail.com>
+
+# --- NOT MAPPED, deliberately: NovaFlow <novaflowbuild@gmail.com> ----------
+#
+#   Three commits on 3 August, including the ENTIRE initial web layer --
+#   web/main.py, web/static/app.js, style.css, index.html, mock_findings.py,
+#   roughly 1,200 lines, committed as "US-17: dashboard rendering F-1
+#   findings, with secure upload".
+#
+#   Those are precisely Samika's files, US-17 is Samika's story, and
+#   CLAUDE.md attributes the dashboard and secure upload to him. The obvious
+#   explanation is a second machine with `git config user.email` unset or
+#   set to a personal address, which is extremely common.
+#
+#   But the email matches nobody on the team, so mapping it would be a guess
+#   about who wrote a person's largest single contribution. That is the one
+#   guess this file must not make.
+#
+#   @SamikaPerera: if this is you, say so on the issue and the line below
+#   goes in. If it is not, that is worth knowing for a different reason.
+#
+# Samika Perera <samika.ashen@gmail.com>    NovaFlow <novaflowbuild@gmail.com>
