@@ -157,6 +157,78 @@ def test_no_interfaces_with_an_address_raises():
         _convert_string(xml_text)
 
 
+# --- Rules naming an interface that cannot be modelled (#78) ---------------------
+#
+# _parse_interfaces() silently drops a DHCP/unconfigured role, and PF Sense
+# lets a rule's <interface> name something that was never declared under
+# <interfaces> at all (VPN/tunnel policy, most often). Both used to collapse
+# into one message, "no static address configured" -- true of the first,
+# wrong about the second. These pin the split.
+
+
+def _dhcp_wan_and_lan_interfaces() -> str:
+    return """
+    <wan><if>em0</if></wan>
+    <lan><if>em1</if><ipaddr>10.0.0.1</ipaddr><subnet>24</subnet></lan>
+    """
+
+
+def _rule_on(role: str) -> str:
+    return (
+        f"<rule><type>pass</type><interface>{role}</interface>"
+        "<protocol>tcp</protocol><source><any/></source>"
+        "<destination><any/></destination></rule>"
+    )
+
+
+def test_a_rule_on_a_dhcp_interface_names_the_real_reason():
+    """Declared under <interfaces>, just has no static address -- the
+    message should say so, not imply the role does not exist."""
+    xml_text = _minimal_xml(
+        interfaces_xml=_dhcp_wan_and_lan_interfaces(),
+        rules_xml=_rule_on("wan") + _ONE_BENIGN_LAN_RULE,
+    )
+    with pytest.raises(PfSenseConversionError) as excinfo:
+        _convert_string(xml_text)
+    message = str(excinfo.value)
+    assert "wan" in message
+    assert "no static address configured" in message
+    assert "not declared" not in message
+
+
+def test_a_rule_on_an_undeclared_interface_names_the_real_reason():
+    """WireGuard/openvpn-shaped case: the role never appears under
+    <interfaces> at all. Must not be blamed on a missing address -- adding
+    one would not make tunnel policy convertible."""
+    xml_text = _minimal_xml(
+        interfaces_xml="""
+        <lan><if>em1</if><ipaddr>10.0.0.1</ipaddr><subnet>24</subnet></lan>
+        """,
+        rules_xml=_rule_on("WireGuard") + _ONE_BENIGN_LAN_RULE,
+    )
+    with pytest.raises(PfSenseConversionError) as excinfo:
+        _convert_string(xml_text)
+    message = str(excinfo.value)
+    assert "WireGuard" in message
+    assert "not declared under <interfaces>" in message
+    assert "VPN/tunnel" in message
+    assert "no static address configured" not in message
+
+
+def test_both_kinds_at_once_are_both_named_in_one_message():
+    """Matches the real client export: a DHCP wan and tunnel-role rules in
+    the same file. One refusal naming both, not just the first one hit."""
+    xml_text = _minimal_xml(
+        interfaces_xml=_dhcp_wan_and_lan_interfaces(),
+        rules_xml=_rule_on("wan") + _rule_on("WireGuard") + _ONE_BENIGN_LAN_RULE,
+    )
+    with pytest.raises(PfSenseConversionError) as excinfo:
+        _convert_string(xml_text)
+    message = str(excinfo.value)
+    assert "wan" in message and "no static address configured" in message
+    assert "WireGuard" in message and "not declared under <interfaces>" in message
+
+
 # --- Rules: action and protocol mapping -----------------------------------------
 
 
