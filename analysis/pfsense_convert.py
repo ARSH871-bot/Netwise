@@ -509,7 +509,17 @@ def _check_rule_order_is_unambiguous(
     elegance.
     """
     parsed = []
-    for rule_el, line in zip(rule_els, acl_lines):
+    # strict=True enforces the precondition this function's docstring states:
+    # acl_lines is the SAME ORDER and the SAME LENGTH as rule_els, because
+    # convert() builds it from that exact list. Nothing checked it.
+    #
+    # Without strict, a future change that filters one list and not the other
+    # -- skipping disabled rules when building ACL lines, say -- makes zip()
+    # truncate to the shorter one, and this guard silently stops checking the
+    # tail of the rule set. It would still return, still find nothing wrong,
+    # and still let the file convert. That is the shape of failure this whole
+    # module exists to refuse: a check that quietly covers less than it claims.
+    for rule_el, line in zip(rule_els, acl_lines, strict=True):
         pf_type = _text(rule_el, "type") or ""
         pf_protocol = _text(rule_el, "protocol", default="any") or "any"
         destination_el = rule_el.find("destination")
