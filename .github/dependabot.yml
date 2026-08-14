@@ -23,8 +23,22 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps"
-    # Batch the noisy ones so a patch bump does not cost a review slot.
+    # GROUPED, and the first weekly run is why.
+    #
+    # The original config grouped only the dev tools. Every RUNTIME dependency
+    # got its own pull request, so one Monday produced eight PRs -- five pip,
+    # three actions -- in the same week the team was clearing a fifteen-PR
+    # queue. The comment above warns that a daily cadence "produces noise that
+    # gets ignored, and an ignored security alert is worse than none". Weekly
+    # at eight arrives at the same place by a different route.
+    #
+    # Grouping does not reduce coverage. Dependabot still tracks every package
+    # and still opens a SEPARATE PR for anything with a security advisory,
+    # which is the case that must never be batched behind a routine bump.
     groups:
+      runtime:
+        patterns: ["*"]
+        exclude-patterns: ["pytest*", "ruff*", "playwright*"]
       dev-and-tooling:
         patterns: ["pytest*", "ruff*", "playwright*"]
 
@@ -32,5 +46,11 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    open-pull-requests-limit: 3
     commit-message:
       prefix: "ci"
+    # Same reasoning: three separate PRs to bump three actions in one file is
+    # three review slots for one decision.
+    groups:
+      actions:
+        patterns: ["*"]
