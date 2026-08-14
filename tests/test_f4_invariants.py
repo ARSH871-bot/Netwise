@@ -26,6 +26,17 @@ WHAT F-4 ACTUALLY PROMISES
     never be confused with "we could not check". Everything below is one of
     those two sentences made testable.
 
+A NOTE ON HOW THESE SWAP `CHECKS` ENTRIES
+    Via `monkeypatch.setitem`, at @patelankeet2's suggestion on #128. The first
+    version snapshotted the dict and restored it in a `finally`. He verified
+    that was airtight -- captured `id(pipeline.CHECKS)` and its full contents
+    before and after, same object, same references -- so this is not a bug fix.
+
+    It is better anyway: pytest guarantees teardown however the test exits,
+    including on an error raised before the `finally` is reached, and it is one
+    mechanism rather than three copies of manual bookkeeping that each have to
+    stay correct. `tests/test_finding_ids.py` already did it this way.
+
 These need neither Batfish nor Ollama.
 """
 
@@ -114,7 +125,7 @@ def test_every_valid_status_and_check_is_actually_accepted():
 # ---------------------------------------------------------------------------
 
 
-def test_a_check_returning_nothing_becomes_an_error_not_silence():
+def test_a_check_returning_nothing_becomes_an_error_not_silence(monkeypatch):
     """The purest form of the F-4 failure, and it had no test.
 
     A check returning `[]` produces no card at all. The check simply vanishes
@@ -127,20 +138,8 @@ def test_a_check_returning_nothing_becomes_an_error_not_silence():
     `status="none"` finding. Returning `[]` is a bug in the check, and the
     pipeline turns it into a visible error rather than absorbing it.
     """
-    class _NoBatfish:
-        pass
-
-    results = pipeline.run_check.__wrapped__(_NoBatfish(), "access_control") \
-        if hasattr(pipeline.run_check, "__wrapped__") else None
-
-    # Register a check that returns nothing at all.
-    original = dict(pipeline.CHECKS)
-    try:
-        pipeline.CHECKS["access_control"] = lambda bf: []
-        results = pipeline.run_check(_NoBatfish(), "access_control")
-    finally:
-        pipeline.CHECKS.clear()
-        pipeline.CHECKS.update(original)
+    monkeypatch.setitem(pipeline.CHECKS, "access_control", lambda bf: [])
+    results = pipeline.run_check(None, "access_control")
 
     assert results, "a check returning [] produced NO finding -- it vanished"
     assert len(results) == 1
@@ -151,47 +150,31 @@ def test_a_check_returning_nothing_becomes_an_error_not_silence():
     assert results[0]["check"] == "access_control", "the finding must name the check"
 
 
-def test_a_check_returning_findings_is_left_alone():
+def test_a_check_returning_findings_is_left_alone(monkeypatch):
     """The guard must not fire on a healthy check, or it teaches people to
     return a dummy finding to silence it."""
-    class _NoBatfish:
-        pass
-
     clean = findings.no_issues_finding(
         check="routing", device="d", summary="clean", detail="d", source="s"
     )
-    original = dict(pipeline.CHECKS)
-    try:
-        pipeline.CHECKS["routing"] = lambda bf: [clean]
-        results = pipeline.run_check(_NoBatfish(), "routing")
-    finally:
-        pipeline.CHECKS.clear()
-        pipeline.CHECKS.update(original)
+    monkeypatch.setitem(pipeline.CHECKS, "routing", lambda bf: [clean])
+    results = pipeline.run_check(None, "routing")
 
     assert results == [clean]
     assert results[0]["status"] == "none"
 
 
-def test_the_two_are_distinguishable_which_is_the_whole_point():
+def test_the_two_are_distinguishable_which_is_the_whole_point(monkeypatch):
     """F-4 in one assertion: a check that ran and found nothing, and a check
     that returned nothing, must not look the same to a consumer."""
-    class _NoBatfish:
-        pass
+    monkeypatch.setitem(pipeline.CHECKS, "routing", lambda bf: [
+        findings.no_issues_finding(
+            check="routing", device="d", summary="clean", detail="d", source="s"
+        )
+    ])
+    ran_and_clean = pipeline.run_check(None, "routing")
 
-    original = dict(pipeline.CHECKS)
-    try:
-        pipeline.CHECKS["routing"] = lambda bf: [
-            findings.no_issues_finding(
-                check="routing", device="d", summary="clean", detail="d", source="s"
-            )
-        ]
-        ran_and_clean = pipeline.run_check(_NoBatfish(), "routing")
-
-        pipeline.CHECKS["routing"] = lambda bf: []
-        returned_nothing = pipeline.run_check(_NoBatfish(), "routing")
-    finally:
-        pipeline.CHECKS.clear()
-        pipeline.CHECKS.update(original)
+    monkeypatch.setitem(pipeline.CHECKS, "routing", lambda bf: [])
+    returned_nothing = pipeline.run_check(None, "routing")
 
     assert ran_and_clean[0]["status"] == "none"
     assert returned_nothing[0]["status"] == "error"
