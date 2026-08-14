@@ -12,7 +12,7 @@ pybatfish==2025.7.7.2423
 # Batfish answers come back as pandas DataFrames, and our analysis code works
 # with them directly, so pandas is a direct dependency rather than an
 # incidental one.
-pandas>=2.0
+pandas>=3.0.5
 
 # --- Layer 2: AI explanation layer -----------------------------------------
 # Official client for talking to a local Ollama server. Requires Ollama
