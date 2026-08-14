@@ -252,11 +252,32 @@ away has the wrong impression.
    configs. Filed as #87, and the ordering is in
    `docs/design/product-roadmap.md`.
 
-5. **The explanation layer is not evaluated here.** Whether the plain-English
+5. **Neither control exercises all three checks.** On `rtr-us5-secure`,
+   `routing` cannot run because `ROUTES` names `rtr-hq`/`rtr-branch`. On
+   `routing-secure`, `access_control` and `policy_compliance` cannot run
+   because they name `rtr-us5`.
+
+   **No fixture in this repository exercises all three checks cleanly at
+   once.** So "0 false positives on clean configs" means *each check is quiet
+   on a clean config it can read* — not that the system as a whole is quiet on
+   a clean config. Those are different claims and only the weaker one is
+   demonstrated.
+
+   Raised by @shubhamkataria2005 (#106). It is stated here as well as in the
+   controls section at his request, and he is right that this is its proper
+   home: a reader who jumps straight to this section to find the limitations
+   would otherwise miss it entirely.
+
+   Same root cause as #87 — policy hardcoded to fixture device names —
+   surfacing in the evaluation rather than in the product. A fixture that all
+   three could read would need a policy that names its devices, which is the
+   thing we cannot express yet.
+
+6. **The explanation layer is not evaluated here.** Whether the plain-English
    text is *good* is a separate question from whether the findings are *correct*.
    That needs human judgement, and it should be its own evaluation.
 
-6. **The explanation *wording* is still unevaluated.** See the section below for
+7. **The explanation *wording* is still unevaluated.** See the section below for
    the question feature, which now is measured.
 
 **The honest one-line summary:** *the checks reliably detect the faults they were
