@@ -5,7 +5,15 @@ WHAT THIS DOES
     explain(finding: dict) -> str
     Takes ONE F-1 finding (see docs/finding-format.md) and returns a plain-
     English explanation, using the local Warden model (ai/Modelfile). That
-    function is the whole public surface of this module.
+    function is the main public surface of this module.
+
+    explain_with_source(finding: dict) -> tuple[str, str]
+    Same computation, also reports which path produced the text: "model" or
+    "fallback". Added for #109 -- the dashboard's "AI explanation" byline is
+    unconditional, and had no way to tell a genuine model response apart
+    from `_fallback_plain_restatement()`'s deterministic text when Ollama is
+    absent. explain() is unchanged and still the right choice for a caller
+    that only wants the text.
 
 TWO DIFFERENT KINDS OF MISTAKE, TWO DIFFERENT FIXES
     Testing against real findings from the pipeline (see ai/Modelfile's
@@ -372,6 +380,39 @@ def _is_unacceptable(text: str, *, is_error: bool) -> bool:
     return _looks_like_speculation(text)
 
 
+def explain_with_source(finding: Dict[str, Any]) -> "tuple[str, str]":
+    """Same computation as explain(), but also says which path produced the
+    text: (text, source), source is "model" or "fallback".
+
+    Added for #109. The dashboard labels every explanation "AI explanation"
+    unconditionally, including when Ollama is absent and the text is
+    `_fallback_plain_restatement()`, deterministic string concatenation of
+    the finding's own fields -- correct and deliberate (#52), but no AI
+    wrote it, and explain()'s bare `str` return gave nothing downstream a
+    way to tell the two apart. This function reports the one extra fact
+    needed to fix that at the source, rather than having a caller guess
+    from the text's shape.
+
+    explain() itself is UNCHANGED below -- same signature, same behaviour,
+    every existing caller and test keeps working exactly as before. This
+    is the same decision with one more fact reported alongside it, not a
+    second one.
+    """
+    is_error = finding.get("status") == "error"
+
+    if _evidence_detail(finding):
+        for _ in range(2):
+            explanation = _try_generate(finding)
+            if explanation is None:
+                break
+            if not _is_unacceptable(explanation, is_error=is_error):
+                return explanation, "model"
+
+    if is_error:
+        return _fallback_error_explanation(finding), "fallback"
+    return _fallback_plain_restatement(finding), "fallback"
+
+
 def explain(finding: Dict[str, Any]) -> str:
     """Return a plain-English explanation of ONE F-1 finding.
 
@@ -414,20 +455,13 @@ def explain(finding: Dict[str, Any]) -> str:
     is strictly less than what was already being shown for a validation
     failure -- this is not a new code path, it is the existing one taken
     one step earlier.
+
+    Delegates to explain_with_source() and discards which path produced
+    the text. Callers that need that fact -- currently just the dashboard,
+    for the AI-byline provenance question in #109 -- use that function
+    directly instead.
     """
-    is_error = finding.get("status") == "error"
-
-    if _evidence_detail(finding):
-        for _ in range(2):
-            explanation = _try_generate(finding)
-            if explanation is None:
-                break
-            if not _is_unacceptable(explanation, is_error=is_error):
-                return explanation
-
-    if is_error:
-        return _fallback_error_explanation(finding)
-    return _fallback_plain_restatement(finding)
+    return explain_with_source(finding)[0]
 
 
 if __name__ == "__main__":
