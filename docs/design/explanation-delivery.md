@@ -1,3 +1,21 @@
+> **Status, added 14 August:** This proposal recommended Option B (a separate
+> endpoint, one finding at a time). That is not what shipped. #56 built an extra
+> `explanation` key on `/api/findings`, added downstream of F-1 validation --
+> closer to Option A, but respecting this document's central constraint that F-1
+> itself stays untouched without all four signatures.
+>
+> The recommendation wasn't taken, but the reasoning below still holds and is
+> otherwise missing from the repo -- CLAUDE.md §11 and web/main.py's docstring
+> both state what was built, neither explains what was rejected or why. Left
+> as-is below for that reason, including §2's slow-and-fails warning, which
+> correctly predicted #92, and §5's "unavailable" state, which predicted #109 --
+> both independently refiled as new, six days later.
+>
+> Not superseding this with a rewrite -- the mismatch between the recommendation
+> and the outcome is part of the record.
+
+---
+
 # Proposal: how the AI explanation reaches the dashboard
 
 **Status:** PROPOSAL — for team decision. Nothing is built against this yet.
