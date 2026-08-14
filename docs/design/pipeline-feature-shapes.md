@@ -104,9 +104,17 @@ These are two different user journeys, and the client described them as two
 different features — audit, versus *"block YouTube, and tell me what it breaks"*.
 The dashboard has to build them as separate screens regardless.
 
-**F-1 is unaffected.** Findings still carry `check="change_impact"` and `PC-` ids.
-This changes the *input* contract only. The *output* contract — the document that
-needs all four of us — does not move.
+**F-1 is unaffected by this proposal.** Findings still carry
+`check="change_impact"`; this changes the *input* contract only. The *output*
+contract — the document that needs all four of us — does not move.
+
+> **Updated after A-2.** This paragraph originally said findings carry `PC-`
+> ids. Amendment A-2 (#102, ratified) gave `change_impact` its own `CH-`
+> prefix, so that clause is no longer true. Corrected rather than left, because
+> this document is ADOPTED with four signatures and a reader is entitled to
+> trust it. The claim it was making — that the *shapes* proposal does not touch
+> F-1 — is unchanged and still correct; only the incidental detail about the
+> prefix moved.
 
 ## What this settles about severity
 

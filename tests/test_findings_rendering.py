@@ -65,7 +65,7 @@ needs_node = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def both():
-    """Render the colliding PC-000 pair in BOTH orders, through the real app.js."""
+    """Render the colliding RT-000 pair in BOTH orders, through the real app.js."""
     result = subprocess.run(
         ["node", str(HARNESS)],
         capture_output=True,
@@ -97,7 +97,7 @@ def rendered(both, request):
 def test_both_findings_with_the_same_id_are_rendered(rendered):
     """The whole point. Key by id and this drops to 1."""
     assert rendered["totalCards"] == 2, (
-        "two findings share the id PC-000 and both must appear. Getting 1 "
+        "two findings share the id RT-000 and both must appear. Getting 1 "
         "means the list is being keyed or de-duplicated by id, which silently "
         "hides one of them -- see the comment in web/static/app.js."
     )

@@ -1,14 +1,38 @@
-# Sprint 4 — planning proposal
+# Sprint 4 — the plan, and how it changed
 
-**Status:** PROPOSAL — not agreed. Argue with it.
-**Proposed dates:** 13–19 August 2026 (the seven-day cadence of Sprints 1–3)
+**Status:** **AGREED**, and running. Approved by all three teammates on #86
+(@patelankeet2, @shubhamkataria2005, @SamikaPerera). Milestone **Sprint 4**
+created, due 19 August.
+**Dates:** 13–19 August 2026 (the seven-day cadence of Sprints 1–3)
 **Written:** 12 August 2026, on Sprint 3's closing day
+**Status updated:** 13 August, day 1, once scope was settled and work had begun
 
 > Same shape as `docs/sprint3/SPRINT3.md`: a proposal the team changes, not a
-> plan handed down. Sprint 3's version was improved by all three of you, and
-> two of those changes were corrections rather than additions.
->
-> Replace this line with `**Status:** Agreed` once scope is settled.
+> plan handed down. It was changed — see "Three corrections from review" below,
+> all @shubhamkataria2005's, one of which reversed the author's own
+> recommendation.
+
+## Day 1, recorded as it happened
+
+The scope below is **not** the version first proposed. @shubhamkataria2005
+argued #78 should be timeboxed to item 1 with an explicit stop rather than
+committed whole, and the author agreed with him over his own table. That is
+what was assigned.
+
+Already delivered on day 1:
+
+| | |
+|---|---|
+| **A-2 ratified and merged** (#102) | @shubhamkataria2005 raised it on day 1 as asked, rather than when the code needed an ID. `change_impact` now owns `CH-`. |
+| **#78 items 1 AND 2 merged** (#104) | @patelankeet2. Multi-interface rule sets, and last-match-wins **modelled** rather than refused. Two of four client blockers gone. |
+
+**The timebox went past its stop, and that was right.** Item 2 turned out to be
+a reversal plus a guard rather than the sprint it might have been — knowable
+only from inside item 1. The timebox forced a re-decision with better
+information, which is what it is for, and that is worth carrying as precedent
+rather than leaving as a quiet overrun.
+
+Milestone at the time of writing: **3 closed, 10 open.**
 
 ---
 
@@ -45,11 +69,17 @@ its only real network is not finished, however green the suite is.
 
 ### What it needs, in dependency order
 
-1. **Multi-interface rule sets** — several ACLs, each bound to its own
-   interface, rather than one `acl_in`. **Blocks 2 and 3.**
-2. **Real PF Sense evaluation order** — last-match-wins, or a per-pair refusal
-   that is defensible rather than blanket. With zero `quick` rules, #58's
-   current check refuses every overlapping pair.
+1. ~~**Multi-interface rule sets**~~ — **DONE, #104.** Several ACLs, each bound
+   to its own interface, rather than one `acl_in`.
+2. ~~**Real PF Sense evaluation order**~~ — **DONE, #104.** With zero `quick`
+   rules the converter reverses the list, which is provably the same decision
+   as last-match-wins for every flow. Verified against Batfish. Mixed lists
+   still refuse.
+
+   *Items 1 and 2 were written as pending and delivered on day 1. Left in
+   place, struck through, because the dependency ordering below them is what
+   this list was for and deleting them would hide that two of the four are
+   gone.*
 3. **A decision on NAT** — two of his rules carry `associated-rule-id` and are
    meaningless without it. NAT is out of scope today; that may have to change,
    or we say plainly which rules we cannot interpret.
