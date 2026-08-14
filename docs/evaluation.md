@@ -1,7 +1,10 @@
 # Evaluation — does Netwise find the flaws it is meant to find?
 
-**Measured:** 10 August 2026, re-run the same day against `main` at `62d8fc7`
-(211 tests passing) after #73 fixed the bug this evaluation found.
+**Measured:** 10 August 2026. **Re-run unchanged on 13 August** against `main`
+at `94c1f7e` (304 tests passing), after the Sprint 3 queue and the converter
+work landed. Every detection result below reproduced identically; only the
+client-export section in "what this does not show" needed correcting, and it
+had drifted in the direction of *understating* what the converter can now do.
 **Story:** US-15 (#15). This is the evidence chapter of the report.
 **How to reproduce:** every number below comes from `python -m analysis.pipeline
 <fixture>`. Nothing here is recalled or estimated; re-run the commands and you
@@ -99,10 +102,36 @@ still holds and is not reported.
 
 ### Controls — configurations with nothing wrong
 
-| Fixture | Result | False positives |
-|---|---|---|
-| `rtr-us5-secure` | `AC-000` none, `PC-000` none | **0** |
-| `routing-secure` | `RT-000` none | **0** |
+| Fixture | Checked clean | Could not check | False positives |
+|---|---|---|---|
+| `rtr-us5-secure` | `AC-000`, `PC-000` | **`RT-050`** | **0** |
+| `routing-secure` | `RT-000` | **`AC-001`, `PC-050`** | **0** |
+
+> **This table used to omit the "could not check" column**, listing only the
+> `none` findings. Found by @shubhamkataria2005 (#106), reading the document
+> that describes his own check.
+>
+> **"0 false positives" was and is correct** — an `error` is not a false
+> positive, and nothing here contradicts the headline. What was wrong is that
+> the *Result* column understated what a user actually sees. A control fixture
+> was shown producing a clean result when what it produces is one clean result
+> and two checks that could not run.
+>
+> That is **F-4 being flattened inside the document whose subject is whether
+> this tool tells the truth.** A reader saw full clean coverage; the tool's own
+> output says two thirds of it was never exercised.
+
+**No fixture in this repository exercises all three checks cleanly at once**,
+and that bounds what these controls demonstrate. On `rtr-us5-secure`, `routing`
+cannot run because `ROUTES` names `rtr-hq`/`rtr-branch`. On `routing-secure`,
+`access_control` and `policy_compliance` cannot run because they name
+`rtr-us5`.
+
+So the controls show that **each check is quiet on a clean config it can
+read** — not that the system as a whole is quiet on a clean config. That is a
+weaker statement than the table implied, and it is the same root cause as #87:
+policy hardcoded to fixture device names, surfacing in the evaluation rather
+than in the product.
 
 ### Control — a configuration that cannot be read
 
@@ -125,6 +154,12 @@ the difference between a tool that is unhelpful and a tool that is dangerous.
 | False positives on clean configs | **0 of 2** |
 | Unreadable config reported as clean | **Never** — 3 errors, 0 green ticks |
 | Every detection names the responsible line | **Yes** |
+| Controls exercising **all three** checks at once | **0 of 2** |
+
+The last row is there so a reader who takes only this table away is not left
+with the impression the controls table used to give. Both controls also
+produce "could not check" findings, because no fixture in the repository
+names devices all three checks can read.
 
 ---
 
@@ -149,21 +184,51 @@ away has the wrong impression.
    counts and never a value. What that established (#78):
 
    - **zero of seven rules are marked `quick`**, so PF Sense's last-match-wins
-     applies to his whole rule set and our first-match-wins model disagrees
-     wherever two overlapping rules differ
-   - the converter **refuses it earlier still**: his rules span four interface
-     values across three interfaces, and we support one
+     applies to his whole rule set
+   - his rules span four interface values across three interfaces
    - 1,998 elements against our fixture's 54, carrying `nat`, `openvpn`,
      `ipsec`, `aliases`, `dhcpd` and `shaper`
 
-   So the rule-order question is **answered**, not open, and the answer is the
-   unhelpful one. Analysing his firewall needs multi-interface rule sets, real
-   PF Sense evaluation order, a NAT decision, and two field-omission questions
-   still with him (#80).
+   **Two of those blockers are now gone (#104, 13 August), and this paragraph
+   used to say otherwise.** It said our first-match-wins model "disagrees
+   wherever two overlapping rules differ" and that the converter "refuses it
+   earlier still" on multiple interfaces. Both were true when written and are
+   not now:
 
-   **What the converter did not do is worth as much as what it did not manage:**
-   it produced no plausible, wrong ACL. It stopped and named the construct it
-   could not handle, on the first real firewall it has ever seen.
+   - **multi-interface rule sets are supported** — each interface gets its own
+     ACL, checked independently
+   - **rule order is modelled rather than refused.** With zero `quick` rules,
+     "stop immediately" never fires, so PF Sense's decision for any flow is the
+     action of the *last* matching rule — which is by construction the *first*
+     match of the reversed list under first-match-wins. Same decision, every
+     flow. Verified against Batfish on the exact pair `CLAUDE.md` §7 documents
+     as the measured failure:
+
+     ```
+     emitted:  permit tcp any host 10.20.0.5 eq 443
+               deny   tcp any host 10.20.0.5
+     HTTPS -> PERMIT   (PF Sense permits: it is the last match)
+     HTTP  -> DENY
+     ```
+
+   His export still refuses, and the refusal now names everything remaining in
+   one message rather than failing at the first thing it meets:
+
+   ```
+   REFUSED: filter rules apply to interface(s) ['WireGuard', 'openvpn', 'wan'],
+            which have no static address configured
+   ```
+
+   What is left is a **DHCP WAN carrying rules** and **rules naming two VPN
+   interfaces absent from `<interfaces>`** — plus the NAT decision and the
+   field-omission questions still with him (#80). Neither of the first two was
+   on #78's original item list, which was written before we knew which
+   interfaces carried rules.
+
+   **What the converter did not do is still worth as much as what it did not
+   manage:** it has never produced a plausible, wrong ACL. It stops and names
+   the construct it cannot handle, and it did that on the first real firewall
+   it ever saw.
 
 4. **The device-scoping errors are correct, but they are still gaps — and the
    gap is larger than this document originally implied.** Several runs report
@@ -187,11 +252,32 @@ away has the wrong impression.
    configs. Filed as #87, and the ordering is in
    `docs/design/product-roadmap.md`.
 
-5. **The explanation layer is not evaluated here.** Whether the plain-English
+5. **Neither control exercises all three checks.** On `rtr-us5-secure`,
+   `routing` cannot run because `ROUTES` names `rtr-hq`/`rtr-branch`. On
+   `routing-secure`, `access_control` and `policy_compliance` cannot run
+   because they name `rtr-us5`.
+
+   **No fixture in this repository exercises all three checks cleanly at
+   once.** So "0 false positives on clean configs" means *each check is quiet
+   on a clean config it can read* — not that the system as a whole is quiet on
+   a clean config. Those are different claims and only the weaker one is
+   demonstrated.
+
+   Raised by @shubhamkataria2005 (#106). It is stated here as well as in the
+   controls section at his request, and he is right that this is its proper
+   home: a reader who jumps straight to this section to find the limitations
+   would otherwise miss it entirely.
+
+   Same root cause as #87 — policy hardcoded to fixture device names —
+   surfacing in the evaluation rather than in the product. A fixture that all
+   three could read would need a policy that names its devices, which is the
+   thing we cannot express yet.
+
+6. **The explanation layer is not evaluated here.** Whether the plain-English
    text is *good* is a separate question from whether the findings are *correct*.
    That needs human judgement, and it should be its own evaluation.
 
-6. **The explanation *wording* is still unevaluated.** See the section below for
+7. **The explanation *wording* is still unevaluated.** See the section below for
    the question feature, which now is measured.
 
 **The honest one-line summary:** *the checks reliably detect the faults they were
