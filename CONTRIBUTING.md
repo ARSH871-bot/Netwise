@@ -23,7 +23,29 @@ git push -u origin feat/us-11-routing-check
 gh pr create --fill                        # or open the PR on github.com
 ```
 
-Then ask someone to review it. Once approved, merge, and delete the branch.
+Then ask someone to review it. Once approved, merge. GitHub deletes the branch
+for you — "Automatically delete head branches" is on.
+
+### Open the pull request as soon as you push, even as a draft
+
+`gh pr create --draft` costs nothing and is the difference between work that
+exists and work that is *visible*.
+
+**A pushed branch with no PR is invisible to everything.** It is not on the
+board, not in the queue, not in anyone's review list, and not in any list this
+project keeps. Nobody has to ignore it — they simply never see it.
+
+Two pieces of real work were found that way, both by accident, both while
+looking for something else:
+
+| | |
+|---|---|
+| `docs/a1-ratified-and-sprint3-scope` | a fix written and never opened. `main` contradicted itself about A-1 for two days — telling two people they still owed signatures they had already given (#97) |
+| `docs/explanation-delivery` | Samika's design proposal with three options, a recommendation and a sign-off table, unmerged since 6 August. Its constraint 2 predicted #92, which was then filed six days later as a fresh finding (#135) |
+
+Neither was anyone's fault, and neither would have happened if the PR had been
+opened at push time. A draft says "this exists and is not ready"; a branch with
+no PR says nothing at all.
 
 ### Why this matters here specifically
 
