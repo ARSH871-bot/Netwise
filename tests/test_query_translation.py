@@ -154,6 +154,23 @@ def test_unrecognised_question_is_refused_not_guessed():
 # --- Reachability: source resolution -------------------------------------------
 
 
+# --- #108: a node location never crosses an inbound ACL ---------------------
+
+
+def test_reachability_starts_from_the_entry_point_not_the_bare_device():
+    """The bug itself. startLocation=source_device only sees traffic
+    ORIGINATING at the device, so an inbound ACL is never traversed --
+    measured live, this made a config that blocked the traffic and one that
+    permitted everything answer identically, both "grounded: true". Checked
+    at the boundary that matters, what was actually sent to Batfish."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    answer_question("Can rtr-us5 reach 10.20.0.5?", session)
+
+    [call] = session.q.traceroute_calls
+    assert call["startLocation"] == "@enter(rtr-us5)"
+
+
 def test_reachability_refuses_when_no_known_device_is_named():
     session = _session_with_devices({"rtr-us5"})
     result = answer_question("Can the guest network reach 10.20.0.5?", session)
