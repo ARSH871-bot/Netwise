@@ -36,6 +36,16 @@ SCOPE -- TIMEBOXED ON PURPOSE, PER CLAUDE.md SECTION 7
     explicit deny-all, matching PF Sense's real fail-closed default rather
     than leaving it unbound. See convert() and _acl_name().
 
+    A RULE NAMING AN INTERFACE THIS MODULE CANNOT MODEL is refused with one
+    of two distinct reasons, not one blanket message (#78, re-measured
+    against the real export after item 1 landed): a role declared under
+    <interfaces> but lacking a static address (DHCP or unconfigured) genuinely
+    has no address to bind a Cisco ACL to; a role never declared under
+    <interfaces> at all is most likely VPN/tunnel policy (OpenVPN, WireGuard),
+    which this module does not parse and is out of scope regardless of
+    addressing. See _declared_interface_roles() for why conflating the two
+    was actively wrong about the second kind, not just imprecise.
+
 RULE ORDER: MODELLED WHERE IT CAN BE, REFUSED WHERE IT CANNOT (issues #47, #78)
     PF Sense's real rule evaluation is "last matching rule wins" unless a
     rule is marked "quick", in which case evaluation stops there and that
@@ -321,6 +331,34 @@ def _rule_interface(rule_el: ET.Element) -> Optional[str]:
     """
     role = _text(rule_el, "interface")
     return role or None
+
+
+def _declared_interface_roles(root: ET.Element) -> "set[str]":
+    """Every role named directly under <interfaces>, regardless of whether
+    it has a static address -- unlike _parse_interfaces(), which silently
+    drops a role with no <ipaddr>/<subnet>.
+
+    Exists so convert() can tell apart the two ways a rule's <interface> can
+    fail to resolve to anything modellable (#78):
+
+      - declared, but skipped by _parse_interfaces() for lacking a static
+        address (DHCP or unconfigured) -- the role IS a real interface, it
+        just cannot be written as a Cisco ACL binding without an address
+      - never declared at all -- PF Sense lets a filter rule's <interface>
+        name something that is not a LAN interface in this section at all,
+        most often a VPN/tunnel role (OpenVPN, WireGuard) that appears
+        elsewhere in the export, if anywhere. Nothing here parses those
+        sections; the role is simply absent.
+
+    Both used to collapse into one message, "no static address configured",
+    which is only true of the first kind and actively misleading about the
+    second -- a WireGuard role does not become convertible by giving it an
+    address, because tunnel policy is not LAN filtering.
+
+    Assumes root.find("interfaces") is not None -- convert() calls
+    _parse_interfaces(root) first, which already raises otherwise.
+    """
+    return {el.tag for el in root.find("interfaces")}
 
 
 def _acl_name(role: str, *, rule_bearing_roles: "set[str]") -> str:
@@ -670,11 +708,37 @@ def convert(xml_path: Union[str, Path]) -> str:
             "knowable, refusing rather than guessing"
         )
 
+    # Split rather than one blanket message (#78): a role that is genuinely
+    # declared under <interfaces> just lacks an address (DHCP or
+    # unconfigured); a role that is not declared there at all is most likely
+    # VPN/tunnel policy (OpenVPN, WireGuard), which this module does not
+    # parse and is out of scope regardless of addressing. Conflating the two
+    # under "no static address configured" is wrong about the second kind --
+    # see _declared_interface_roles().
     unknown_roles = rule_roles - set(interfaces)
     if unknown_roles:
+        declared = _declared_interface_roles(root)
+        no_static_address = sorted(unknown_roles & declared)
+        not_declared_at_all = sorted(unknown_roles - declared)
+
+        reasons = []
+        if no_static_address:
+            reasons.append(
+                f"{no_static_address} have no static address configured "
+                "(DHCP or unconfigured) -- a Cisco ACL needs an address to "
+                "bind rules to"
+            )
+        if not_declared_at_all:
+            reasons.append(
+                f"{not_declared_at_all} are not declared under <interfaces> "
+                "at all -- most likely VPN/tunnel policy (e.g. OpenVPN, "
+                "WireGuard), which this module does not parse and is out of "
+                "scope, not LAN filtering"
+            )
+
         raise PfSenseConversionError(
-            f"filter rules apply to interface(s) {sorted(unknown_roles)}, "
-            "which have no static address configured"
+            "filter rules apply to interface(s) that cannot be modelled: "
+            + "; ".join(reasons)
         )
 
     # One bucket of rules per interface, in document order within each --
