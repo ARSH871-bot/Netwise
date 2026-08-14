@@ -28,32 +28,48 @@ const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 };
   A SECOND RULE, learned the hard way: `id` is NOT treated as unique.
 
   Findings are rendered in list order and never keyed, de-duplicated or looked
-  up by id. That is deliberate, because ids are not currently unique -- see the
-  PC-000 collision documented in web/mock_findings.py. `policy_compliance` and
-  `change_impact` share the "PC" prefix and both number their sentinel finding
-  000, so a run where one is clean and the other errored produces two findings
-  called PC-000.
+  up by id. If this file keyed cards by id -- the obvious thing to do, and what
+  a framework would do by default -- one of a colliding pair would be silently
+  dropped. The dropped one could be the error, leaving the user reading "policy
+  compliance: all clear" with no sign that a check never ran. That is the F-4
+  failure exactly, arriving through the id field rather than the status field.
 
-  If this file keyed cards by id -- the obvious thing to do, and what a
-  framework would do by default -- one of that pair would be silently dropped.
-  The dropped one could be the error, leaving the user reading "policy
-  compliance: all clear" with no sign that the change-impact check never ran.
-  That is the F-4 failure exactly, arriving through the id field rather than
-  the status field.
+  THE COLLISION THIS RULE WAS WRITTEN FOR IS FIXED. IT IS STILL THE RULE.
 
-  So: no keying by id until ids are actually unique (the A-2 amendment, #95,
-  is what would make them unique).
+  This paragraph used to say ids "are not currently unique", citing the PC-000
+  pair: `policy_compliance` and `change_impact` shared the "PC" prefix and both
+  numbered their sentinel 000, so a run where one was clean and the other
+  errored produced two findings called PC-000. It named the A-2 amendment as
+  the thing that "would" make them unique.
 
-  The mock data keeps that collision on purpose -- but keeping a fixture is
-  not a test, and for a while this comment claimed otherwise. Nothing called
-  renderFindings() at all; the only Node harness drove the chat pane. The
-  refactor this paragraph warns about would have passed the whole suite.
+  A-2 landed -- #102, merged 13 August. `change_impact` owns "CH-" now, and
+  those two checks cannot collide with each other any more.
+
+  The rule does not relax, because A-2 removed a collision rather than the
+  possibility of one. It made two NAMED checks unable to share an id. It did
+  not make ids structurally unique: `make_finding()` takes `number` from its
+  caller, so two findings from the SAME check that pass the same number still
+  produce the same id -- convention, not structure. Any future prefix or
+  numbering mistake lands in exactly this code path.
+
+  `analysis/pipeline.duplicate_id_findings()` exists for the same reason and is
+  the other half of the answer: it DETECTS what the contract cannot PREVENT.
+  A guard that is only correct while a convention holds has to stay.
+
+  Keeping a fixture is not a test, and for a while this comment claimed
+  otherwise. Nothing called renderFindings() at all; the only Node harness
+  drove the chat pane. The refactor this paragraph warns about would have
+  passed the whole suite.
 
   tests/test_findings_rendering.py now drives THIS function through the real
-  file, with the colliding pair in BOTH orders. The order matters: keying by
-  id keeps the last value, so with the error first it is the ERROR that
-  disappears -- which is the dangerous direction, and the one a single-order
-  test would have missed.
+  file, with a colliding pair in BOTH orders. Since A-2 the pair it uses is
+  RT-000 twice -- `routing` clean and `routing` errored, one check colliding
+  with itself -- rather than the old cross-check PC-000, precisely because a
+  distinct prefix removes the second kind and not the first.
+
+  The order matters: keying by id keeps the last value, so with the error
+  first it is the ERROR that disappears -- which is the dangerous direction,
+  and the one a single-order test would have missed.
 */
 
 /* ------------------------------------------------------------------------ *
