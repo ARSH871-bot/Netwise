@@ -32,7 +32,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from ai.explain import explain
+from ai.explain import explain_with_source
 from ai.query import answer_question
 from analysis import findings, pipeline as analysis_pipeline
 from web import mock_findings
@@ -141,6 +141,18 @@ def _attach_explanations(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         (and are still validated against) the F-1 shape unchanged. #31's
         own text names this as the option that "avoids that entirely".
 
+        A second extra key, "explanation_source" ("model" or "fallback"),
+        is added the same way, for the same reason (#109): the dashboard
+        labels every explanation "AI explanation" unconditionally, and on a
+        machine without Ollama that text is
+        `ai.explain._fallback_plain_restatement()`, deterministic string
+        concatenation of the finding's own fields -- correct and grounded
+        (#52), but no model wrote it. Attaching the real source here, downstream
+        of F-1 validation like "explanation" itself, is Option B from #109:
+        it keeps ai.explain.explain_with_source()'s contract narrow (report
+        the fact, do not decide what the dashboard does with it) and leaves
+        the byline/CSS decision to whoever owns that presentation.
+
     WHY ONLY status="found"
         A "none" finding has nothing to explain beyond its own summary,
         and an "error" finding has no real Batfish output to ground an
@@ -150,18 +162,19 @@ def _attach_explanations(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         encodes this same rule for which cards get the explanation slot
         at all; this keeps the two in agreement.
 
-    WHY THE EXTRA try/except, WHEN explain() IS BUILT NOT TO RAISE
+    WHY THE EXTRA try/except, WHEN explain_with_source() IS BUILT NOT TO RAISE
         ai/explain.py's own module docstring guarantees explain() never
-        raises -- an unreachable Ollama, a model that was never built, or
-        a malformed finding all degrade to deterministic fallback text
-        internally (see _try_generate() and the thin-evidence guard).
-        This except is a second, independent layer at a boundary this
-        module does not own: if that guarantee is ever wrong, one
-        explanation failing must not take down the WHOLE findings
-        response. Same reasoning analysis.pipeline.run_check() already
-        applies to one check's crash not being allowed to break the other
-        three, one layer further out. No explanation is attached in that
-        case -- the finding still renders, just without one, matching
+        raises, and explain_with_source() is the same computation with one
+        more fact reported alongside it -- an unreachable Ollama, a model
+        that was never built, or a malformed finding all degrade to
+        deterministic fallback text internally (see _try_generate() and the
+        thin-evidence guard). This except is a second, independent layer at
+        a boundary this module does not own: if that guarantee is ever
+        wrong, one explanation failing must not take down the WHOLE
+        findings response. Same reasoning analysis.pipeline.run_check()
+        already applies to one check's crash not being allowed to break the
+        other three, one layer further out. Neither key is attached in that
+        case -- the finding still renders, just without them, matching
         #31's acceptance criterion for an unreachable Ollama exactly.
 
     NOTE: MUTATES `results` IN PLACE
@@ -179,7 +192,9 @@ def _attach_explanations(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if finding.get("status") != "found":
             continue
         try:
-            finding["explanation"] = explain(finding)
+            explanation, source = explain_with_source(finding)
+            finding["explanation"] = explanation
+            finding["explanation_source"] = source
         except Exception:
             pass
     return results
