@@ -354,3 +354,171 @@ the restated question and the answer text.
 That is the sequence worth keeping: an evaluation found a defect in shipped
 code, the defect was fixed the same day, and the evaluation was re-run rather
 than edited to match.
+
+---
+
+## Part 3, is the explanation text any good? (#90)
+
+Part 1 measures whether the findings are *correct*. It does not, and per its
+own item 6 above cannot, measure whether the plain-English text explaining
+them is *good*. Those are different questions. We have structural evidence
+the text is not wrong (#52, `ai/explain.py`'s two safety nets), and no
+evidence yet that it is useful, and the person who wrote a check is the worst
+judge of whether its own explanation is clear, because the finding already
+makes sense to them before they read a word of the prose.
+
+**This section is a first round, not a finished evaluation.** One rating
+below is filled in (mine). The other three are blank on purpose, per the
+issue's acceptance criteria: rate independently, before discussing, and
+record disagreement rather than average it away, since a finding two people
+read differently is the interesting result. @ARSH871-bot @shubhamkataria2005
+@SamikaPerera, your ratings and reasoning go in the table under your own
+name, added by you rather than relayed by anyone else, then we discuss.
+
+### Method
+
+Not changing the prompt or `ai/Modelfile`, measuring first, per the issue's
+own scope note; a change made before the measurement has nothing to be judged
+against.
+
+Five real findings, generated from the pipeline against real fixtures, not
+invented for this exercise. Spans three checks, both a `found` and an
+`error`, and since I wrote `routing` and the AI layer, not
+`access_control` or `policy_compliance`, four of the five are explanations
+of a check I did not write, so I am not grading my own homework on this
+round.
+
+| id | check | status | wrote the check? |
+|---|---|---|---|
+| RT-050 | routing | error | Ankeet |
+| AC-001 | access_control | found | Arsh |
+| PC-001 | policy_compliance | found | Shubham |
+| AC-002 | access_control | found | Arsh |
+| PC-005 | policy_compliance | found | Shubham |
+
+### The five findings, exactly as generated
+
+Regenerate with `python -m ai.explain` against these fixtures, or the snippet
+below, if you want to confirm these are still current rather than trusting
+the paste, `explain()` retries once against the model, so wording can vary
+slightly between runs even for the same finding.
+
+**RT-050** (`tests/fixtures/rtr-us5-insecure`, status=`error`)
+```
+summary: 2 route assertion(s) could not be checked against this config
+evidence.detail: They are written about rtr-branch, rtr-hq, which are not
+                  in this snapshot. Nothing is claimed about them either way.
+explanation_source: fallback
+explanation: This check could not be completed, so nothing is confirmed
+             about the network either way. The underlying reason: They are
+             written about rtr-branch, rtr-hq, which are not in this
+             snapshot. Nothing is claimed about them either way.
+```
+
+**AC-001** (`tests/fixtures/rtr-us5-insecure`, status=`found`)
+```
+summary: Unencrypted web traffic reaches the internal server
+evidence.detail: Expected DENY but got PERMIT, decided by: permit ip any any
+explanation_source: model
+explanation: The device's rule set currently allows all traffic through
+             with no restriction, which is what let unencrypted web traffic
+             reach the internal server.
+```
+
+**PC-001** (`tests/fixtures/rtr-us5-insecure`, status=`found`)
+```
+summary: The internal network can reach servers it should not
+evidence.detail: Flow start=rtr-us5 [10.10.10.0:49152->8.8.8.8:80 TCP (SYN)]
+                  is permitted but policy forbids it. Decided by:
+                  permit ip any any
+explanation_source: model
+explanation: The device rtr-us5 has a rule that allows all traffic to pass
+             through with no restriction, which is what let the internal
+             network reach servers it should not. The policy currently
+             permits this unauthorized access.
+```
+
+**AC-002** (`tests/fixtures/rtr-us5-messy`, status=`found`), a dead-rule
+finding, the reasoning shape `_compute_dead_rule_outcome()` exists for (see
+`ai/explain.py`'s module docstring for the real bug it once caught here).
+```
+summary: ACL rule never takes effect in acl_in
+evidence.detail: Unreachable line: permit udp 10.10.10.0 0.0.0.255 host
+                  218.8.104.58 eq domain (action PERMIT). Blocked by:
+                  deny ip 10.10.10.0 0.0.0.255 any. Reason: BLOCKING_LINES
+explanation_source: model
+explanation: The ACL rule on the unreachable line in the rtr-us5's acl_in
+             configuration never takes effect, because it is overridden by
+             a blocking rule that evaluates first. As a result, traffic
+             matching the unreachable line's pattern is actually denied,
+             rather than allowed. The blocking rule, which denies all
+             traffic to the specified IP range, supersedes the action of
+             the unreachable line, making its own permit action irrelevant.
+```
+
+**PC-005** (`tests/fixtures/rtr-us5-messy`, status=`found`)
+```
+summary: HTTPS to the internal server is blocked, so the service is
+         unreachable
+evidence.detail: Flow start=rtr-us5 [10.10.10.0:49152->10.20.0.5:443 TCP
+                  (SYN)] is denied but policy requires it. Decided by:
+                  deny ip 10.10.10.0 0.0.0.255 any
+explanation_source: model
+explanation: The internal server can be reached over HTTPS, but the
+             device's policy currently blocks this traffic.
+
+             This check found that a specific rule on the rtr-us5 device
+             denies HTTPS traffic to the internal server, even though the
+             service is required. The evidence shows that the reason for
+             this denial is due to a specific policy statement that
+             requires blocking of HTTPS traffic.
+```
+
+### Ratings
+
+Scale: 1 (poor) to 5 (excellent). **Accuracy**: does the text claim only what
+the evidence actually shows. **Usefulness**: would this sentence, alone, tell
+someone who has never read `evidence.detail` what is actually wrong.
+
+| id | rater | accuracy | usefulness | notes |
+|---|---|---|---|---|
+| RT-050 | Ankeet | 5 | 4 | Accurate, and correctly refuses to guess at rtr-branch/rtr-hq. Slightly repeats the raw evidence text verbatim in the second sentence rather than rephrasing it, reads a little mechanical for a fallback but that is exactly what it is, not model prose, and it says so nowhere near confidently enough to mislead. |
+| AC-001 | Ankeet | 5 | 4 | Correct and specific about the rule (`permit ip any any`) and the consequence. Slightly generic phrasing, "allows all traffic through with no restriction" is the evidence text lightly reworded rather than genuinely explained in different words. |
+| PC-001 | Ankeet | 4 | 3 | Accurate, but the second sentence, "the policy currently permits this unauthorized access", is a little confusing on a first read: it sounds like it could mean the *written* policy permits it, when the actual finding is that the *live config* violates the policy. Worth someone else's eyes on whether this reads clearly cold. |
+| AC-002 | Ankeet | 5 | 5 | This is the one I most wanted rated by someone who did not write `_compute_dead_rule_outcome()`. Correctly states the shadowing direction (permit shadowed by an earlier deny, so the line is denied not permitted) and explains why in one pass, matches the exact computed fact fed to the model. |
+| PC-005 | Ankeet | 3 | 2 | **The one I'd flag as a concrete problem, not just a style note.** First sentence: "The internal server can be reached over HTTPS, but the device's policy currently blocks this traffic" reads as self-contradictory on a first pass, "can be reached" then "blocks this traffic" in the same breath, before the reader has enough context to know one is describing the requirement and the other the actual (wrong) behaviour. Second paragraph's last sentence, "requires blocking of HTTPS traffic", inverts it further, the policy requires the opposite, that HTTPS be *allowed*. Accurate in substance (nothing invented, matches evidence.detail), but the phrasing risks a reader walking away with the causality backwards. |
+| RT-050 | @ARSH871-bot | | | |
+| AC-001 | @ARSH871-bot | | | |
+| PC-001 | @ARSH871-bot | | | |
+| AC-002 | @ARSH871-bot | | | |
+| PC-005 | @ARSH871-bot | | | |
+| RT-050 | @shubhamkataria2005 | | | |
+| AC-001 | @shubhamkataria2005 | | | |
+| PC-001 | @shubhamkataria2005 | | | |
+| AC-002 | @shubhamkataria2005 | | | |
+| PC-005 | @shubhamkataria2005 | | | |
+| RT-050 | @SamikaPerera | | | |
+| AC-001 | @SamikaPerera | | | |
+| PC-001 | @SamikaPerera | | | |
+| AC-002 | @SamikaPerera | | | |
+| PC-005 | @SamikaPerera | | | |
+
+### Disagreements
+
+Not filled in until at least a second rater has rated independently, a
+disagreement needs two ratings to exist. Record here rather than averaging
+the numbers away: which finding, whose ratings differed and by how much, and
+what each rater actually meant by their number, since two people can give the
+same score for different reasons just as easily as different scores for the
+same finding.
+
+### At least one concrete improvement
+
+**PC-005's phrasing risks the causality reading backwards** (see the rating
+note above). If this holds up once someone else reads it cold, worth raising
+as a `ai/Modelfile` prompt change, not fixed here since this exercise is
+measurement only, per its own scope note. Whether it is a real, general
+problem (the model tends to garble "policy requires X but config denies X"
+into something that reads as "policy requires denying X") or specific to
+this one finding is exactly the kind of thing a second rater's independent
+note would settle.
