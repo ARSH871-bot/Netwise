@@ -32,33 +32,41 @@ THE EVIDENCE IS REAL WHERE IT CAN BE
     the dashboard is rendering strings we genuinely produce rather than
     plausible-looking inventions. Nothing here describes a real network.
 
->>> THE PC-000 COLLISION IS DELIBERATE -- DO NOT "FIX" IT HERE <<<
+THE PC-000 COLLISION THIS FILE USED TO CARRY IS GONE -- A-2 FIXED IT
 
-    Two findings below share the id PC-000: the policy_compliance "none" and
-    the change_impact "error". That is not a mistake in this file. It is a real
-    defect in the shared contract, which this mock data exists to keep visible:
+    This block used to say the opposite, in capitals: do not "fix" the PC-000
+    collision here, because it was real. Two findings below shared one id --
+    the policy_compliance "none" and the change_impact "error" -- because
+    PREFIX_BY_CHECK in analysis/findings.py mapped BOTH checks to the prefix
+    "PC" while both sentinels defaulted to number 0. Any real run where one of
+    those checks was clean and the other errored produced two findings with the
+    same id, and this file kept the pair on purpose so the defect stayed
+    visible on screen.
 
-        PREFIX_BY_CHECK in analysis/findings.py maps BOTH policy_compliance
-        and change_impact to the prefix "PC", and both use SENTINEL_NUMBER = 0
-        for their "nothing found" / "could not run" findings. So any real run
-        where one of Shubham's two checks is clean and the other errors
-        produces two findings with the same id.
+    F-1 amendment A-2 (#102, merged 13 August) gave change_impact its own
+    "CH-" prefix, so those two checks can no longer collide with each other at
+    all. Nothing in this file changed: it builds every finding through the
+    helpers in analysis/findings.py, so the new prefix arrived on its own. The
+    ids these mocks emit today, which is the evidence for this comment:
 
-    docs/finding-format.md calls id a "unique identifier", so anything
-    downstream is entitled to key on it -- this dashboard, the AI layer, a diff
-    between two runs. If this dashboard did, one of these two would be silently
-    dropped -- and if the dropped one were the error, the user would see
-    "policy compliance: all clear" with no indication that change impact never
-    ran.
+        AC-001   PC-000   RT-001   CH-000   AC-002   RK-001
+                 ^^^^^^            ^^^^^^
+                 policy_compliance change_impact
+                 "none"            "error"
 
-    (Cited against the F-1 document deliberately, not against a docstring in
-    analysis/findings.py. PR #19 rewrites the docstring that used to make this
-    point, and a comment quoting a sentence that no longer exists is worse than
-    no comment at all. The contract document is the durable reference.)
+    Six findings, six distinct ids, no duplicate in the list.
 
-    The dashboard is written not to key by id (see the note at the top of
-    static/app.js), so it survives. This pair is the case that proves it.
-    Renumber these only once the contract itself makes ids unique.
+    Recorded rather than deleted, because the pair is cited by name elsewhere
+    -- the note at the top of static/app.js, and the docstring of
+    tests/test_findings_rendering.py, which was written against this pair and
+    has since moved to one that collides WITHIN a single check. Someone
+    following either of those references needs to find the answer here rather
+    than a gap.
+
+    THE DASHBOARD STILL DOES NOT KEY BY ID, and that is still correct -- see
+    static/app.js for the reasoning. A-2 made two NAMED checks unable to
+    collide; it did not make duplicate ids impossible, because uniqueness
+    within a single check is still convention rather than structure.
 """
 
 from typing import Any, Dict, List
