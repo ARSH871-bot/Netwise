@@ -212,18 +212,25 @@ away has the wrong impression.
      ```
 
    His export still refuses, and the refusal now names everything remaining in
-   one message rather than failing at the first thing it meets:
+   one message, each attributed to its real cause rather than one blanket
+   reason:
 
    ```
-   REFUSED: filter rules apply to interface(s) ['WireGuard', 'openvpn', 'wan'],
-            which have no static address configured
+   REFUSED: filter rules apply to interface(s) that cannot be modelled:
+   ['wan'] have no static address configured (DHCP or unconfigured) -- a
+   Cisco ACL needs an address to bind rules to; ['WireGuard', 'openvpn'] are
+   not declared under <interfaces> at all -- most likely VPN/tunnel policy
+   (e.g. OpenVPN, WireGuard), which this module does not parse and is out of
+   scope, not LAN filtering
    ```
 
    What is left is a **DHCP WAN carrying rules** and **rules naming two VPN
-   interfaces absent from `<interfaces>`** — plus the NAT decision and the
+   interfaces absent from `<interfaces>`**, plus the NAT decision and the
    field-omission questions still with him (#80). Neither of the first two was
    on #78's original item list, which was written before we knew which
-   interfaces carried rules.
+   interfaces carried rules. The message used to call both "no static address
+   configured", true only of the first, split once that was found to be
+   actively misleading about the second rather than merely imprecise.
 
    **What the converter did not do is still worth as much as what it did not
    manage:** it has never produced a plausible, wrong ACL. It stops and names

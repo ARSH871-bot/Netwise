@@ -181,18 +181,26 @@ Batfish runs in Docker container `batfish` (image `batfish/allinone`), exposing
   our fixture's 54, carrying `nat`, `openvpn`, `ipsec`, `aliases`, `dhcpd` and
   `shaper`.
 
-  What still refuses, and the message now names all of it at once rather than
-  failing at the first thing it meets:
+  What still refuses, and the message now names all of it at once, each
+  attributed to its real cause rather than one blanket reason:
 
   ```
-  REFUSED: filter rules apply to interface(s) ['WireGuard', 'openvpn', 'wan'],
-           which have no static address configured
+  REFUSED: filter rules apply to interface(s) that cannot be modelled:
+  ['wan'] have no static address configured (DHCP or unconfigured) -- a
+  Cisco ACL needs an address to bind rules to; ['WireGuard', 'openvpn'] are
+  not declared under <interfaces> at all -- most likely VPN/tunnel policy
+  (e.g. OpenVPN, WireGuard), which this module does not parse and is out of
+  scope, not LAN filtering
   ```
 
-  A **DHCP WAN carrying rules** (a Cisco ACL needs an address to write rules
-  against) and **rules naming two VPN interfaces absent from `<interfaces>`**.
-  Neither was on #78's item list, which was written before we knew which
-  interfaces carried rules.
+  Two different problems, not one. A **DHCP WAN carrying rules** (a Cisco ACL
+  needs an address to write rules against) and **rules naming two VPN
+  interfaces absent from `<interfaces>` entirely**. The earlier version of
+  this message called both "no static address configured", which is only true
+  of the first, a WireGuard role does not become convertible by giving it an
+  address, tunnel policy is not LAN filtering regardless. Split so the two
+  remedies are not conflated. Neither was on #78's item list, which was
+  written before we knew which interfaces carried rules.
 
   Analysing his firewall now needs, in order: multi-interface rule sets, real
   PF Sense evaluation order, a decision on NAT (two of his rules carry
