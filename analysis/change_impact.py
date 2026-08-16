@@ -58,7 +58,13 @@ THE TRAP THIS MODULE IS BUILT AROUND
     all rather than a tidy-looking one -- unconstrained covers every entry
     point, and the tidy version is the one that silently excludes the ACL.
 
-    The same mistake is live in ai/query.py today (#108), from the same cause.
+    ai/query.py had the same mistake from the same cause, and it is fixed
+    (#108, #141): its reachability question now starts at @enter(device). Two
+    modules, one week, one shape -- which is why the test below asserts on the
+    ARGUMENT rather than on the answer. Every other test here fakes the
+    session, so none of them can see what was actually sent to Batfish, and
+    reintroducing the constraint left all fifteen green while silently
+    dropping a real finding.
 
 DIRECTION -- the thing that makes a diff useful rather than merely accurate
     A change that OPENS something and a change that CLOSES something are not

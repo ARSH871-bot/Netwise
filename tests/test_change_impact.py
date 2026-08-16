@@ -257,3 +257,91 @@ def test_reachability_findings_number_sequentially_and_report_the_next():
 
     assert [f["id"] for f in results] == ["CH-003", "CH-004"]
     assert next_number == 5, "the caller needs the next free number"
+
+
+# --- THE TRAP, defended at the boundary -------------------------------------
+#
+# The module's longest docstring section is about differentialReachability
+# seeing nothing unless the start location is one traffic ENTERS. Every test
+# above monkeypatches the session, so none of them observe what is actually
+# SENT to Batfish -- and @ARSH871-bot demonstrated on #140 that reintroducing
+# a `PathConstraints(startLocation="rtr-us5")` leaves all fifteen green while
+# silently dropping a real finding live.
+#
+# Worse than a normal regression, because compareFilters covers for it on our
+# fixtures: the run still reports the ACL change, so the output looks healthy.
+# What disappears is the case the second question exists for -- changed traffic
+# with no changed line. Invisible on exactly the configs we test with.
+#
+# Same shape as tests/test_query_translation.py's
+# test_reachability_starts_from_the_entry_point_not_the_bare_device: assert on
+# the argument, because the argument is what the module controls.
+
+
+class _RecordingQuestion:
+    def __init__(self, recorder, rows):
+        self._recorder = recorder
+        self._rows = rows
+
+    def answer(self, **kwargs):
+        self._recorder["answer_kwargs"] = kwargs
+        return self
+
+    def frame(self):
+        return _FakeFrame(self._rows)
+
+
+class _RecordingSession:
+    """Records the keyword arguments each differential question was built with."""
+
+    def __init__(self, rows=()):
+        self.calls = {}
+        self.q = SimpleNamespace(
+            differentialReachability=lambda **kw: self._record("differentialReachability", kw, rows),
+            compareFilters=lambda **kw: self._record("compareFilters", kw, ()),
+        )
+
+    def _record(self, name, kwargs, rows):
+        entry = self.calls.setdefault(name, {})
+        entry["build_kwargs"] = kwargs
+        return _RecordingQuestion(entry, list(rows))
+
+
+def test_differential_reachability_is_asked_with_no_path_constraint():
+    """THE TRAP. A start location that is not an entry point sees no ACL at all.
+
+    Measured on the fixtures, secure -> insecure, varying only this:
+
+        startLocation = the node                  rows=0
+        startLocation = the node's interface      rows=0
+        startLocation = @enter(the interface)     rows=1
+        no path constraint                        rows=1
+
+    Unconstrained covers every entry point. Anything narrower has to be
+    deliberately correct, and the tidy-looking version is the wrong one.
+    """
+    session = _RecordingSession()
+    change_impact._reachability_change_findings(session, 1)
+
+    build_kwargs = session.calls["differentialReachability"]["build_kwargs"]
+    assert "pathConstraints" not in build_kwargs, (
+        "a path constraint here silently excludes traffic ENTERING an "
+        f"interface, which is the only traffic an inbound ACL sees: {build_kwargs}"
+    )
+
+
+def test_both_differential_questions_compare_after_against_before():
+    """Direction of comparison is as load-bearing as the constraint.
+
+    Swapping snapshot and reference_snapshot inverts every finding this module
+    produces -- an opening would be reported as a tightening and rated medium
+    instead of high. Nothing else in the file would notice.
+    """
+    session = _RecordingSession()
+    change_impact._reachability_change_findings(session, 1)
+    change_impact._filter_change_findings(session, 1)
+
+    for question in ("differentialReachability", "compareFilters"):
+        answer_kwargs = session.calls[question]["answer_kwargs"]
+        assert answer_kwargs["snapshot"] == change_impact.AFTER_SNAPSHOT, question
+        assert answer_kwargs["reference_snapshot"] == change_impact.BEFORE_SNAPSHOT, question
