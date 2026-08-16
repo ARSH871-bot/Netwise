@@ -30,6 +30,7 @@ from ai.explain import (
     _looks_like_a_result_claim,
     _looks_like_speculation,
     explain,
+    explain_with_source,
 )
 
 # --- _looks_like_a_result_claim ----------------------------------------------
@@ -537,3 +538,69 @@ def test_prompt_tells_the_model_not_to_copy_the_examples():
     prompt = _build_prompt({"id": "AC-001"})
     assert "worked examples" in prompt.lower()
     assert "do not reuse" in prompt.lower()
+
+
+# --- explain_with_source(): the provenance signal for #109 -------------------
+#
+# The dashboard's "AI explanation" byline is unconditional, and explain()'s
+# bare str return gave nothing downstream a way to tell a genuine model
+# response apart from _fallback_plain_restatement()'s deterministic text.
+# These pin the one new fact this function reports; explain()'s own
+# behaviour is covered by every test above it in this file, unchanged.
+
+
+def test_a_clean_generation_reports_model_as_the_source(monkeypatch):
+    monkeypatch.setattr(
+        explain_module, "_generate", lambda finding: "The device allows all traffic through."
+    )
+    finding = {"id": "AC-001", "status": "found", "summary": "x", "evidence": {"detail": "y"}}
+
+    text, source = explain_with_source(finding)
+
+    assert source == "model"
+    assert "allows all traffic" in text
+
+
+def test_an_unreachable_ollama_reports_fallback_as_the_source(monkeypatch):
+    def unreachable(finding):
+        raise ConnectionError("Failed to connect to Ollama.")
+
+    monkeypatch.setattr(explain_module, "_generate", unreachable)
+    finding = {
+        "id": "AC-001",
+        "status": "found",
+        "summary": "Unencrypted web traffic reaches the internal server",
+        "evidence": {"detail": "Expected DENY but got PERMIT"},
+    }
+
+    text, source = explain_with_source(finding)
+
+    assert source == "fallback"
+    assert "Unencrypted web traffic reaches the internal server" in text
+
+
+def test_the_no_evidence_skip_also_reports_fallback(monkeypatch):
+    """The thin-evidence guard skips generation entirely (#52) -- still a
+    fallback, same as an unreachable Ollama, not a third category."""
+    monkeypatch.setattr(explain_module, "_generate", lambda finding: "unused")
+    finding = {"id": "AC-101", "status": "found", "summary": "A finding"}
+
+    text, source = explain_with_source(finding)
+
+    assert source == "fallback"
+    assert text == "A finding"
+
+
+def test_explain_still_returns_only_the_text_it_always_did(monkeypatch):
+    """explain() delegates to explain_with_source() now -- confirm the
+    public, str-only contract every existing caller and test relies on
+    did not quietly become a tuple."""
+    monkeypatch.setattr(
+        explain_module, "_generate", lambda finding: "The device allows all traffic through."
+    )
+    finding = {"id": "AC-001", "status": "found", "summary": "x", "evidence": {"detail": "y"}}
+
+    result = explain(finding)
+
+    assert isinstance(result, str)
+    assert "allows all traffic" in result
