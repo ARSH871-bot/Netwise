@@ -277,7 +277,7 @@ Corrected, measured with the recipe above:
 
 | | Real last commit (NZT) | Python files | Contains the headline merge |
 |---|---|---|---|
-| **Sprint 1** | `3b08a4c`, 29 Jul 00:27 | 1 (`analysis/smoke_test.py`) | n/a |
+| **Sprint 1** | `3b08a4c`, 29 Jul 00:27 | 1 (`analysis/smoke_test.py`, since removed from `main` — see `v0.1.0`) | n/a |
 | **Sprint 2** | `a2d36fd`, 5 Aug 22:22 | 18 | **yes** — `#39` is an ancestor |
 
 So the case against tagging dissolved once the facts were right:

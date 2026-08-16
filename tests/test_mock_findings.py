@@ -1,0 +1,121 @@
+"""The mock data is product code, and it had no test.
+
+WHY THIS FILE EXISTS
+    `web/mock_findings.py` is served by `/api/findings` until the first upload,
+    so it is **the first thing every user sees**. It is imported by
+    `web/main.py`, it is 156 lines, and nothing imported it in `tests/`.
+
+    Found by auditing which product modules no test touches. It was one of
+    three; the other two turned out to be superseded scripts and were removed
+    in the same change.
+
+WHY "IT LOOKS FINE" IS NOT ENOUGH
+    It IS valid F-1 today, checked by hand. But it has already drifted once
+    without anyone noticing: amendment A-2 (#102) gave `change_impact` the
+    `CH-` prefix, and this file's ids changed from `PC-000` to `CH-000`
+    silently, because it builds them through `findings.PREFIX_BY_CHECK` rather
+    than hard-coding them.
+
+    That drift happened to leave it valid. Nothing guaranteed it would. A
+    future prefix change, a renamed check, or a hand-edited id would be caught
+    by no test at all, and the failure would appear on a user's screen rather
+    than in CI.
+
+    "The mock data looks right" is a weaker claim than "the mock data is
+    validated", and this project has a long history of the first standing in
+    for the second.
+
+These need neither Batfish nor Ollama.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from analysis import findings
+from web.mock_findings import get_mock_findings
+
+F1_FIELDS = {"id", "check", "severity", "device", "summary", "evidence", "status"}
+
+
+@pytest.fixture(scope="module")
+def mocks():
+    return get_mock_findings()
+
+
+def test_there_is_actually_mock_data(mocks):
+    """Guards this whole file being vacuously green: every test below iterates,
+    and an empty list would pass all of them while checking nothing."""
+    assert mocks, "get_mock_findings() returned nothing"
+    assert len(mocks) >= 3, f"only {len(mocks)} mock findings; the dashboard shows sections"
+
+
+def test_every_mock_finding_has_exactly_the_f1_fields(mocks):
+    """Not a subset and not a superset. An extra key would be a contract change
+    arriving through the back door -- `explanation` is deliberately added
+    downstream in `web/main.py`, never here."""
+    for m in mocks:
+        assert set(m) == F1_FIELDS, (
+            f"{m.get('id', '?')} has fields {sorted(set(m) ^ F1_FIELDS)} "
+            "that differ from F-1"
+        )
+        assert set(m["evidence"]) == {"detail", "source"}
+
+
+def test_every_mock_finding_uses_the_real_vocabulary(mocks):
+    """`status`, `check` and `severity` must be values the rest of the system
+    recognises -- not plausible-looking strings that only exist here."""
+    for m in mocks:
+        assert m["status"] in findings.VALID_STATUSES, f"{m['id']}: {m['status']!r}"
+        assert m["check"] in findings.VALID_CHECKS, f"{m['id']}: {m['check']!r}"
+        assert m["severity"] in findings.VALID_SEVERITIES, f"{m['id']}: {m['severity']!r}"
+
+
+def test_every_mock_id_matches_its_check_prefix(mocks):
+    """The drift that already happened, now pinned.
+
+    A-2 moved `change_impact` from `PC-` to `CH-`. These ids followed
+    automatically because they are built from `PREFIX_BY_CHECK` -- but nothing
+    verified that they did, and a hand-edited id would not have.
+    """
+    for m in mocks:
+        expected = findings.PREFIX_BY_CHECK[m["check"]]
+        assert m["id"].startswith(f"{expected}-"), (
+            f"{m['id']} is served for check {m['check']!r}, whose prefix is "
+            f"{expected!r}. Either the id or PREFIX_BY_CHECK is wrong."
+        )
+
+
+def test_the_mock_data_shows_all_three_statuses(mocks):
+    """The point of mock data is to demonstrate the interface before a user has
+    uploaded anything. If it only contained `found` findings, nobody would ever
+    see what a clean result or an unrunnable check looks like -- and F-4's whole
+    argument is that those three must be visually distinct."""
+    statuses = {m["status"] for m in mocks}
+
+    assert statuses == set(findings.VALID_STATUSES), (
+        f"mock data shows {sorted(statuses)}; a reader never sees "
+        f"{sorted(set(findings.VALID_STATUSES) - statuses)}"
+    )
+
+
+def test_the_mock_data_would_survive_f1_validation(mocks):
+    """The strongest available check: rebuild each mock through the real
+    helpers. If `make_finding()` would refuse it, the dashboard is being handed
+    something the pipeline could never produce."""
+    for m in mocks:
+        number = int(m["id"].split("-")[1])
+        rebuilt = findings.make_finding(
+            check=m["check"],
+            severity=m["severity"],
+            device=m["device"],
+            summary=m["summary"],
+            detail=m["evidence"]["detail"],
+            source=m["evidence"]["source"],
+            status=m["status"],
+            number=number,
+        )
+        assert rebuilt["id"] == m["id"], (
+            f"mock {m['id']} does not round-trip: the real helper would have "
+            f"produced {rebuilt['id']}"
+        )
