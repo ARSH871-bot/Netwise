@@ -147,12 +147,22 @@ Five rules. They exist because each one was broken at least once on 6 August,
 by the person who wrote this file, while merging a fourteen-PR queue. They are
 written down because **GitHub cannot enforce any of them here** — see §6.
 
-**1. Never merge your own pull request.**
-One approval from someone else, every time, including documentation. If a change
-is genuinely too urgent to wait, say so in the PR and name what made it urgent —
-then it is a judgement someone can disagree with, rather than a rule quietly
-skipped. *(Broken on #62: reviewers requested, then self-merged before anyone
-looked.)*
+**1. Never merge your own pull request without a current approving review
+from someone else.**
+One approval, every time, including documentation. **Current** means no commits
+pushed since it — GitHub marks a review stale when the branch moves, so this is
+observable rather than a judgement call. With a current approval and green CI,
+the author may press the button.
+
+If a change is genuinely too urgent to wait for review, say so in the PR and
+name what made it urgent — then it is a judgement someone can disagree with,
+rather than a rule quietly skipped. *(Broken on #62: reviewers requested, then
+self-merged before anyone looked.)*
+
+**Why the wording changed — see §5d.** The original said "never merge your own",
+which read as *someone else must press the button*. Combined with rule 4, that
+made a queue of one author's approved work unlandable by anyone but volunteers,
+which is the state #99 recorded.
 
 **2. Wait for CI to go green before merging.**
 `MERGEABLE / UNSTABLE` means the checks have not finished. A local `pytest` run
@@ -354,6 +364,56 @@ gh pr list --state open && gh issue list --state open
 ```
 
 **If a document disagrees with those, the document is the bug.**
+
+
+## 5d. Amendment record for §5a
+
+The merge rules are a shared agreement, so changing one needs **all four of
+us** — the same reasoning `docs/finding-format.md` uses for F-1, and the same
+mechanism: a table anyone can check, rather than agreement inferred from a PR
+having been merged quietly.
+
+**Merging this PR means the wording is worth having. It does NOT mean the
+amendment is ratified.** Ratification is the table below.
+
+### M-1 — rule 1 requires a current review, not a second pair of hands
+
+Changes rule 1 from *"never merge your own pull request"* to *"never merge your
+own pull request without a current approving review from someone else"*.
+
+**What this changes:** with a current approval and green CI, the author may
+merge. Nothing else moves — one approval is still required every time, and the
+urgency escape hatch is unchanged.
+
+**Why.** Rule 1's purpose is independent **review**, not an independent mouse
+click. The violation it records is #62 — *reviewers requested, then self-merged
+before anyone looked* — where the fault was merging **unreviewed**, not merging.
+
+Read as "someone else presses the button", rule 1 contradicted rule 4 outright
+whenever one person authored most of the open work: rule 4 says land approved
+and green work, rule 1 said the author may not, and there was nobody obliged to
+do it instead. #99 recorded that state at nine PRs; it reached fourteen twice.
+
+**Why "current" is load-bearing.** Without it, a stale approval satisfies the
+rule. That is not hypothetical — four PRs were approved, then had fixes pushed
+in response to those reviews, and GitHub re-requested review on all four. The
+earlier approval plus green CI would have licensed self-merging code nobody had
+read, which is #62 exactly. GitHub already marks a review stale when the branch
+moves, so the condition is observable rather than argued.
+
+**What it does not fix.** Nothing here is enforceable — §6 still applies, and
+this remains an agreement we keep because we keep it. It also does not address
+the thing underneath: work that only one person produces will queue behind
+three people who review in bursts, and no rule changes that.
+
+| Member | Why it touches them | Agreed |
+|---|---|---|
+| **Shubham** | Proposed the "current" condition after four of his approvals went stale | ✅ |
+| **Arsh** | Wrote §5a, raised #99, and has refused to self-merge all week under the old reading | ⬜ |
+| **Ankeet** | Landed 13 PRs under the old reading, which is the work this removes the need for | ⬜ |
+| **Samika** | Bound by it equally; asked for rule 3 to be stricter on #63, so has form on this file | ⬜ |
+
+---
 
 ## 6. This is an agreement, not an enforcement
 
