@@ -240,6 +240,23 @@ finding format, to the screen.
 
 Client / sponsor: **Senaka Amarakeerthi**, Senior Lecturer.
 
+## Licence
+
+**[Apache License 2.0](LICENSE).** See [`NOTICE`](NOTICE) for attribution,
+third-party components and the AI-assistance declaration.
+
+Apache 2.0 rather than MIT for three reasons that are specific to this project:
+it is the licence of [Batfish](https://github.com/batfish/batfish) and
+`pybatfish`, the two things Netwise exists to orchestrate; it carries an
+**express patent grant** (§3), which MIT and BSD do not; and its warranty and
+liability disclaimers (§7, §8) are the most explicit of the permissive
+licences, which matters for a tool that reports on whether a network is safe.
+
+**A clean result from Netwise is not a statement that a network is secure.**
+It checks specific properties, against configurations it can parse, using
+policy assertions someone wrote. That is why it distinguishes *"we checked and
+found nothing"* from *"we could not check"* — see [F-4](docs/finding-format.md).
+
 ## Acknowledgements
 
 Built on [Batfish](https://github.com/batfish/batfish), an open-source network
@@ -247,4 +264,5 @@ configuration analysis tool. Netwise orchestrates Batfish — it does not
 reimplement network analysis.
 
 Portions of this codebase were developed with AI assistance, disclosed in line
-with the university's academic integrity policy.
+with the university's academic integrity policy and recorded in
+[`NOTICE`](NOTICE).

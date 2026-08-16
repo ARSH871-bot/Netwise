@@ -1,0 +1,72 @@
+Netwise
+Copyright 2026 The Netwise Authors
+
+This product is licensed under the Apache License, Version 2.0. See the
+LICENSE file at the root of this repository for the full terms.
+
+
+THE NETWISE AUTHORS
+    Arsh      @ARSH871-bot          access control, pipeline, SCRUM master
+    Ankeet    @patelankeet2         routing, AI layer, PF Sense conversion
+    Shubham   @shubhamkataria2005   policy compliance, change impact
+    Samika    @SamikaPerera         risk prioritisation, interface, upload
+
+    Built as a Studio 5 & 6 capstone project, Graduate Diploma in
+    Information Technology, Auckland International Campus, 2026.
+
+    "The Netwise Authors" is used rather than four named individuals because
+    the licence records the terms, not the ownership. If the university's
+    intellectual-property policy assigns copyright elsewhere, or the four of
+    us are required to be named in full, that is a one-line change here and
+    in the LICENSE appendix -- it does not change which licence applies.
+
+
+ACKNOWLEDGEMENT OF AI ASSISTANCE
+    Parts of this repository were written with AI assistance, and parts of
+    the review and verification work were too. This is declared here as well
+    as in the project documentation because the university's academic
+    integrity policy requires it and because a NOTICE file is where a reader
+    looks for provenance. Every AI-assisted change went through the same
+    pull request and review process as any other -- see CONTRIBUTING.md.
+
+
+THIRD-PARTY SOFTWARE
+    Netwise orchestrates software it does not include. It is not a
+    derivative work of any of the following; each is installed separately by
+    the user and remains under its own licence.
+
+    Batfish            Apache License 2.0
+                       The network configuration analysis engine. Netwise
+                       runs it in Docker and drives it; it does not vendor,
+                       modify or redistribute it.
+    pybatfish          Apache License 2.0
+                       The Python client for Batfish.
+    FastAPI            MIT
+    Uvicorn            BSD 3-Clause
+    python-multipart   Apache License 2.0
+    pandas             BSD 3-Clause
+    Ollama             MIT
+                       Installed separately by the user; Netwise talks to a
+                       local Ollama server over HTTP and bundles no model.
+    pytest             MIT
+    Ruff               MIT
+
+    The choice of Apache 2.0 for Netwise itself follows Batfish and
+    pybatfish, the two components this project exists to orchestrate.
+
+
+NO WARRANTY -- AND WHY THAT MATTERS FOR THIS PARTICULAR TOOL
+    Sections 7 and 8 of the LICENSE disclaim all warranties and liability.
+    That is standard, and it is worth reading rather than skipping here.
+
+    Netwise reports on the security of network device configurations. A
+    clean result from Netwise is not a statement that a network is secure.
+    The tool checks specific properties, against configurations it can
+    parse, using policy assertions someone wrote. It distinguishes "we
+    checked and found nothing" from "we could not check" -- see F-4 in
+    docs/finding-format.md -- precisely because conflating the two would be
+    the most dangerous thing it could do.
+
+    Nothing in this software should be treated as a security audit, and no
+    contributor accepts liability for decisions made on the basis of its
+    output.
