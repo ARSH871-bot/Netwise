@@ -4,12 +4,19 @@
 > closer to Option A, but respecting this document's central constraint that F-1
 > itself stays untouched without all four signatures.
 >
-> The recommendation wasn't taken, but the reasoning below still holds and is
-> otherwise missing from the repo -- CLAUDE.md §11 and web/main.py's docstring
-> both state what was built, neither explains what was rejected or why. Left
-> as-is below for that reason, including §2's slow-and-fails warning, which
-> correctly predicted #92, and §5's "unavailable" state, which predicted #109 --
-> both independently refiled as new, six days later.
+> The recommendation wasn't taken, but the reasoning below is otherwise missing
+> from the repo -- CLAUDE.md §11 and web/main.py's docstring both state what was
+> built, neither explains what was rejected or why. Left as-is below for that
+> reason, including §2's slow-and-fails warning, which named the cost later
+> refiled as #92 -- though #92 went further than §2 did, adding the point §2
+> does not make, that a cache key must include the finding itself rather than
+> just its `id` -- and §5's "unavailable" state, which predicted #109. Both were
+> independently refiled as new, six days later.
+>
+> Two of §2's premises have since changed: `explain()` no longer raises when
+> Ollama is absent (#52), and the `PC-000` collision it cites was fixed by A-2
+> (#102) -- though the no-keying-by-id rule survives it, see #137. The
+> constraints they support still stand; the facts underneath two of them do not.
 >
 > Not superseding this with a rewrite -- the mismatch between the recommendation
 > and the outcome is part of the record.
