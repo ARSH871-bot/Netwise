@@ -365,3 +365,50 @@ So nothing stops you pushing to `main`, self-merging, or merging red. Please
 don't. The convention only works because we all keep it — and it is worth being
 blunt that the first person to break these rules was the one who wrote them,
 which is precisely why they are now written down rather than assumed.
+
+### 6a. What *is* enforced, because a setting can do it
+
+Branch protection is out of reach. These are not, and each one moves a rule out
+of "please remember" and into the repository itself. Changed 17 August.
+
+**Merge commits only.** Squash and rebase merging are now switched off.
+Measured before changing anything, across the whole history rather than a
+sample: **90 merged pull requests, 90 `Merge pull request #N` commits.** Not
+one has ever been squashed or rebase-merged. So this makes the setting agree
+with what we already do rather than imposing a new habit. It matters because our commit messages carry the
+reasoning — squashing a branch would flatten five explained commits into one
+subject line, and the explanation is often the most valuable thing in the diff.
+
+This is **not** the same rule as §5a rule 5, which is about how you *update*
+your branch (rebase onto `main`, don't merge `main` into your branch). That
+still stands. This is about how the PR itself lands.
+
+**Auto-merge stays OFF, deliberately.** It looks like exactly the automation
+this section wishes it had, and it is the one piece we must not turn on.
+Auto-merge lands a PR the moment its conditions are met — and with no branch
+protection, "its conditions" cannot include a passing CI run. It would merge on
+approval alone, which is precisely the manual check §5a rule 3a exists to force.
+The green tick you are waiting for describes a `main` that may already have
+moved. **A gate we cannot configure is worse than no gate**, because it looks
+like one.
+
+**Branch deletion on merge is on**, so the branch list stays a list of live
+work. 22 stale remote branches were deleted on 16 August; the setting is what
+stops them accumulating again.
+
+**Dependabot security alerts and automated security fixes are on** — enabled 17
+August, and they were **not** on before, which is worth recording rather than
+quietly fixing. `.github/dependabot.yml` has argued since the day it was written
+that *"a vulnerable dependency in something that reads firewall configurations
+is worse than the same vulnerability elsewhere"*. That file configures **version**
+updates: the scheduled Monday bumps. Security **alerts** are a separate switch,
+and it was off. So the stated reasoning was real and the mechanism it described
+was half-connected — a documented practice standing in for a performed one,
+which §5b already names as this project's recurring failure family arriving
+through process rather than code. Third instance now.
+
+Secret scanning and push protection are **not** available: they need GitHub
+Advanced Security on a private repo. Nothing in git should ever be a secret
+here anyway — `.gitignore` was the first commit and `configs/` never enters the
+repository — but that is a convention too, and this is a case where we genuinely
+cannot back it with a setting.

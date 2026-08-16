@@ -26,6 +26,7 @@
 
 # Shubham -- policy compliance and change impact
 /analysis/checks/policy_compliance.py  @shubhamkataria2005
+/analysis/change_impact.py      @shubhamkataria2005
 /docs/policy-rules.md           @shubhamkataria2005
 
 # Samika -- risk, and everything the user actually sees
