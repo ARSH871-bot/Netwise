@@ -487,11 +487,11 @@ someone who has never read `evidence.detail` what is actually wrong.
 | PC-001 | Ankeet | 4 | 3 | Accurate, but the second sentence, "the policy currently permits this unauthorized access", is a little confusing on a first read: it sounds like it could mean the *written* policy permits it, when the actual finding is that the *live config* violates the policy. Worth someone else's eyes on whether this reads clearly cold. |
 | AC-002 | Ankeet | 5 | 5 | This is the one I most wanted rated by someone who did not write `_compute_dead_rule_outcome()`. Correctly states the shadowing direction (permit shadowed by an earlier deny, so the line is denied not permitted) and explains why in one pass, matches the exact computed fact fed to the model. |
 | PC-005 | Ankeet | 3 | 2 | **The one I'd flag as a concrete problem, not just a style note.** First sentence: "The internal server can be reached over HTTPS, but the device's policy currently blocks this traffic" reads as self-contradictory on a first pass, "can be reached" then "blocks this traffic" in the same breath, before the reader has enough context to know one is describing the requirement and the other the actual (wrong) behaviour. Second paragraph's last sentence, "requires blocking of HTTPS traffic", inverts it further, the policy requires the opposite, that HTTPS be *allowed*. Accurate in substance (nothing invented, matches evidence.detail), but the phrasing risks a reader walking away with the causality backwards. |
-| RT-050 | @ARSH871-bot | | | |
-| AC-001 | @ARSH871-bot | | | |
-| PC-001 | @ARSH871-bot | | | |
-| AC-002 | @ARSH871-bot | | | |
-| PC-005 | @ARSH871-bot | | | |
+| RT-050 | @ARSH871-bot | 5 | 4 | Agree with Ankeet. The thing worth naming explicitly is that this is the *only* one of the five where the text is deterministic, and it is also the only one where nothing can be inverted, because it does not attempt a causal sentence at all. Mechanical reads as a cost here; it is also the reason it cannot be wrong. |
+| AC-001 | @ARSH871-bot | 5 | 4 | Agree. Rating my own check's output, so treat this as the least independent row I have; Shubham's and Samika's numbers on this one are worth more than mine. |
+| PC-001 | @ARSH871-bot | 2 | 3 | **Lower than Ankeet's 4, and for a reason that connects to PC-005.** "The policy currently permits this unauthorized access" is not merely confusing, it states the opposite of the finding. The finding is that the live config permits traffic the policy forbids. A reader who takes that sentence at face value concludes the policy is at fault, and that the config is doing what it was told. Same inversion as PC-005, one notch less blatant. |
+| AC-002 | @ARSH871-bot | 5 | 5 | Agree, and this is the one Ankeet most wanted an outside reading of — but `access_control` is mine, so I am the wrong person to give it. Correct on the shadowing direction, which is the easy thing to get backwards. **@shubhamkataria2005 / @SamikaPerera, this row needs one of you more than the others do.** |
+| PC-005 | @ARSH871-bot | 1 | 2 | **I think this is a grounding failure, not a phrasing risk, and that the rating should be 1.** See the disagreement below — the short version is that "a specific policy statement that requires blocking of HTTPS traffic" is not an awkward rendering of the evidence, it contradicts it. |
 | RT-050 | @shubhamkataria2005 | | | |
 | AC-001 | @shubhamkataria2005 | | | |
 | PC-001 | @shubhamkataria2005 | | | |
@@ -505,12 +505,75 @@ someone who has never read `evidence.detail` what is actually wrong.
 
 ### Disagreements
 
-Not filled in until at least a second rater has rated independently, a
-disagreement needs two ratings to exist. Record here rather than averaging
-the numbers away: which finding, whose ratings differed and by how much, and
-what each rater actually meant by their number, since two people can give the
-same score for different reasons just as easily as different scores for the
-same finding.
+Record here rather than averaging the numbers away: which finding, whose
+ratings differed and by how much, and what each rater actually meant by their
+number, since two people can give the same score for different reasons just as
+easily as different scores for the same finding.
+
+#### PC-005 — accuracy, Ankeet 3 against Arsh 1
+
+Not a difference of taste about phrasing. We disagree on whether the text is
+**accurate**, which is the one axis where a disagreement has consequences.
+
+Ankeet's note says *"Accurate in substance (nothing invented, matches
+evidence.detail)"*, and grades the problem as a readability risk. Set the two
+side by side:
+
+```
+evidence.detail  ... is denied but policy requires it.
+explanation      ... the reason for this denial is due to a specific policy
+                     statement that requires blocking of HTTPS traffic.
+```
+
+The evidence says the policy requires the traffic **through**. The explanation
+says the policy requires it **blocked**. That is not the evidence lightly
+reworded, it is the evidence reversed. Nothing was invented in the sense of a
+new device or a new rule, but a false claim about what the policy says is
+still a false claim, and it is the specific claim the finding exists to make.
+
+What it costs the reader is the whole finding. `PC-005` means *the config
+contradicts the policy*. The explanation reads as *the config is enforcing the
+policy*. A reader who trusts it closes the card as working-as-intended. Under
+CLAUDE.md constraint 2 that is the failure the grounding rules exist to
+prevent, arriving through rephrasing rather than through invention — which is
+worth noticing on its own, because every guard we built watches for invention.
+
+Hence accuracy 1. Usefulness 2 rather than 1 because the first clause does
+correctly say something is blocked.
+
+#### Is it general or specific — the question Ankeet left for a second rater
+
+**General to `policy_compliance`, and the mechanism is not what I first
+guessed.** My first hypothesis was that a two-clause "X but Y" detail is what
+the model collapses. Checked across every `found` finding in both fixtures,
+and that is wrong: `AC-001`'s detail is also two-clause and its explanation is
+one of the two rated 5.
+
+The difference is an **unresolved pronoun**, not clause count:
+
+```
+access_control     Expected PERMIT but got DENY, decided by: ...
+policy_compliance  ... is denied but policy requires it.
+```
+
+`access_control` names both actions outright, so there is nothing to resolve.
+`policy_compliance` compresses the required action into "it", whose antecedent
+is the flow being *permitted* — several words back, and never stated as an
+action at all. The model resolved "it" as the nearest available noun phrase,
+the denial. `PC-001` shows the same slip in the mirror direction.
+
+**So the fix may not belong in `ai/Modelfile`.** Making
+`policy_compliance`'s detail name the required action the way `access_control`
+already does — *"is denied but policy requires it to be PERMITTED"* — removes
+the ambiguity at the source, for every consumer, instead of asking the model to
+resolve a reference correctly every time. A prompt change asks the model to be
+careful; this makes the sentence unambiguous, and the check whose output it is
+can no longer be misread by a human reader either.
+
+Worth raising as its own issue against `policy_compliance`, not fixed here —
+this exercise is measurement only, and @shubhamkataria2005 owns that check and
+should have the call. Two independent raters is also still a small sample:
+`PC-001` and `PC-005` are two findings from one check.
 
 ### At least one concrete improvement
 
@@ -522,3 +585,12 @@ problem (the model tends to garble "policy requires X but config denies X"
 into something that reads as "policy requires denying X") or specific to
 this one finding is exactly the kind of thing a second rater's independent
 note would settle.
+
+**It held up, and it settled differently than expected** — a second rater
+read it cold and rated it a grounding failure rather than a phrasing risk,
+and locating the mechanism moved the likely fix out of `ai/Modelfile`
+entirely. See the disagreement above. The improvement now on the table is
+that `policy_compliance` should name the required action in
+`evidence.detail` the way `access_control` already does, rather than
+compressing it into a pronoun. Left as a proposal for
+@shubhamkataria2005 — still measurement only here.
