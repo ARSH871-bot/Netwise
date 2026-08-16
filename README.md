@@ -226,6 +226,40 @@ something goes wrong operationally — an unreachable Batfish or an unreadable
 config comes back *as a finding*, so a failure is always reported rather than
 lost.
 
+**Compare two configs — what would this change actually do?**
+
+```bash
+python -m analysis.change_impact <before-folder> <after-folder>
+```
+
+```python
+from analysis.change_impact import analyse_change
+
+findings = analyse_change("tests/fixtures/rtr-us5-secure",
+                          "tests/fixtures/rtr-us5-insecure")
+```
+
+Every other analysis reads **one** config and says whether it is bad. This
+reads **two** and says what moved — asked before the change reaches a real
+device. Try it in both directions on the fixtures above; they are not the same
+news:
+
+```
+secure -> insecure    2 findings, high     something was opened
+insecure -> secure    2 findings, medium   something was closed
+secure -> secure      no change detected
+```
+
+A change that **opens** traffic is graded higher than one that closes it, not
+because closing is safe but because opening is *silent* — nothing breaks,
+nobody complains, and it is still there at the breach. A tightening is loud
+within minutes, and is reported rather than filed as an improvement, because
+it is also how you break DNS for a whole site.
+
+This is **not** one of the pipeline checks and does not appear in `CHECKS` —
+it needs two snapshots, and a check is handed one. See
+[`docs/design/pipeline-feature-shapes.md`](docs/design/pipeline-feature-shapes.md).
+
 ## Team
 
 Each member owns a vertical slice: their own analysis, through the shared
