@@ -30,6 +30,8 @@ These need neither Batfish nor Ollama.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from analysis import findings
@@ -119,3 +121,41 @@ def test_the_mock_data_would_survive_f1_validation(mocks):
             f"mock {m['id']} does not round-trip: the real helper would have "
             f"produced {rebuilt['id']}"
         )
+
+
+def test_every_mock_source_naming_a_repo_file_names_one_that_exists(mocks):
+    """Found after the six tests above were already approved.
+
+    `CH-000`'s source read `analysis/checks/change_impact.py`. That file has
+    never existed -- the real module landed at `analysis/change_impact.py` in
+    #140 -- and the path was wrong in a second, worse way: putting
+    change_impact under `checks/` asserts precisely what
+    `analysis/checks/__init__.py` forbids in capitals, *"DO NOT add
+    change_impact.py here or to CHECKS"*. The mock data is the first thing
+    every user sees, and it was contradicting the architecture in an evidence
+    field.
+
+    Why nothing caught it: `source` is free text by design, and rightly so --
+    most sources are `rtr-us5:acl_in` or `rtr-us5.cfg:21`, which name a device
+    or a config line rather than anything in this repository. F-1 validation
+    cannot help, because there is nothing malformed about a string.
+
+    So this checks only the sources that *claim* to be repository files, and
+    leaves every other form alone. A source that points at a file we do not
+    ship is a citation to nothing.
+    """
+    repo_root = Path(__file__).resolve().parent.parent
+
+    missing = []
+    for m in mocks:
+        source = m["evidence"]["source"]
+        if not source.endswith((".py", ".md")):
+            continue  # names a device, an ACL, or a config line -- not ours
+        if not (repo_root / source).exists():
+            missing.append(f"{m['id']}: {source}")
+
+    assert not missing, (
+        "mock findings cite repository files that do not exist, so the "
+        "dashboard shows a user evidence pointing at nothing:\n  "
+        + "\n  ".join(missing)
+    )

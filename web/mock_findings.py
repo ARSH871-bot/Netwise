@@ -129,7 +129,14 @@ def get_mock_findings() -> List[Dict[str, Any]]:
                 "This check compares two snapshots and only one was loaded. "
                 "Nothing was compared, so nothing can be said about the change."
             ),
-            source="analysis/checks/change_impact.py",
+            # analysis/change_impact.py, NOT analysis/checks/change_impact.py.
+            # This said "checks/" until #140 landed the real file and made the
+            # claim checkable. It was wrong twice over: the path did not exist,
+            # and putting change_impact under checks/ asserts exactly what
+            # analysis/checks/__init__.py forbids in capitals -- "DO NOT add
+            # change_impact.py here or to CHECKS". A user-facing evidence
+            # field is a bad place to contradict the architecture.
+            source="analysis/change_impact.py",
         ),
         # --- found / low ----------------------------------------------------
         findings.make_finding(
