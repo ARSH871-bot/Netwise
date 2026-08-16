@@ -302,6 +302,25 @@ So `answer_question(question, bf) -> dict` is built to refuse:
   resolve to a device Batfish actually found (`analysis/snapshot.py`); the
   destination must be a literal IP or CIDR. Anything else is refused with a
   reason, not approximated.
+- **The source becomes `@enter(device)`, never the bare device name** (#108,
+  fixed in #141). A bare device name is a *node* location — traffic
+  ORIGINATING at the device — which never traverses an inbound ACL. So the
+  feature answered identically for a config that blocked the traffic and one
+  that permitted everything, **both `grounded: True`**, which is the worst
+  possible shape for a wrong answer: evidenced, confident, and reproducible.
+  Measured after the fix, on two configs differing only in their ACL:
+
+  ```
+  rtr-us5-secure    -> No.  ... DENIED_IN
+  rtr-us5-insecure  -> Yes. Traffic from rtr-us5 reaches 10.10.10.5.
+  ```
+
+  **Nothing in §7c's refusal design caught this**, and that is the lesson worth
+  keeping: every guard here checks that the *answer* is grounded in the
+  *query*, and this was a correct answer to the wrong query. The same trap hit
+  `analysis/change_impact.py` the same week from the same cause — see its
+  module docstring, which names the general shape: *a template must be able to
+  observe the thing it claims to answer about.*
 - **The translated question is always shown back** — `question_understood`. This
   is not decoration. It is the only thing in the design that lets the person who
   asked notice a mistranslation, which is what makes a narrow scope safe rather
@@ -329,6 +348,7 @@ analysis/   Layer 1 — Batfish orchestration
   findings.py     the F-1 format in code, with validation
   pipeline.py     connect, load snapshot, dispatch checks, guard ids
   checks/         one module per feature
+  change_impact.py  shape C — analyse_change(before, after), NOT a check
 ai/         Layer 2 — local LLM explanation and Q&A
 web/        Layer 3 — FastAPI backend and dashboard
 tests/      pytest suite + synthetic fixtures (committed, see §7b)
@@ -407,6 +427,14 @@ item 1 with an explicit stop**, #16 split, #30 with A-2 raised on day 1. The
 record is `docs/sprint4/SPRINT4.md`. **#87 is the open question against all of
 it** and is deliberately unassigned.
 
+**Five pull requests landed together on 17 August** — #141, #140, #143, #144,
+#137 — taking `main` to 370 tests, CI green at `dba64f8`. That merge closed
+#30 (`change_impact`) and #108 (the query-layer entry-location bug), and put
+the `explanation_source` signal behind #109 without closing it. Merged as one
+batch only after the combination was tested locally: each had a green tick
+earned against a different `main`, which is precisely the §5a rule 3a case
+that produced two red `main`s in two days.
+
 **Releases exist now**, for the first time. `v0.1.0`, `v0.2.0` and `v0.3.0` were
 tagged retroactively on 13 August, each on the last commit of that sprint's
 *work* per `CONTRIBUTING.md` §5b, verified with the ancestry check the section
@@ -429,18 +457,19 @@ project's recurring failure family arriving through process rather than code.
 | **`risk` scoring** | Samika | Done (#60) — `POST_PROCESSORS`, ruleset in `docs/severity-rules.md`. Re-rates severity and sorts worst-first; the two limits are enforced in `pipeline.run_post_processors()`, not trusted |
 | Dashboard + secure upload | Samika | Done — real findings on screen since #39 |
 | PF Sense conversion | Ankeet | Done — `analysis/pfsense_convert.py`, and **hardened**: refuses config injection and path traversal via free-text fields (#53), an unbound ACL / empty rule set / unvalidated addressing (#54), and ambiguous rule order (#58, closing #47). See §7 |
+| **`change_impact`** | Shubham | Done (#140, merged 17 August) — `analysis/change_impact.py`, `analyse_change(before, after)`. Shape C: **not** in `CHECKS`, and both the module docstring and the registry comment say so. Pairs `compareFilters` (which ACL *lines* moved) with `differentialReachability` (which *traffic* changed fate), because a changed line that moves no traffic is noise and moved traffic with no changed line is the case a filter diff alone misses. Direction-aware per `docs/policy-rules.md`: opening `high`, tightening `medium`, both reported |
 | Test suite | team | Needs neither Batfish nor Ollama. For the count, run it — a number written here rots the next time anyone adds a test |
 
 **All five features are now on `main` together**, which first became true on
-8 August.
+8 August. **The sixth, `change_impact`, joined them on 17 August.**
 
 ### What is NOT built
 
 | Piece | Owner | Note |
 |---|---|---|
 | **A way for the user to state their own policy** | unassigned | **The biggest gap in the product** (#87). Every policy assertion is hardcoded to our fixtures. See below |
-| `change_impact` | Shubham | Not started, and does not fit the `run(bf)` contract |
-| AI: natural-language questions | Ankeet + Samika | **Backend built** (#66) — `ai/query.py` + `/api/ask`. The dashboard wiring is Samika's half and is not done. See §7c |
+| AI: natural-language questions | Ankeet + Samika | **Backend built** (#66) and **now actually crosses the ACL** (#108, fixed in #141) — `ai/query.py` + `/api/ask`. The dashboard wiring is Samika's half and is not done. See §7c |
+| The AI byline tells the truth | Samika | #109. `/api/findings` now carries `explanation_source` (#143), but `style.css`'s `content: "AI explanation"` is still unconditional, so on any machine without Ollama the dashboard attributes deterministic text to a model. The signal exists; the label has not changed |
 
 **The policy is ours, not the user's.** `access_control` and `policy_compliance`
 name `rtr-us5`; `routing` names `rtr-hq`/`rtr-branch`. Two carry a `PLACEHOLDER`
@@ -503,7 +532,10 @@ Nothing in Layer 1 or 2 is now unjoined. What remains is features, not plumbing.
   **ADOPTED**, all four signatures. Producers keep `run(bf) -> list[dict]`;
   `risk` is a post-processor; `change_impact` is a separate entry point and
   **must not** be registered in `CHECKS`. The post-processor stage is built —
-  see §7b.
+  see §7b. **All three shapes now exist in code** (#140, 17 August), so this is
+  a decision that survived contact rather than one still waiting to be tested:
+  `change_impact` was written to the shape agreed before it existed, and
+  needed no amendment to fit.
 - **Severity ownership.** Checks set a default; `risk` may re-rate; **`risk`
   must never downgrade a `status="error"` finding, or drop one.** Both limits
   are enforced in `pipeline.run_post_processors()` rather than trusted. Only
