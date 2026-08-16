@@ -163,6 +163,100 @@ def test_dependabot_and_workflow_config_are_present():
     assert (REPO_ROOT / ".github" / "workflows" / "tests.yml").exists()
 
 
+def test_pre_commit_config_exists_and_parses():
+    """Opt-in, so its absence would be silent rather than loud.
+
+    Nothing installs it for you -- `pre-commit install` does. But if the file
+    itself is deleted or malformed, everyone who HAS installed it silently
+    stops being checked, and pre-commit does not shout about a config that is
+    not there.
+    """
+    config = REPO_ROOT / ".pre-commit-config.yaml"
+    assert config.exists(), ".pre-commit-config.yaml is gone"
+    text = config.read_text(encoding="utf-8")
+    assert "repos:" in text and "ruff" in text
+
+
+def test_pre_commit_and_ci_pin_the_same_ruff():
+    """Two places pin ruff, and two places pinning one tool WILL drift.
+
+    The drift is not cosmetic. If pre-commit runs an older ruff than CI, a
+    commit passes locally and the PR arrives red -- for a rule the author
+    already satisfied on their machine. That is the most demoralising possible
+    failure of a lint gate, and #84 is why the pin exists at all: a bare
+    install was clean on 0.14.14 and produced 207 errors on 0.16.2.
+
+    This asserts the two agree, so drift fails here rather than in someone's
+    afternoon.
+    """
+    workflow = (REPO_ROOT / ".github" / "workflows" / "tests.yml").read_text(
+        encoding="utf-8"
+    )
+    pre_commit = (REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+
+    ci_match = re.search(r"ruff==(\d+\.\d+\.\d+)", workflow)
+    assert ci_match, "CI no longer pins a ruff version"
+
+    # The ruff-pre-commit repo tags releases as vX.Y.Z.
+    hook_match = re.search(
+        r"ruff-pre-commit\s*\n\s*rev:\s*v?(\d+\.\d+\.\d+)", pre_commit
+    )
+    assert hook_match, ".pre-commit-config.yaml no longer pins a ruff rev"
+
+    assert ci_match.group(1) == hook_match.group(1), (
+        f"ruff versions have drifted: CI pins {ci_match.group(1)}, pre-commit "
+        f"pins {hook_match.group(1)}. A commit can now pass locally and fail "
+        "in CI on a rule the author already satisfied."
+    )
+
+
+def test_pre_commit_and_ci_select_the_same_rules():
+    """Same reasoning as the version, one level down.
+
+    Matching versions with different --select is the subtler drift: both run
+    'ruff', both are green locally, and CI still finds something the hook was
+    never asked to look for.
+    """
+    workflow = (REPO_ROOT / ".github" / "workflows" / "tests.yml").read_text(
+        encoding="utf-8"
+    )
+    pre_commit = (REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+
+    ci_rules = re.search(r"ruff check --select (\S+)", workflow)
+    assert ci_rules, "CI lint step no longer passes an explicit --select"
+
+    assert ci_rules.group(1) in pre_commit, (
+        f"CI selects {ci_rules.group(1)}, which does not appear in "
+        ".pre-commit-config.yaml. The hook and the gate are checking "
+        "different rule sets."
+    )
+
+
+def test_no_line_ending_hook_fights_gitattributes():
+    """A regression guard for a hook removed after measuring it.
+
+    `mixed-line-ending` was in the first draft of .pre-commit-config.yaml and
+    rewrote 16 files on its first run -- .gitignore, conftest.py, ai/Modelfile
+    and five committed fixtures among them. #126 settled line endings in
+    .gitattributes, which normalises on COMMIT and leaves the working tree
+    native, so CRLF in a Windows checkout is correct and that hook fights it.
+
+    Without this, the obvious-looking hook goes back in the next time someone
+    tidies the file, and every teammate gets a 16-file diff.
+    """
+    pre_commit = (REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    active = [
+        line
+        for line in pre_commit.splitlines()
+        if "mixed-line-ending" in line and not line.lstrip().startswith("#")
+    ]
+    assert not active, (
+        "mixed-line-ending is active again. It contradicts .gitattributes "
+        "(#126) and rewrites the working tree on every run; see the comment "
+        "in .pre-commit-config.yaml explaining why it was removed."
+    )
+
+
 def test_the_lint_step_pins_its_ruff_version():
     """CI comment explains why: a bare `pip install ruff` was clean on one
     machine and produced 207 errors on a newer release (#84). The pin is the

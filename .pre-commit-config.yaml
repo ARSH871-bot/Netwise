@@ -1,0 +1,128 @@
+# Netwise -- checks that run before a commit exists, not after it is pushed.
+#
+# WHY THIS EXISTS
+#   CONTRIBUTING section 6 explains that we cannot enforce anything on the
+#   server: branch protection and rulesets both need GitHub Pro or a public
+#   repo. Verified, not assumed -- the rulesets API returns
+#
+#       403 "Upgrade to GitHub Pro or make this repository public"
+#
+#   So every rule we have is either a convention people remember, or a red
+#   cross that arrives after the work is already pushed and reviewed. This is
+#   the third option: checks that run on YOUR machine, before the commit,
+#   where a fix costs seconds instead of a review round trip.
+#
+# THIS IS OPT-IN, AND SAYING SO IS THE POINT
+#   Nothing installs it for you. Run:
+#
+#       pip install pre-commit
+#       pre-commit install
+#
+#   Until you do, this file does nothing at all. That is worth stating plainly
+#   rather than letting the file's presence imply coverage -- a config that
+#   nobody activated is exactly the "documented practice standing in for a
+#   performed one" pattern this project keeps finding in itself (see
+#   CONTRIBUTING section 6a, where Dependabot alerts had been off for weeks
+#   while the config file argued they mattered).
+#
+#   CI remains the backstop and is not optional. If you skip this, the same
+#   ruff runs on your PR -- just later.
+#
+# RUN IT OVER EVERYTHING ONCE, WITHOUT COMMITTING:
+#       pre-commit run --all-files
+
+repos:
+  # --- ruff, pinned to EXACTLY the version CI uses -------------------------
+  #
+  # The pin is not tidiness. #84: a bare `pip install ruff` was clean on one
+  # machine (0.14.14) and produced 207 errors on 0.16.2, because the default
+  # rule set widened between releases. A lint gate that is red on arrival
+  # teaches everyone to ignore it.
+  #
+  # Two files now pin ruff -- this one and .github/workflows/tests.yml -- and
+  # two places pinning the same tool WILL drift. tests/test_repo_config.py
+  # asserts they are equal, so the drift fails a test instead of producing
+  # "passes locally, red in CI", which is the most demoralising possible
+  # failure mode for a lint rule.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.14
+    hooks:
+      # `ruff-check`, not `ruff`. The bare id still works and prints
+      # "ruff (legacy alias)" -- a deprecation that would eventually become a
+      # failure on someone else's machine and not on the machine that wrote
+      # this file.
+      - id: ruff-check
+        # Same --select as CI. Widening the rule set is a deliberate change
+        # with its own PR (see #93), not something that arrives on a Tuesday.
+        args: [--select, "E4,E7,E9,F"]
+        files: ^(analysis|ai|web|tools|tests)/
+
+  # --- general hygiene ------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # A merge-conflict marker committed into a file is the failure that took
+      # two truncated guard tests out of this repo for days (see
+      # tests/test_suite_hygiene.py). That was a resolution nobody re-read; a
+      # leftover <<<<<<< is the louder version of the same accident.
+      - id: check-merge-conflict
+
+      # Refuses a commit that adds a large file. The practical case here is
+      # someone accidentally staging a real config export or a Batfish
+      # snapshot directory -- both are big, and both are things constraint 1
+      # says must never enter git.
+      - id: check-added-large-files
+        args: [--maxkb=512]
+
+      # Private keys have no legitimate reason to exist in this repository.
+      # GitHub's own secret scanning needs Advanced Security, which a private
+      # free repo does not have, so this is the only automated check standing
+      # between a stray key and a permanent place in history.
+      - id: detect-private-key
+
+      # Both are trivial, and both are why review diffs fill with noise that
+      # hides the actual change.
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+
+      # NO mixed-line-ending HOOK, DELIBERATELY -- it was in the first draft
+      # of this file and removed after actually running it.
+      #
+      #     mixed line ending....................................Failed
+      #     16 files "fixed", including .gitignore, conftest.py,
+      #     ai/Modelfile and five committed fixtures
+      #
+      # It is wrong for this repository, not merely noisy. #126 settled line
+      # endings in .gitattributes, which normalises on COMMIT and leaves the
+      # working tree native -- so CRLF in a checkout on Windows is correct,
+      # and this hook rewrites it on sight. Every teammate's first
+      # `pre-commit run --all-files` would have produced a 16-file diff that
+      # fights a decision we already made.
+      #
+      # Worth recording rather than silently omitting: a hook that looks
+      # obviously right can contradict a settled decision, and the only way
+      # to find out was to run it.
+
+      # A YAML or JSON file that does not parse is a config that silently does
+      # nothing -- dependabot.yml and the CI workflow are both YAML, and a
+      # workflow that fails to parse simply does not run.
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+
+  # --- the project's own rules ---------------------------------------------
+  #
+  # Deliberately runs the real test rather than reimplementing its logic. The
+  # config-in-git detector is content-based and has its own self-tests
+  # (tests/test_no_configs_in_git.py); a second, simpler copy here would be a
+  # weaker claim standing in for a stronger one, and would drift.
+  - repo: local
+    hooks:
+      - id: no-configs-in-git
+        name: constraint 1 -- no real network config may be committed
+        entry: python -m pytest tests/test_no_configs_in_git.py -q
+        language: system
+        pass_filenames: false
+        # Needs neither Batfish nor Ollama, and finishes in well under a
+        # second, which is what makes it acceptable on every commit.
+        always_run: true

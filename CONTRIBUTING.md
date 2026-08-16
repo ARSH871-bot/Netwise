@@ -412,3 +412,83 @@ Advanced Security on a private repo. Nothing in git should ever be a secret
 here anyway — `.gitignore` was the first commit and `configs/` never enters the
 repository — but that is a convention too, and this is a case where we genuinely
 cannot back it with a setting.
+
+**Branch protection and rulesets are both genuinely out of reach — checked,
+not assumed.** This document has asserted it since it was written, which is
+exactly why it was worth testing rather than repeating:
+
+```
+GET  /repos/ARSH871-bot/Netwise/rulesets
+POST /repos/ARSH871-bot/Netwise/rulesets
+  -> 403 "Upgrade to GitHub Pro or make this repository public"
+```
+
+Rulesets are the newer mechanism and are gated the same way, so there is no
+server-side enforcement available to us at all. That is what §6b is for.
+
+### 6b. What runs on YOUR machine, because nothing runs on the server
+
+Given §6a, every rule we have is either something you remember or a red cross
+that arrives after the work is pushed and reviewed. `.pre-commit-config.yaml`
+is the third option: checks that run before the commit exists, where a fix
+costs seconds instead of a review round trip.
+
+```bash
+pip install pre-commit
+pre-commit install          # once per clone
+pre-commit run --all-files  # check everything without committing
+```
+
+It runs the same ruff CI runs — **pinned to the same version and the same
+`--select`** — plus merge-conflict markers, oversized files, private keys,
+unparseable YAML/JSON/TOML, and the project's own constraint-1 test.
+
+**Two files now pin ruff, and two places pinning one tool will drift.**
+`tests/test_repo_config.py` asserts the version *and* the rule set match, so
+drift fails a test rather than producing "passes locally, red in CI" — the most
+demoralising possible failure of a lint rule, because the author has already
+satisfied it.
+
+**One hook was removed after running it, and the reason is instructive.**
+`mixed-line-ending` looked obviously right and rewrote 16 files on its first
+run, including `.gitignore`, `conftest.py` and five committed fixtures. #126
+settled line endings in `.gitattributes`, which normalises on *commit* and
+leaves the working tree native — so CRLF in a Windows checkout is correct and
+that hook fights it. A test now stops it coming back. **The only way to find
+this was to run the thing rather than reason about it.**
+
+**It is opt-in, and nothing installs it for you.** Until you run
+`pre-commit install`, that file does nothing. Saying so plainly matters: a
+config nobody activated, sitting in the repository looking like coverage, is
+precisely the pattern §6a just caught in `dependabot.yml`. **CI remains the
+backstop and is not optional.** Skip this and the same ruff runs on your PR,
+only later.
+
+**Recommended git settings**, which make two of our conventions the default
+rather than something to remember:
+
+```bash
+git config pull.rebase true    # §5a rule 5 — rebase, don't merge main into your branch
+git config fetch.prune true    # branches are deleted on merge; this drops dead local refs
+```
+
+#### Commit signing — recommended, and NOT currently in force
+
+Signed commits give each commit a verified author, which for a capstone is
+real evidence of who wrote what. GitHub shows a **Verified** badge.
+
+```bash
+git config gpg.format ssh
+git config user.signingkey ~/.ssh/id_ed25519.pub
+git config commit.gpgsign true
+```
+
+…then add that public key to GitHub as a **signing key**, not just an
+authentication key.
+
+**Written as a recommendation rather than a rule, deliberately.** None of our
+existing history is signed, none of us has set this up, and enabling it affects
+only future commits. Describing it here as though it were practice would be the
+fourth instance of the thing §6a and §5b keep catching — a documented practice
+standing in for a performed one. If we adopt it, we adopt it explicitly, and
+this paragraph changes to say so.
