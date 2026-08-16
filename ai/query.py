@@ -78,6 +78,17 @@ the live verification behind it, not committed to this repo)
     supplied to `headers`; Batfish selects a representative one for the
     starting device, confirmed live to work.
 
+    The source resolves to `@enter(device)`, not the bare device name (#108).
+    A bare device name is a NODE location -- traffic ORIGINATING at the
+    device -- which never traverses an inbound ACL, so a config that blocks
+    the traffic and one that permits everything answered identically,
+    `grounded: true` on both. Measured live: `analysis/change_impact.py` hit
+    the same trap the same week, from the same cause -- see its module
+    docstring for the general shape. `@enter(device)` with no interface
+    covers every interface the device has, which is what "can X reach Y"
+    means to whoever asks it; the narrower "can this device itself originate
+    reachable traffic" reading is not offered as a separate question here.
+
     A CIDR destination is resolved to one real host address ourselves,
     rather than handed to Batfish as-is (#70). Left alone, Batfish resolves
     a network destination to its own network address, which is never a
@@ -310,7 +321,14 @@ def _answer_reachability_question(split: tuple, bf: Session) -> Dict[str, Any]:
     try:
         frame = (
             bf.q.traceroute(
-                startLocation=source_device,
+                # @enter(), not the bare device name -- see #108. A node
+                # location only sees traffic ORIGINATING at the device, so
+                # an inbound ACL is never crossed and this returned the same
+                # answer for a config that blocked the traffic and one that
+                # permitted everything, both "grounded: true". @enter(device)
+                # with no interface picks up every interface the device has,
+                # which is what "can X reach Y" means to whoever asks it.
+                startLocation=f"@enter({source_device})",
                 headers=HeaderConstraints(dstIps=destination_ip),
             )
             .answer()
