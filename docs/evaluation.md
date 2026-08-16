@@ -570,10 +570,17 @@ resolve a reference correctly every time. A prompt change asks the model to be
 careful; this makes the sentence unambiguous, and the check whose output it is
 can no longer be misread by a human reader either.
 
-Worth raising as its own issue against `policy_compliance`, not fixed here —
-this exercise is measurement only, and @shubhamkataria2005 owns that check and
-should have the call. Two independent raters is also still a small sample:
-`PC-001` and `PC-005` are two findings from one check.
+**Tracked as [#145](https://github.com/ARSH871-bot/Netwise/issues/145)**, which
+@patelankeet2 had already filed the day before this rating was written. Not
+fixed here — this exercise is measurement only, and @shubhamkataria2005 owns
+that check and should have the call. Two independent raters is also still a
+small sample: `PC-001` and `PC-005` are two findings from one check.
+
+**#145 carries a constraint this section did not, and it matters:** do not
+apply the fix until this round of ratings is complete. Changing
+`policy_compliance`'s evidence format now would mean the ratings above refer
+to text that no longer exists, which destroys the comparison they were made
+for. An improvement identified by a measurement can still invalidate it.
 
 ### At least one concrete improvement
 
@@ -593,4 +600,14 @@ entirely. See the disagreement above. The improvement now on the table is
 that `policy_compliance` should name the required action in
 `evidence.detail` the way `access_control` already does, rather than
 compressing it into a pronoun. Left as a proposal for
-@shubhamkataria2005 — still measurement only here.
+@shubhamkataria2005 — still measurement only here, and tracked in
+[#145](https://github.com/ARSH871-bot/Netwise/issues/145) rather than in this
+document, so the fix is not driven from an evidence file.
+
+**Two raters reached this independently and it is worth saying so**, because
+it is the strongest thing this round produced. @patelankeet2 filed #145 from
+`PC-005` and `PC-004`; the rating above reached the same mechanism from
+`PC-005` and `PC-001` while checking whether a two-clause detail was to blame
+— it is not, `AC-001` is two-clause and reads correctly. Same conclusion, two
+routes, four findings between them. That is a better result than agreement
+would have been.
