@@ -99,6 +99,34 @@ pytest tests/ -v
 They need **neither Batfish nor Docker** and finish in about a second, so
 there is no excuse for not running them before opening a PR.
 
+**Check your environment first, and check it again if a number surprises you:**
+
+```bash
+python -m tools.preflight
+```
+
+It reports whether `pybatfish`, `pandas`, `fastapi`, `uvicorn`,
+`python-multipart` and `ollama` are actually importable — separately from
+Docker, the Batfish container and the Batfish service, because those fail
+separately.
+
+**This is here because it was missing, and the gap cost something real.** The
+README has pointed at `preflight` since it was written; this file — the one
+that says *"read this before your first commit"* — never mentioned it. A
+teammate with three packages missing had four test files failing to collect
+and reported the suite as **295 tests** in a status update. It was 370.
+
+Two things worth taking from that. **`pytest` does not hide a collection
+error** — it prints them next to the pass count — but a summary line is
+skimmed, and "295 passed" reads like success. And the failure ran in the safe
+direction: it **understated** what the project does. Nobody fact-checks a
+smaller number, so it survived into a status update and was heading for the
+report.
+
+If a count here ever disagrees with CI, believe CI and run `preflight`. CI
+installs `requirements.txt` on a clean machine every time, which is precisely
+the thing your laptop stops doing after the first week.
+
 **Please add tests with your check.** The suite exists because a real bug —
 two findings sharing an `id` — sat in the code for days, survived a review, and
 was only caught when someone built a dashboard and looked at the data. Every
