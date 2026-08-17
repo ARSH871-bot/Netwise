@@ -410,6 +410,38 @@ body {
   margin-bottom: 0.15rem;
 }
 
+/* --- Not written by a model, and it must not claim to be (#109) -----------
+   When Ollama is absent, explain() degrades to _fallback_plain_restatement()
+   -- the finding's own summary and detail concatenated. That is correct and
+   deliberate (#52); the problem was that it arrived under an "AI explanation"
+   byline, so the product attributed to a model text no model produced. On any
+   machine without Ollama, which is the default and how the whole test suite
+   runs, that was every explanation on screen.
+
+   #143 supplies `explanation_source`; app.js turns it into this modifier.
+
+   WHY THIS DROPS THE VIOLET RATHER THAN JUST CHANGING THE WORDS
+       --ai is documented above as a hue used by NOTHING else here, so that an
+       explanation can never be misread as a severity or a status. That only
+       holds if violet means "a model wrote this" exactly. A fallback keeping
+       the colour while losing the word would leave the strongest signal on
+       the card still making the claim the label just withdrew.
+
+       So this reuses .notice.staged's neutral treatment, for the same reason
+       that one is neutral: NOTHING HAS FAILED. This is a different resting
+       state, not a degraded one, and it must not read as an error either.
+       Muted, not alarming; plain, not violet. */
+.ai-explanation.fallback {
+  background: var(--card);
+  border-left-color: var(--line);
+  color: var(--ink-soft);
+}
+
+.ai-explanation.fallback::before {
+  content: "Plain-English summary";
+  color: var(--ink-soft);
+}
+
 /* --- The unwired state ---------------------------------------------------
    THIS MODIFIER IS NOT DECORATION.
 
