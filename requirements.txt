@@ -12,6 +12,22 @@ pybatfish==2025.7.7.2423
 # Batfish answers come back as pandas DataFrames, and our analysis code works
 # with them directly, so pandas is a direct dependency rather than an
 # incidental one.
+#
+# A MAJOR pandas BUMP CANNOT BE MERGED ON A GREEN CI TICK.
+#   pybatfish declares `pandas` with no version ceiling, so pip will install a
+#   major version it has never been tested against. And the only code that
+#   touches a real DataFrame -- every `.frame()` call in analysis/checks/ --
+#   needs a live Batfish, which CI does not have. The tests that mention
+#   DataFrames use fakes.
+#
+#   So on a major bump, CI green means "the tests that do not use pandas still
+#   pass". Verify it the only way that works: an isolated venv with the pinned
+#   pybatfish and the new pandas, running the pipeline against the real
+#   container. That is how >=2.0 -> >=3.0.5 was checked (#131), and it gave
+#   results identical to pandas 2.3.3.
+#
+#   Same shape as the pybatfish pin below: a dependency whose real behaviour
+#   lives outside anything CI can reach.
 pandas>=3.0.5
 
 # --- Layer 2: AI explanation layer -----------------------------------------
