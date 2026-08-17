@@ -258,7 +258,7 @@ def run() -> int:
 
     print("Netwise preflight")
     print("=" * 72)
-    for (label, status, detail), required in results:
+    for (label, status, detail), _required in results:
         print(f"[{_SYMBOL[status]}] {label}")
         if status != OK:
             print(f"           {detail}")
