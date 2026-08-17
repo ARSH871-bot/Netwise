@@ -459,9 +459,34 @@ three people who review in bursts, and no rule changes that.
 | Member | Why it touches them | Agreed |
 |---|---|---|
 | **Shubham** | Proposed the "current" condition after four of his approvals went stale | ✅ |
-| **Arsh** | Wrote §5a, raised #99, and has refused to self-merge all week under the old reading | ⬜ |
+| **Arsh** | Wrote §5a, raised #99, and has refused to self-merge all week under the old reading | ✅ |
 | **Ankeet** | Landed 13 PRs under the old reading, which is the work this removes the need for | ✅ |
 | **Samika** | Bound by it equally; asked for rule 3 to be stricter on #63, so has form on this file | ⬜ |
+
+> **NOT YET RATIFIED — three of four, and the wording above is already live.**
+>
+> #156 said it plainly: *"Merging this PR means the wording is worth having. It
+> does not mean the amendment is ratified. That is the A-1 convention, and A-2
+> is why it matters — that one merged with two of four signatures and the
+> record said so for two days."*
+>
+> It then merged with **two** of four, and this document spent that interval
+> stating the new rule 1 in §5a while its own record said the change was not
+> agreed. **The amendment's own warning came true about the amendment**, which
+> is worth leaving on the page rather than tidying away — it is the fourth
+> instance of the family this project keeps finding, arriving inside the
+> paragraph that describes it.
+>
+> Nothing here blames anyone. The signature is a separate action from the
+> merge, nobody is obliged to notice that, and a table is a poor reminder.
+> **The lesson is that "merged" and "agreed" are different facts and only one
+> of them is visible on a pull request.** If A-3 is ever proposed, the
+> ratification row should be part of the merge checklist rather than a thing
+> to remember afterwards.
+>
+> **Until @SamikaPerera signs, the previous wording governs** — one approval
+> from someone else, and the author does not press the button. Arsh has
+> continued to follow the old reading since the merge for that reason.
 
 ---
 
