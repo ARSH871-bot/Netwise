@@ -128,9 +128,32 @@ python -m tools.preflight
 ```
 
 It reports whether `pybatfish`, `pandas`, `fastapi`, `uvicorn`,
-`python-multipart` and `ollama` are actually importable — separately from
-Docker, the Batfish container and the Batfish service, because those fail
-separately.
+`python-multipart` and `ollama` are actually importable, **and separately
+whether the installed versions satisfy `requirements.txt`** — both apart from
+Docker, the Batfish container and the Batfish service, because all of those
+fail separately.
+
+**Those last two are different questions, and the second one caught something
+real.** Measured on the SCRUM master's machine on 17 August, while every local
+test run was being quoted as evidence:
+
+```
+pandas            installed 2.3.3    declared >=3.0.5
+fastapi           installed 0.128.0  declared >=0.141.1
+uvicorn           installed 0.40.0   declared >=0.52.1
+python-multipart  installed 0.0.21   declared >=0.0.32
+pytest            installed 9.0.2    declared >=9.1.1
+```
+
+Five of seven, and the import check said "all importable" throughout, because
+every one of them imports perfectly well. CI installs `requirements.txt` on a
+clean machine, so **CI was testing pandas 3.x while the same suite locally was
+testing pandas 2.x — both green, and not the same test.** #131 raised that
+floor deliberately, and #132 exists because a major pandas bump cannot be
+validated on a CI tick.
+
+If the version check is BROKEN, run `pip install -r requirements.txt --upgrade`
+before quoting a local number at anyone.
 
 **This is here because it was missing, and the gap cost something real.** The
 README has pointed at `preflight` since it was written; this file — the one

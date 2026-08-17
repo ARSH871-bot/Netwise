@@ -33,6 +33,8 @@ These need neither Batfish nor Docker.
 
 from __future__ import annotations
 
+import builtins
+
 import pytest
 
 from tools import preflight
@@ -176,3 +178,108 @@ def test_port_probe_is_honest_both_ways():
 
     # Same port, nothing listening now.
     assert preflight._port_open("127.0.0.1", port, timeout=1.0) is False
+
+
+# ---------------------------------------------------------------------------
+# check_dependency_versions -- "it imports" is not "it is what we declare"
+# ---------------------------------------------------------------------------
+
+
+def _fake_requirements(tmp_path, text: str, monkeypatch):
+    """Point the check at a requirements.txt we control.
+
+    The check locates the real file relative to its own __file__, so the
+    redirect replaces that lookup rather than the file on disk.
+    """
+    req = tmp_path / "requirements.txt"
+    req.write_text(text, encoding="utf-8")
+
+    class _FakePath:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def resolve(self):
+            return self
+
+        @property
+        def parent(self):
+            return self
+
+        def __truediv__(self, _other):
+            return req
+
+    monkeypatch.setattr(preflight, "Path", _FakePath)
+    return req
+
+
+def test_a_version_below_the_declared_floor_is_broken(tmp_path, monkeypatch):
+    """The failure this check was written for.
+
+    Measured on 17 August: five of seven packages did not satisfy
+    requirements.txt while check_dependencies() reported "all importable",
+    because every one of them imports perfectly well. CI installs the file on
+    a clean machine, so CI and local were running different pandas majors and
+    both were green.
+    """
+    _fake_requirements(tmp_path, "pytest>=9999.0.0\n", monkeypatch)
+    label, status, detail = preflight.check_dependency_versions()
+    assert label == "Package versions"
+    assert status == preflight.BROKEN, "a version below the floor must not be OK"
+    assert "pytest" in detail
+    assert ">=9999.0.0" in detail
+
+
+def test_versions_that_satisfy_the_file_are_ok(tmp_path, monkeypatch):
+    _fake_requirements(tmp_path, "pytest>=0.0.1\n", monkeypatch)
+    _label, status, _detail = preflight.check_dependency_versions()
+    assert status == preflight.OK
+
+
+def test_a_declared_package_that_is_absent_is_broken(tmp_path, monkeypatch):
+    _fake_requirements(tmp_path, "definitely-not-installed-xyzzy>=1.0\n", monkeypatch)
+    _label, status, detail = preflight.check_dependency_versions()
+    assert status == preflight.BROKEN
+    assert "not installed" in detail
+
+
+def test_comments_and_blank_lines_are_ignored(tmp_path, monkeypatch):
+    """requirements.txt in this project is mostly comments, and a check that
+    choked on them would be abandoned within a day."""
+    _fake_requirements(
+        tmp_path,
+        "# a comment\n\n   \npytest>=0.0.1  # trailing comment\n",
+        monkeypatch,
+    )
+    _label, status, _detail = preflight.check_dependency_versions()
+    assert status == preflight.OK
+
+
+def test_it_reports_could_not_check_rather_than_ok_when_it_cannot_compare(
+    tmp_path, monkeypatch
+):
+    """F-4 applied to the preflight tool itself.
+
+    Version comparison needs `packaging`, which is not in requirements.txt. If
+    it is absent, the honest answer is "I could not check" -- never a silent
+    pass, and never a hand-rolled comparison that gets 0.9 vs 0.10 wrong.
+    """
+    _fake_requirements(tmp_path, "pytest>=0.0.1\n", monkeypatch)
+
+    real_import = builtins.__import__
+
+    def _no_packaging(name, *args, **kwargs):
+        if name.startswith("packaging"):
+            raise ImportError("no module named packaging")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _no_packaging)
+    _label, status, detail = preflight.check_dependency_versions()
+    assert status == preflight.BROKEN, "unable to compare must not report OK"
+    assert "not run" in detail or "cannot compare" in detail
+
+
+def test_the_version_check_is_required_not_optional():
+    """An environment that does not match requirements.txt fails the exit
+    code, because a local test run on it is not testing what CI tests."""
+    assert preflight.check_dependency_versions in preflight.REQUIRED
+    assert preflight.check_dependency_versions not in preflight.OPTIONAL
