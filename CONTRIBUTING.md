@@ -410,7 +410,7 @@ three people who review in bursts, and no rule changes that.
 |---|---|---|
 | **Shubham** | Proposed the "current" condition after four of his approvals went stale | ✅ |
 | **Arsh** | Wrote §5a, raised #99, and has refused to self-merge all week under the old reading | ⬜ |
-| **Ankeet** | Landed 13 PRs under the old reading, which is the work this removes the need for | ⬜ |
+| **Ankeet** | Landed 13 PRs under the old reading, which is the work this removes the need for | ✅ |
 | **Samika** | Bound by it equally; asked for rule 3 to be stricter on #63, so has form on this file | ⬜ |
 
 ---
