@@ -2,9 +2,10 @@
 
 WHY THIS EXISTS
     US-16 is "as a user, I can run the finished tool from clear setup
-    instructions". The README has five steps, and today you find out whether
-    step 1 worked when step 3 fails -- with an error from pybatfish, or an
-    empty dashboard, or a finding that says the analysis could not run.
+    instructions". The README has eight steps, and without this you find out
+    whether Batfish started when the analysis step fails -- with an error
+    from pybatfish, or an empty dashboard, or a finding that says the
+    analysis could not run.
 
     That is not hypothetical. During one week of development the Batfish
     container was OOM-killed four times (`Exited (137)`), Docker Desktop itself
@@ -35,7 +36,8 @@ THE RULE THIS FOLLOWS (the same one F-4 follows)
         BROKEN   checked, there, and not working -- with the fix
 
 RUN
-    python -m tools.preflight
+    python -m tools.preflight        (the form the README gives)
+    python tools/preflight.py        (also works -- see the sys.path note below)
 
 EXIT CODE
     0 if everything REQUIRED is working, 1 otherwise. Optional problems never
@@ -48,7 +50,23 @@ import shutil
 import socket
 import subprocess
 import sys
+from pathlib import Path
 from typing import List, Tuple
+
+# RUN AS A SCRIPT, NOT ONLY AS A MODULE.
+#     `python -m tools.preflight` puts the repository root on sys.path;
+#     `python tools/preflight.py` puts tools/ there instead, so `import
+#     analysis` fails and check_batfish_service() cannot reach the thing it
+#     is meant to test. Both forms are documented -- the README gives the
+#     module form and refers to the file by path -- so both must work.
+#
+#     This is the first half of the fix. The second is in
+#     check_batfish_service(), which no longer reports an import failure as a
+#     Batfish failure. Either half alone would hide the other, which is why
+#     both are here: one makes the command work, one makes it honest when
+#     something else breaks the import.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 #: (label, status, detail). status is one of OK / MISSING / BROKEN.
 Result = Tuple[str, str, str]
@@ -192,9 +210,26 @@ def check_batfish_service() -> Result:
             "container has just started, it takes a few seconds to come up.",
         )
 
+    # AN IMPORT ERROR IS NOT A BATFISH ERROR.
+    #     This used to sit inside the same `except Exception` as the call
+    #     below, so a ModuleNotFoundError -- the repository root missing from
+    #     sys.path -- was reported as "the service did not answer". Batfish
+    #     was fine every time. The message sent the reader to restart Docker,
+    #     which cannot fix an import, in the one tool whose whole purpose is
+    #     saying which piece is broken rather than that something is.
     try:
         from analysis.pipeline import connect
+    except ImportError as error:
+        return (
+            "Batfish service",
+            BROKEN,
+            f"could not check -- Netwise's own code did not import, so this "
+            f"says NOTHING about Batfish: {type(error).__name__}: "
+            f"{str(error)[:120]}. Run from the repository root, and install "
+            f"the dependencies (README step 4).",
+        )
 
+    try:
         connect(BATFISH_HOST)
     except Exception as error:  # noqa: BLE001 -- report anything, never raise
         return (
