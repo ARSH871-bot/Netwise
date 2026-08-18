@@ -239,3 +239,103 @@ merged in one sitting. Merge small, and land things as they go green.
 3. Is #16 in, and if so does it beat #78 for anyone's time?
 4. Who chases Senaka for the `<protocol>` answer that unblocks #80?
 5. Do we tag `v0.4.0` at this sprint's close, per `CONTRIBUTING.md` §5b?
+
+
+---
+
+## Days 2–6, recorded on day 6
+
+Written on **18 August**, the day before close, rather than reconstructed
+afterwards — the same convention Sprint 3's record used. The closing verdict is
+deliberately **not** written yet; the sprint has a day left and writing its
+ending early is how a record becomes a story.
+
+### Measured, not recalled
+
+```
+main                eac2a81      384 tests, ruff clean, CI green
+merged this sprint  47 pull requests
+open                12 PRs, 11 of them approved
+milestone           21 closed / 6 open, due 19 August
+```
+
+### What was committed, and what happened to it
+
+| Committed on day 1 | Outcome |
+|---|---|
+| **#78 timeboxed to item 1, explicit stop** | Item 1 done. The converter now models multi-interface rule sets and last-match-wins order (#104), and #142 split the refusal message so the two remaining blockers name their real causes. Still refuses the client's export — correctly. |
+| **#16 split** | Not closed. |
+| **#30 change impact** | **Done** (#140), with the trap it is built around now defended by a test (#152). |
+| **#87 raised as the open question** | Made *decidable* (#134) rather than solved, and the gap re-measured across every fixture rather than the friendliest one (#158). |
+
+### The two things that were not on the plan and mattered more than half of it
+
+**M-1 — rule 1 was contradicting rule 4.** Raised as #99 in Sprint 3, unratified
+for a week, and settled by @shubhamkataria2005 writing the text (#156) rather
+than arguing further. The condition he added — *current* review, meaning no
+commits pushed since the approval — was tested against eleven open PRs the day
+it was proposed: ten passed, one failed, and the one it caught was carrying a
+real post-approval fix.
+
+**It then merged with two of four signatures**, which is the exact failure its
+own body warned about, quoting A-2. §5d records that on the page rather than
+tidying it away. Still 2 of 4 at the time of writing.
+
+### What the sprint actually ran into
+
+**Not a shortage of work. A shortage of merges.**
+
+At the time of writing, **11 of 12 open pull requests are approved and green**,
+and every one of them has been proven to merge together cleanly. Nine are the
+SCRUM master's, held back by rule 1 as it stood before M-1 — which is precisely
+the contradiction M-1 exists to fix, and which M-1 cannot fix until it is
+ratified.
+
+That is worth stating plainly for the retro, because it is a **process**
+outcome rather than an engineering one, and it will not be visible in any
+burndown: the work was finished, reviewed and green, and the sprint may still
+close with it sitting in branches.
+
+### The pattern that kept recurring, and the one that changed
+
+Every significant defect found this sprint was the same shape the project has
+been naming since Sprint 2 — *a weaker claim standing in for a stronger one*:
+
+- a reachability query that could not observe the ACL it claimed to answer
+  about, in **three separate modules in one week** (#108, `change_impact`, and
+  the pin that now defends both)
+- Dependabot **security alerts off** for weeks while `dependabot.yml` argued in
+  a comment that they mattered
+- **"it imports" standing in for "it is the version we declare"** — five of
+  seven packages adrift locally, so CI tested pandas 3.x while the same suite
+  locally tested 2.x, both green, on the same commit
+- a stale README that made a teammate's status update **understate** the tool,
+  which nobody fact-checks, because nobody audits a limitation
+
+**What changed is who finds them.** Sprint 3's were found by the author. This
+sprint's were mostly found by someone else re-running a claim rather than
+reading it: @shubhamkataria2005 found #108 and the incomplete fix in #145;
+@SamikaPerera found a false statement about the record inside a PR about record
+accuracy; the SCRUM master found the environment drift only by verifying a
+routine Dependabot bump he could have waved through.
+
+### Still open at day 6
+
+| | |
+|---|---|
+| **M-1 ratification** | 2 of 4. Releases nine approved PRs. |
+| **#159** | 1 of 3 answered. @shubhamkataria2005 answered `1A 2A 3A 4A 5A` with two additions that are now verified and carried. |
+| **#91** | Solved in #150 (Apache 2.0), approved, unmerged. |
+| **#127** | Confirmed privately, not on the issue — so `.mailmap` still cannot record it. |
+
+### One defect in this sprint's own process, found by a teammate
+
+#159 re-lettered the five decisions so that **A** was always the
+recommendation, convenient for replying `1A 2A 3A 4A 5A` — and it silently
+contradicted the merged document, where decisions 2 and 4 recommend **B**.
+@shubhamkataria2005 answered `2A` here having written `B` there and had to
+explain that it was not a reversal.
+
+**A form built to make agreement unambiguous made it ambiguous.** Corrected on
+the issue with the mapping, and worth carrying into any future decision
+request: do not re-letter options that already have letters somewhere else.
