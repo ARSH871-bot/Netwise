@@ -121,18 +121,42 @@ function renderFinding(finding, variant, icon, badgeText) {
   // explanation attempt means the key is simply absent rather than an
   // error message here.
   //
-  // No placeholder branch any more: before #31, this slot always rendered
-  // a dashed, muted "not generated yet" block so a hard-coded string could
-  // never be mistaken for real output (see the CSS comment on
-  // .ai-explanation.placeholder for the full reasoning, still relevant,
-  // just no longer reachable from here). Now that explain() is actually
-  // called, the two states this always distinguished collapse into one
-  // check: `finding.explanation` present means real, generated, grounded
-  // text; absent means nothing is shown at all, which is what "no
-  // explanation" honestly looks like -- not a dashed box promising one is
-  // coming.
+  // TWO SOURCES, TWO BYLINES (#109). THE MODIFIER IS WHAT KEEPS THE LABEL
+  // HONEST.
+  //
+  //     "model"       -> class "ai-explanation"          -> "AI EXPLANATION"
+  //     anything else -> class "ai-explanation fallback" -> "PLAIN-ENGLISH SUMMARY"
+  //
+  // This comment used to argue the opposite: that keeping the label in CSS
+  // meant it "can never drift out of sync", because app.js built exactly one
+  // element and there was only one thing it could be. That stopped being true
+  // the moment #52 made explain() degrade instead of raising. On a machine
+  // with no Ollama -- the default, and how the whole test suite runs -- the
+  // text under the byline is `_fallback_plain_restatement()`, the finding's
+  // own summary and detail concatenated. Correct and grounded, but no model
+  // wrote it, and the label said one did (#109).
+  //
+  // The label still lives in CSS, so it still cannot drift from the styling.
+  // What changed is that the CLASS now carries the provenance, so the styling
+  // it cannot drift from is the correct one of two. #143 supplies the fact as
+  // `explanation_source`; this line is the only place it is consumed.
+  //
+  // `=== "model"` rather than `!== "fallback"`, for the same reason
+  // `grounded !== true` is written that way in the chat pane below: a missing,
+  // misspelled or unexpected value must land on the side that claims LESS. A
+  // backend that stops sending the key should quietly stop claiming AI
+  // authorship, never quietly start.
+  //
+  // Absent `explanation` still renders nothing at all -- not an empty labelled
+  // box promising prose that does not exist, which is what the pre-#31
+  // placeholder did.
   if (variant !== "blind" && variant !== "clean" && finding.explanation) {
-    const explanation = el("div", "ai-explanation", finding.explanation);
+    const fromModel = finding.explanation_source === "model";
+    const explanation = el(
+      "div",
+      fromModel ? "ai-explanation" : "ai-explanation fallback",
+      finding.explanation
+    );
     card.appendChild(explanation);
   }
 
