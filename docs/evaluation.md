@@ -499,11 +499,11 @@ someone who has never read `evidence.detail` what is actually wrong.
 | PC-001 | @ARSH871-bot | 2 | 3 | **Lower than Ankeet's 4, and for a reason that connects to PC-005.** "The policy currently permits this unauthorized access" is not merely confusing, it states the opposite of the finding. The finding is that the live config permits traffic the policy forbids. A reader who takes that sentence at face value concludes the policy is at fault, and that the config is doing what it was told. Same inversion as PC-005, one notch less blatant. |
 | AC-002 | @ARSH871-bot | 5 | 5 | Agree, and this is the one Ankeet most wanted an outside reading of — but `access_control` is mine, so I am the wrong person to give it. Correct on the shadowing direction, which is the easy thing to get backwards. **@shubhamkataria2005 / @SamikaPerera, this row needs one of you more than the others do.** |
 | PC-005 | @ARSH871-bot | 1 | 2 | **I think this is a grounding failure, not a phrasing risk, and that the rating should be 1.** See the disagreement below — the short version is that "a specific policy statement that requires blocking of HTTPS traffic" is not an awkward rendering of the evidence, it contradicts it. |
-| RT-050 | @shubhamkataria2005 | | | |
-| AC-001 | @shubhamkataria2005 | | | |
-| PC-001 | @shubhamkataria2005 | | | |
-| AC-002 | @shubhamkataria2005 | | | |
-| PC-005 | @shubhamkataria2005 | | | |
+| RT-050 | @shubhamkataria2005 | 5 | 4 | Nothing here can be wrong, and that is not faint praise: it is the only one of the five that makes no causal claim, so there is no relationship between two facts for it to get backwards. Accuracy is 5 by construction. Usefulness 4 because it quotes `evidence.detail` verbatim rather than translating it — a reader still has to know what a "route assertion" is. The fallback's job is to be safe, and it is; making it plainer is a separate piece of work from making it honest. |
+| AC-001 | @shubhamkataria2005 | 5 | 4 | Exact. "Allows all traffic through with no restriction" is the Modelfile's own prescribed rendering of `permit ip any any`, so calling it lightly reworded is a little unfair — it is following an instruction, not paraphrasing lazily. The causality runs the right way: the blanket permit is the cause, the traffic reaching the server is the effect. Usefulness 4 rather than 5 only because it stops at what happened and says nothing about what it means, which rule 2 requires of it. |
+| PC-001 | @shubhamkataria2005 | 2 | 2 | **With @ARSH871-bot at 2, not @patelankeet2 at 4, and this is my own check's output.** First sentence is correct and good. The last one — "The policy currently permits this unauthorized access" — is not confusing, it is the negation of `evidence.detail`, which says the flow "is permitted but policy **forbids** it". Usefulness 2 rather than 3 because the error is directional: a reader concludes the *policy* is at fault and the config is doing as told, so the action it invites is editing the policy, which is the one thing that is already correct. |
+| AC-002 | @shubhamkataria2005 | 5 | 4 | Taking this row as the outside reader @ARSH871-bot asked for, since `access_control` is his and `_compute_dead_rule_outcome()` is @patelankeet2's. The shadowing direction is right, and it is the thing most easily got backwards: a permit that never runs means the traffic is **denied**, and the text says so plainly. It also leaves `BLOCKING_LINES` alone rather than treating it as a rule name, which the prompt specifically warns about. Usefulness 4 — the third sentence largely restates the second, so it reads longer than it needs to. |
+| PC-005 | @shubhamkataria2005 | 1 | 2 | **Agreeing with @ARSH871-bot's 1 on accuracy.** Two of three sentences contradict the finding's own fields: "can be reached over HTTPS" against a summary that says "unreachable", and "a policy statement that requires blocking" against a detail that says "policy **requires** it". The middle sentence — "denies HTTPS traffic ... even though the service is required" — is correct, which is the only reason usefulness is 2 rather than 1: a careful reader can recover the truth from one clause out of three. This is my check's evidence format causing it, see #145. |
 | RT-050 | @SamikaPerera | | | |
 | AC-001 | @SamikaPerera | | | |
 | PC-001 | @SamikaPerera | | | |
@@ -581,6 +581,37 @@ Worth raising as its own issue against `policy_compliance`, not fixed here —
 this exercise is measurement only, and @shubhamkataria2005 owns that check and
 should have the call. Two independent raters is also still a small sample:
 `PC-001` and `PC-005` are two findings from one check.
+
+#### PC-001 — accuracy, Ankeet 4 against Arsh 2 and Shubham 2
+
+The same disagreement as PC-005, one notch quieter, and worth recording
+separately because the quieter version is the one that survives review.
+
+```
+evidence.detail  ... is permitted but policy forbids it.
+explanation      The policy currently permits this unauthorized access.
+```
+
+The evidence says the policy **forbids** the flow and the config permits it
+anyway. The explanation says the policy **permits** it. Ankeet's note calls
+this *"a little confusing on a first read"* and flags that it *"sounds like it
+could mean the written policy permits it"*. It does not merely sound like
+that; it is what the sentence says.
+
+**Two of three raters put this at 2, and the check's own author is one of
+them.** Recorded because `PC-001`'s first sentence is genuinely good — the
+blanket permit named as the cause, the consequence stated plainly — so the
+finding reads as mostly right, which is what makes the last sentence easy to
+wave through. `PC-005` announces itself by being self-contradictory in its
+first line. `PC-001` does not.
+
+That matters for the fix in #145: **both directions of the pronoun are
+affected**, not just the requirement one. `"is permitted but policy forbids
+it"` and `"is denied but policy requires it"` have the same unresolved
+reference, and a fix that names the required action for requirements only
+would leave `PC-001` exactly as it is.
+
+---
 
 ### At least one concrete improvement
 
