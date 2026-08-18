@@ -25,7 +25,7 @@ Arsh Vhora <vhoraarsh87@gmail.com>          Arsh. <vhoraarsh87@gmail.com>
 
 Ankeet Patel <patelankeet2@gmail.com>       patelankeet2 <patelankeet2@gmail.com>
 
-# --- NOT MAPPED, deliberately: NovaFlow <novaflowbuild@gmail.com> ----------
+# --- MAPPED, on the record: NovaFlow <novaflowbuild@gmail.com> -------------
 #
 #   Three commits on 3 August, including the ENTIRE initial web layer --
 #   web/main.py, web/static/app.js, style.css, index.html, mock_findings.py,
@@ -41,7 +41,16 @@ Ankeet Patel <patelankeet2@gmail.com>       patelankeet2 <patelankeet2@gmail.com
 #   about who wrote a person's largest single contribution. That is the one
 #   guess this file must not make.
 #
-#   @SamikaPerera: if this is you, say so on the issue and the line below
-#   goes in. If it is not, that is worth knowing for a different reason.
+#   CONFIRMED by @SamikaPerera on #127, 18 August -- twice, the second time
+#   with the address in backticks because GitHub swallowed the first as an
+#   HTML tag. She states it was the global git identity on her machine before
+#   she set a repo-local override partway through the project, and that those
+#   three commits are hers.
 #
-# Samika Perera <samika.ashen@gmail.com>    NovaFlow <novaflowbuild@gmail.com>
+#   So the rule at the top of this file is satisfied. The identity is mapped
+#   because the person said so where anyone can check it, not because the
+#   files looked like hers. They did look like hers -- that was never the
+#   difficulty, and it is exactly why the guess had to be refused until she
+#   answered.
+
+Samika Perera <samika.ashen@gmail.com>      NovaFlow <novaflowbuild@gmail.com>
