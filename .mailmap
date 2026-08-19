@@ -43,14 +43,14 @@ Ankeet Patel <patelankeet2@gmail.com>       patelankeet2 <patelankeet2@gmail.com
 #
 #   CONFIRMED by @SamikaPerera on #127, 18 August -- twice, the second time
 #   with the address in backticks because GitHub swallowed the first as an
-#   HTML tag. She states it was the global git identity on her machine before
-#   she set a repo-local override partway through the project, and that those
-#   three commits are hers.
+#   HTML tag. He states it was the global git identity on his machine before
+#   he set a repo-local override partway through the project, and that those
+#   three commits are his.
 #
 #   So the rule at the top of this file is satisfied. The identity is mapped
 #   because the person said so where anyone can check it, not because the
-#   files looked like hers. They did look like hers -- that was never the
-#   difficulty, and it is exactly why the guess had to be refused until she
+#   files looked like his. They did look like his -- that was never the
+#   difficulty, and it is exactly why the guess had to be refused until he
 #   answered.
 
 Samika Perera <samika.ashen@gmail.com>      NovaFlow <novaflowbuild@gmail.com>
