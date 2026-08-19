@@ -97,29 +97,75 @@ Sprint records live in [`docs/`](docs/): [Sprint
 
 ## Requirements
 
-- Docker (for the Batfish container)
-- Python **3.12 or 3.13** — the two versions CI actually runs. Earlier versions
+- **Git**, to clone the repository.
+- **Docker** (for the Batfish container).
+- **Python 3.12 or 3.13** — the two versions CI actually runs. Earlier versions
   may work and are untested, which is not the same thing.
-- Ollama, for the local LLM that writes the plain-English explanations. Build
-  the model once with `ollama create netwise-warden -f ai/Modelfile`. Only the
-  explanation layer needs it — the analysis pipeline and the test suite both
-  run without it.
+- **Ollama** (optional), for the local LLM that writes the plain-English
+  explanations. Install it from <https://ollama.com/download>, then build the
+  model once:
+
+  ```bash
+  ollama create netwise-warden -f ai/Modelfile
+  ```
+
+  That model is built on `llama3.2:3b`, so the first build pulls roughly **2 GB**
+  over the network. Budget the time and the disk before a demo.
+
+  **Only the explanation layer needs it.** The analysis pipeline and the whole
+  test suite run without it. What you lose is stated rather than hidden:
+  **without Ollama the dashboard shows deterministic fallback text**, labelled
+  *"Plain-English summary"* instead of *"AI explanation"*, so nothing on screen
+  claims a model wrote something a model did not. `tools/preflight.py` reports
+  the same thing before you start.
 
 ## Getting started
 
-**1. Start Batfish** (first run pulls the image, which takes a few minutes):
+**1. Clone the repository and enter it:**
+
+```bash
+git clone https://github.com/ARSH871-bot/Netwise.git
+cd Netwise
+```
+
+Every command below is run from this folder — the repository root. Several of
+them import Netwise's own packages, so running them from elsewhere fails.
+
+**2. Create and activate a virtual environment:**
+
+```bash
+python -m venv .venv
+
+source .venv/bin/activate      # macOS / Linux
+.venv\Scripts\activate        # Windows (PowerShell or CMD)
+```
+
+Not optional housekeeping. Activating it also puts `pytest` and `uvicorn` on
+your PATH, which is what makes the short forms in steps 7 and 8 work; without
+it those commands may not be found even though the packages are installed.
+
+**3. Start Batfish** (first run pulls the image, which takes a few minutes):
 
 ```bash
 docker run -d --name batfish -p 9997:9997 -p 9996:9996 -p 8888:8888 batfish/allinone
 ```
 
-**2. Install the Python dependencies:**
+**4. Install the Python dependencies:**
 
 ```bash
 pip install -r requirements.txt
 ```
 
-**3. Check your environment is actually ready:**
+That is everything needed to run Netwise and its test suite. There is also a
+`requirements-dev.txt`, holding **playwright** for driving a real browser
+against the dashboard. You only need it if you are doing UI testing; normal
+use and `pytest tests/` do not:
+
+```bash
+pip install -r requirements-dev.txt   # optional, UI testing only
+```
+
+**5. Check your environment is actually ready:**
 
 ```bash
 python -m tools.preflight
@@ -134,7 +180,7 @@ reported as optional, with what their absence costs, and never fail the check.
 Exit code is 0 when everything required works, so it is safe to put in front of
 a demo script.
 
-**4. Run an analysis** on one of the bundled synthetic configs:
+**6. Run an analysis** on one of the bundled synthetic configs:
 
 ```bash
 python -m analysis.pipeline tests/fixtures/rtr-us5-insecure
@@ -144,11 +190,15 @@ You should get JSON findings describing the deliberate flaw in that fixture.
 The first run after starting the container is slow — Batfish's engine has to
 warm up and parse the configs. That is normal, not a hang.
 
-**5. Start the dashboard:**
+**7. Start the dashboard:**
 
 ```bash
-uvicorn web.main:app --reload
+python -m uvicorn web.main:app --reload
 ```
+
+(`uvicorn web.main:app --reload` works too once the virtual environment from
+step 2 is active. The `python -m` form is written here because it works either
+way, which matters on Windows where the short form is frequently not on PATH.)
 
 Then open <http://127.0.0.1:8000>. API documentation is at `/docs`.
 
@@ -158,11 +208,13 @@ mistaken for one that has been checked, and any previous findings are cleared
 the moment you upload rather than left sitting under a fresh success message
 describing a different network.
 
-**6. Run the tests** (these need neither Batfish nor Docker):
+**8. Run the tests** (these need neither Batfish nor Docker):
 
 ```bash
-pytest tests/ -v
+python -m pytest tests/ -v
 ```
+
+(Again, plain `pytest tests/ -v` works with the virtual environment active.)
 
 Two test files drive the real dashboard JavaScript through a small Node shim.
 **Without Node installed they skip rather than fail** — and a skipped test looks
