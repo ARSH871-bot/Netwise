@@ -463,30 +463,47 @@ three people who review in bursts, and no rule changes that.
 | **Ankeet** | Landed 13 PRs under the old reading, which is the work this removes the need for | ✅ |
 | **Samika** | Bound by it equally; asked for rule 3 to be stricter on #63, so has form on this file | ✅ |
 
-> **NOT YET RATIFIED — three of four, and the wording above is already live.**
+> **RATIFIED — four of four.** @SamikaPerera's signature above completed it on
+> 17 August, in `021bda8` on this branch. With M-1 ratified, the approved and
+> green pull requests held under the old reading — #130, #146, #148, #149,
+> #150, #151, #154 — are released for their author to merge, given a **current**
+> approving review.
 >
-> #156 said it plainly: *"Merging this PR means the wording is worth having. It
-> does not mean the amendment is ratified. That is the A-1 convention, and A-2
-> is why it matters — that one merged with two of four signatures and the
-> record said so for two days."*
+> **How it got here is worth keeping.** #156 said plainly: *"Merging this PR
+> means the wording is worth having. It does not mean the amendment is
+> ratified. That is the A-1 convention, and A-2 is why it matters — that one
+> merged with two of four signatures and the record said so for two days."*
 >
 > It then merged with **two** of four, and this document spent that interval
 > stating the new rule 1 in §5a while its own record said the change was not
-> agreed. **The amendment's own warning came true about the amendment**, which
-> is worth leaving on the page rather than tidying away — it is the fourth
-> instance of the family this project keeps finding, arriving inside the
+> agreed. **The amendment's own warning came true about the amendment** — the
+> fourth instance of the family this project keeps finding, arriving inside the
 > paragraph that describes it.
 >
-> Nothing here blames anyone. The signature is a separate action from the
-> merge, nobody is obliged to notice that, and a table is a poor reminder.
-> **The lesson is that "merged" and "agreed" are different facts and only one
-> of them is visible on a pull request.** If A-3 is ever proposed, the
-> ratification row should be part of the merge checklist rather than a thing
-> to remember afterwards.
+> **And then it happened once more, to the fix.** This paragraph read "NOT YET
+> RATIFIED — three of four" for two days after the table above it reached four,
+> naming @SamikaPerera as the missing signature he had already given.
+> @patelankeet2 caught it on review the same day; @SamikaPerera offered exact
+> replacement wording the next morning and flagged it again that evening. The
+> author of this PR read neither, and went on reporting "2 of 4" from `main`
+> while the branch in front of him said otherwise — measuring the wrong file and
+> publishing a conclusion about a person from it.
 >
-> **Until @SamikaPerera signs, the previous wording governs** — one approval
-> from someone else, and the author does not press the button. Arsh has
-> continued to follow the old reading since the merge for that reason.
+> Meanwhile the rule was already governing merges: **#163 was authored and
+> merged by @SamikaPerera on two current approvals**, which is legitimate under
+> M-1 and not under the old reading. The practice moved before the record did.
+>
+> Nothing here blames anyone for the original two-of-four merge. A signature is
+> a separate action from a merge, nobody is obliged to notice that, and a table
+> is a poor reminder. **The lesson is that "merged" and "agreed" are different
+> facts and only one of them is visible on a pull request** — and the corollary,
+> learned the hard way here: **check the branch, not `main`, before reporting
+> what someone has or has not agreed.**
+>
+> If A-3 is ever proposed, the ratification row belongs in
+> `.github/pull_request_template.md`, read at the moment someone is about to
+> merge, rather than in anybody's memory. @shubhamkataria2005 suggested exactly
+> that on #102 when A-2 did this, and it was not followed up.
 
 ---
 
