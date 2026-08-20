@@ -35,6 +35,7 @@ from pathlib import Path
 import pytest
 
 from analysis import findings
+from analysis.pipeline import duplicate_id_findings
 from web.mock_findings import get_mock_findings
 
 F1_FIELDS = {"id", "check", "severity", "device", "summary", "evidence", "status"}
@@ -158,4 +159,46 @@ def test_every_mock_source_naming_a_repo_file_names_one_that_exists(mocks):
         "mock findings cite repository files that do not exist, so the "
         "dashboard shows a user evidence pointing at nothing:\n  "
         + "\n  ".join(missing)
+    )
+
+
+def test_no_two_mock_findings_share_an_id(mocks):
+    """Raised by @shubhamkataria2005 in review, and he is right that this is
+    the one invariant this file's own history is about.
+
+    THE GAP HE FOUND
+        `test_every_mock_id_matches_its_check_prefix` checks each id against
+        its OWN check. It cannot see two findings that each agree with their
+        own check and collide with each other. He demonstrated it by making
+        `change_impact`'s error sentinel a `policy_compliance` one:
+
+            ids: ['AC-001', 'PC-000', 'RT-001', 'PC-000', 'AC-002', 'RK-001']
+            duplicates: True   ->   7 passed
+
+        Two `PC-000`, and nothing noticed -- in the pull request whose whole
+        stated justification is that this file *"has already drifted once
+        without anyone noticing"*, guarding against precisely that drift.
+
+    WHY IT MATTERS HERE SPECIFICALLY
+        `PC-000` appearing twice is why `web/static/app.js` carries its rule
+        never to key findings by id, why `tests/test_findings_rendering.py`
+        exists, and why A-2 was raised at all. If a consumer keys by id, one
+        of a colliding pair disappears -- and if the vanished one is a
+        `status="error"`, the user reads "all clear" while a check never ran.
+        F-4's failure reached through `id` instead of through `status`.
+
+    WHY IT ASSERTS AGAINST `duplicate_id_findings` RATHER THAN COUNTING IDS
+        Also his suggestion, and the better half of it. A `len(set(ids))`
+        assertion would test a copy of the guard's logic; this tests the mock
+        data against the guard the product actually runs. #84 is the reason
+        that distinction is not pedantic -- there, a guard's self-test
+        verified a re-implementation while the real path was free to break
+        independently of it.
+    """
+    collisions = duplicate_id_findings(mocks)
+
+    assert collisions == [], (
+        "two mock findings share an id, so anything downstream keying by id "
+        "silently loses one of them:\n  "
+        + "\n  ".join(c["summary"] for c in collisions)
     )
