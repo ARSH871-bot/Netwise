@@ -23,9 +23,12 @@ THE SEAM
     knows how to render, which is exactly the F-4 guarantee end to end.
 """
 
+import hashlib
+import json
 import shutil
+from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -126,6 +129,104 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+# --- The explanation cache (#92) ---------------------------------------------
+#
+# WHY THIS EXISTS
+#     /api/findings called the model once per status="found" finding on EVERY
+#     hit, and `loadFindings()` runs at script load (static/app.js), so every
+#     page load paid it again. Measured on rtr-us5-insecure before this
+#     change, counting calls to ollama.generate rather than timing them:
+#
+#         hit 1: 5 found  ->  5 model calls
+#         hit 2: 5 found  ->  5 model calls
+#         hit 3: 5 found  ->  5 model calls
+#
+# WHY THE KEY IS THE FINDING AND NOT ITS `id`
+#     #92 warned that keying on `id` would serve a stale explanation for a
+#     DIFFERENT network. That is not hypothetical -- two of our own fixtures
+#     already collide:
+#
+#         rtr-us5-insecure   AC-001  AC-002  PC-001  PC-002  PC-003
+#         rtr-us5-messy      AC-001  AC-002  AC-003  AC-004  PC-004  PC-005
+#                            ^^^^^^  ^^^^^^ used by BOTH
+#
+#     An id-keyed cache would print one network's explanation onto the other
+#     network's finding, and the text would read as though it had been
+#     written for what is on screen. Same class as #82, and worse.
+#
+#     So the key is a hash of the whole finding, with only the two keys this
+#     module itself adds removed. Anything a reader would notice changing --
+#     any F-1 field, and any field a future amendment adds -- changes the
+#     key. The failure direction is a wasted regeneration, never a wrong hit.
+#
+# WHY FALLBACK TEXT IS NEVER CACHED
+#     `explanation_source == "fallback"` means the model could not be
+#     reached. Caching that would make a transient Ollama outage permanent
+#     for the life of the process, which is #92's third acceptance criterion.
+#     Storing only "model" results satisfies it by construction rather than
+#     by a separate check that could drift.
+#
+# BOUNDED
+#     An OrderedDict used as an LRU, capped, so a long-running server cannot
+#     grow without limit on a big config. Unbounded caches in a tool that
+#     reads firewall exports are their own kind of defect.
+
+#: How many explanations to keep. 256 is roughly forty times the largest
+#: finding count any configuration we can currently analyse produces.
+EXPLANATION_CACHE_MAX = 256
+
+_explanation_cache: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
+
+#: The keys THIS module adds downstream of F-1 validation. They are the
+#: output of the computation being cached, so they cannot be part of its key.
+#: Everything else in the dict participates, including fields F-1 does not
+#: have yet -- a narrower allow-list would silently stop distinguishing
+#: findings the day the contract is amended.
+_DOWNSTREAM_KEYS = ("explanation", "explanation_source")
+
+
+def _finding_fingerprint(finding: Dict[str, Any]) -> str:
+    """A stable hash of the finding as the pipeline produced it.
+
+    `sort_keys=True` so two equal dicts built in different orders agree.
+    `default=str` so an unexpected value type degrades to a distinct string
+    rather than raising -- a fingerprint that cannot be computed must not be
+    able to take down the findings response.
+    """
+    payload = {k: v for k, v in finding.items() if k not in _DOWNSTREAM_KEYS}
+    encoded = json.dumps(payload, sort_keys=True, default=str,
+                         ensure_ascii=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _cached_explanation(key: str) -> Optional[Tuple[str, str]]:
+    """Return a cached ("text", "model") pair, or None. Refreshes LRU order."""
+    hit = _explanation_cache.get(key)
+    if hit is not None:
+        _explanation_cache.move_to_end(key)
+    return hit
+
+
+def _remember_explanation(key: str, explanation: str, source: str) -> None:
+    """Store a MODEL explanation. Fallback text is deliberately not stored."""
+    if source != "model":
+        return
+    _explanation_cache[key] = (explanation, source)
+    _explanation_cache.move_to_end(key)
+    while len(_explanation_cache) > EXPLANATION_CACHE_MAX:
+        _explanation_cache.popitem(last=False)
+
+
+def reset_explanation_cache() -> None:
+    """Empty the cache.
+
+    Exported for tests. `tests/conftest.py` calls it between every test,
+    because module-level state that survives a test is how one test starts
+    passing for a reason belonging to another one.
+    """
+    _explanation_cache.clear()
+
+
 def _attach_explanations(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Attach a plain-English explanation to every status="found" finding
     (US-19 / #31).
@@ -187,12 +288,30 @@ def _attach_explanations(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         same list that expects exactly the F-1 shape); switch to building
         a new list of shallow copies at that point rather than assuming
         this comment still holds.
+
+        STILL TRUE AFTER #92, and worth saying because the cache above
+        invites the opposite assumption. What #92 caches is the explanation
+        TEXT, keyed by a hash of the finding -- never the findings list
+        itself. `get_findings()` still calls `analyse()` fresh on every
+        request, so the dict mutated here is a new one every time and no
+        cached object ever acquires these two keys. Caching `analyse()` is
+        the change that would break this, and it is deliberately left to a
+        separate issue for exactly that reason.
     """
     for finding in results:
         if finding.get("status") != "found":
             continue
         try:
-            explanation, source = explain_with_source(finding)
+            # The fingerprint is computed BEFORE the two keys are attached,
+            # and they are excluded from it anyway -- so re-explaining an
+            # already-explained list still produces the same key.
+            key = _finding_fingerprint(finding)
+            hit = _cached_explanation(key)
+            if hit is not None:
+                explanation, source = hit
+            else:
+                explanation, source = explain_with_source(finding)
+                _remember_explanation(key, explanation, source)
             finding["explanation"] = explanation
             finding["explanation_source"] = source
         except Exception:
