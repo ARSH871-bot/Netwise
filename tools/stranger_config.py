@@ -40,7 +40,8 @@ WHAT TO DO WITH THE RESULT
     assume.
 
 RUN
-    python -m tools.stranger_config
+    python -m tools.stranger_config      (either form works -- see below)
+    python tools/stranger_config.py
 """
 
 from __future__ import annotations
@@ -52,6 +53,27 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 from typing import Dict, List
+
+# RUN AS A SCRIPT, NOT ONLY AS A MODULE.
+#     The same fix #172 made to tools/preflight.py, and the reason it is here
+#     is that #172 fixed the FILE rather than the property. `python -m
+#     tools.stranger_config` puts the repository root on sys.path; `python
+#     tools/stranger_config.py` puts tools/ there instead, so `from
+#     analysis.pipeline import analyse` raised ModuleNotFoundError and the
+#     script died before measuring anything.
+#
+#     Measured before the fix, from the repository root with PYTHONPATH
+#     stripped so the shell could not rescue it:
+#
+#         script                as module   as script
+#         preflight.py          ok          ok                      (#172)
+#         stranger_config.py    ok          IMPORT FAILS
+#
+#     tests/test_tools_invocation.py now asserts this for every script in
+#     tools/ that imports the package, so the next one added is covered
+#     without anyone remembering this comment exists.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 FIXTURE_ROOT = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 

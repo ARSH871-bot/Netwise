@@ -370,10 +370,28 @@ ai/         Layer 2 — local LLM explanation and Q&A
 web/        Layer 3 — FastAPI backend and dashboard
 tests/      pytest suite + synthetic fixtures (committed, see §7b)
 tools/      Standalone helpers, run by hand, not imported by the product
-              pfsense_shape.py  describe an export's structure, never its values
+              pfsense_shape.py    describe an export's structure, never a value
+              preflight.py        is this machine set up to run Netwise?
+              stranger_config.py  measure the #87 policy gap on every fixture
 docs/       Sprint records, design notes, evidence for reviews
 configs/    Config files under test — GIT-IGNORED, never committed
 ```
+
+Every script in `tools/` must run **both** documented ways, from the repository
+root:
+
+```bash
+python -m tools.stranger_config      # module form
+python tools/stranger_config.py      # script form
+```
+
+The two put different things on `sys.path`, so a tool that imports the product
+package needs the `__package__` guard or the second form dies with
+`ModuleNotFoundError`. #172 fixed that in `preflight.py`; it was still live in
+`stranger_config.py` for as long as it had been fixed in the first — a fix
+applied to the instance rather than the property. `tests/test_tools_invocation.py`
+now enforces it across the whole folder, so the next tool added is covered on
+the day it lands.
 
 Run the tests from the repository root — they need neither Batfish nor Docker:
 
