@@ -175,10 +175,17 @@ python -m tools.preflight
 ```
 
 Worth doing before the first analysis rather than after it fails. It reports
-Python, packages, the Docker daemon, the Batfish container and the Batfish
-service separately — because they fail separately, and `docker start batfish`
-cannot fix a stopped Docker daemon. Optional pieces (Ollama, Node) are
-reported as optional, with what their absence costs, and never fail the check.
+Python, packages, **package versions**, the Docker daemon, the Batfish
+container and the Batfish service separately — because they fail separately,
+and `docker start batfish` cannot fix a stopped Docker daemon. Optional pieces
+(Ollama, Node) are reported as optional, with what their absence costs, and
+never fail the check.
+
+**"Packages" and "package versions" are two checks on purpose.** A package
+that imports is not necessarily the version `requirements.txt` declares, and
+CI installs that file on a clean machine every time. If the two disagree, your
+local test run is not testing what CI tests — which is how the same suite came
+to be green on pandas 2.x locally and pandas 3.x in CI, on the same commit.
 
 Exit code is 0 when everything required works, so it is safe to put in front of
 a demo script.

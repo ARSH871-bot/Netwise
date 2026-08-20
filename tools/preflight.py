@@ -128,6 +128,99 @@ def check_dependencies() -> Result:
     )
 
 
+def check_dependency_versions() -> Result:
+    """Do the installed versions satisfy requirements.txt?
+
+    WHY THIS IS SEPARATE FROM check_dependencies()
+        Because "it imports" and "it is the version we declare" are different
+        claims, and the first was standing in for the second.
+
+        Measured on the author's machine, 17 August, while every run of the
+        suite was being reported as evidence:
+
+            pandas            installed 2.3.3    declared >=3.0.5
+            fastapi           installed 0.128.0  declared >=0.141.1
+            uvicorn           installed 0.40.0   declared >=0.52.1
+            python-multipart  installed 0.0.21   declared >=0.0.32
+            pytest            installed 9.0.2    declared >=9.1.1
+
+        Five of seven, and `check_dependencies()` reported "all importable"
+        throughout, because every one of them imports perfectly well.
+
+        This is not cosmetic. CI runs `pip install -r requirements.txt` on a
+        clean machine, so CI was testing pandas 3.x while the same suite
+        locally was testing pandas 2.x -- both green, and not the same test.
+        #131 raised that floor deliberately and #132 exists precisely because
+        a major pandas bump cannot be validated on a CI tick. A local run on
+        the old major answers a question nobody asked.
+
+        It is also the same shape as the missing-packages incident that put a
+        wrong test count into a status update: an environment quietly unlike
+        the declared one, reported as fine.
+
+    WHY IT CAN ITSELF REPORT "COULD NOT CHECK"
+        Parsing a requirement specifier properly needs `packaging`, which is
+        not in requirements.txt. Rather than hand-rolling version comparison
+        -- which gets 0.9 vs 0.10 wrong -- this reports BROKEN with the reason
+        when it cannot do the comparison. Saying "I could not check" beats
+        both a wrong answer and a silent pass, which is F-4 applied to the
+        preflight tool itself.
+    """
+    requirements = Path(__file__).resolve().parent.parent / "requirements.txt"
+    if not requirements.exists():
+        return ("Package versions", BROKEN, "requirements.txt not found")
+
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+        from packaging.requirements import Requirement
+        from packaging.version import Version
+    except ImportError as error:
+        return (
+            "Package versions",
+            BROKEN,
+            f"cannot compare versions: {error}. Install `packaging`, or treat "
+            "this check as not run -- it is not a pass.",
+        )
+
+    wrong: List[str] = []
+    absent: List[str] = []
+    for raw in requirements.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#")[0].strip()
+        if not line:
+            continue
+        try:
+            requirement = Requirement(line)
+        except Exception:  # noqa: BLE001 -- a line we cannot parse is not a failure
+            continue
+        try:
+            installed = version(requirement.name)
+        except PackageNotFoundError:
+            absent.append(f"{requirement.name} (declared {requirement.specifier})")
+            continue
+        if requirement.specifier and not requirement.specifier.contains(
+            Version(installed), prereleases=True
+        ):
+            wrong.append(
+                f"{requirement.name} {installed}, declared {requirement.specifier}"
+            )
+
+    if not wrong and not absent:
+        return ("Package versions", OK, "all satisfy requirements.txt")
+
+    parts = []
+    if wrong:
+        parts.append("does not match requirements.txt: " + "; ".join(wrong))
+    if absent:
+        parts.append("not installed: " + "; ".join(absent))
+    return (
+        "Package versions",
+        BROKEN,
+        ". ".join(parts)
+        + ". Run: pip install -r requirements.txt --upgrade   -- until then, a "
+        "local test run is not testing what CI tests.",
+    )
+
+
 def check_docker() -> Result:
     """Docker DAEMON, which is a different failure from the container.
 
@@ -277,7 +370,8 @@ def check_node() -> Result:
 # Runner
 # ---------------------------------------------------------------------------
 
-REQUIRED = [check_python, check_dependencies, check_docker,
+REQUIRED = [check_python, check_dependencies, check_dependency_versions,
+            check_docker,
             check_batfish_container, check_batfish_service]
 OPTIONAL = [check_ollama, check_node]
 
