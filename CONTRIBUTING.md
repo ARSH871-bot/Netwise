@@ -506,10 +506,24 @@ nearly silent about the thing being bumped.
 ### Worked example — pandas `>=2.0` → `>=3.0.5` (#131)
 
 Recorded here because a filled-in example is worth more than a blank form, and
-because this one is a **second, independent** verification of a bump that had
-already been checked in an isolated venv and reported in a `requirements.txt`
-comment. Two people getting the same answer by different routes is what makes
-the comment trustworthy.
+because this one is a **second verification by a different method** — the bump
+had already been checked in an isolated venv and reported in a
+`requirements.txt` comment; this one used the real container.
+
+**Corrected after review.** This paragraph said *"Two people getting the same
+answer by different routes"*. It was not two people. @patelankeet2 checked and
+both entries are mine — `bd5c0254` (14 August, the `requirements.txt` comment)
+and `14b2ff2` (18 August, this checklist). Two methods, one person.
+
+That distinction is the whole subject of this section, so getting it wrong here
+is worth leaving on the page rather than quietly rewording. **Two methods rule
+out a broken method; two people also rule out a person reading their own result
+back.** Only the first claim is supported, and the second is the one the
+original sentence made.
+
+He approved the PR and flagged this separately rather than blocking on it,
+which is the right call for a framing error in something factually correct —
+and it is still the more valuable half of the review.
 
 ```
 Dependency:            pandas  2.3.3 -> 3.0.5
