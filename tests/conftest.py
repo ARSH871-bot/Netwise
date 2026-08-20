@@ -36,8 +36,18 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _clear_explanation_cache():
-    """Empty web.main's explanation cache before and after every test.
+def _clear_web_caches():
+    """Empty web.main's caches before and after every test.
+
+    BOTH of them. #92b added a second module-level cache (the analysed
+    findings list) and it has the same problem for the same reason -- a
+    cached analysis surviving into another test would let one test's staged
+    config answer another test's request.
+
+    Resetting them is listed rather than discovered: a new cache added to
+    web/main.py must be added here too, and the loop below fails loudly on
+    a name that no longer exists rather than skipping it silently, so a
+    rename cannot quietly stop clearing something.
 
     Imported lazily and guarded: `tests/` must stay runnable if the web
     layer is ever unimportable for an unrelated reason, rather than every
@@ -47,11 +57,23 @@ def _clear_explanation_cache():
     not be able to affect anything even if a later fixture fails to run.
     """
     try:
-        from web.main import reset_explanation_cache
+        from web import main as web_main
     except Exception:
         yield
         return
 
-    reset_explanation_cache()
+    resets = []
+    for name in ("reset_explanation_cache", "reset_analysis_cache"):
+        fn = getattr(web_main, name, None)
+        assert fn is not None, (
+            f"web.main.{name} is gone. If the cache was removed, delete it "
+            f"from this list; if it was renamed, rename it here. Silently "
+            f"skipping it would leave module state leaking between tests."
+        )
+        resets.append(fn)
+
+    for reset in resets:
+        reset()
     yield
-    reset_explanation_cache()
+    for reset in resets:
+        reset()
