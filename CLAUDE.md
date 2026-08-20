@@ -202,10 +202,19 @@ Batfish runs in Docker container `batfish` (image `batfish/allinone`), exposing
   remedies are not conflated. Neither was on #78's item list, which was
   written before we knew which interfaces carried rules.
 
-  Analysing his firewall now needs, in order: multi-interface rule sets, real
-  PF Sense evaluation order, a decision on NAT (two of his rules carry
-  `associated-rule-id` and are meaningless without it), and rules that omit
-  `<type>` or `<protocol>`. **That is a sprint, plausibly more.** See #78.
+  Analysing his firewall now needs, in order: **an address for the DHCP WAN
+  that carries rules**, **a decision on the two VPN interfaces his rules name
+  but `<interfaces>` never declares**, a decision on NAT (two of his rules
+  carry `associated-rule-id` and are meaningless without it), and rules that
+  omit `<type>` or `<protocol>`. **That is a sprint, plausibly more.** See #78.
+
+  > **This list previously began "multi-interface rule sets, real PF Sense
+  > evaluation order" — both of which #104 had already delivered**, and it sat
+  > three paragraphs below the sentence saying so. Corrected 17 August after a
+  > teammate's status update repeated the stale version from `README.md`, which
+  > carried the same error. Left visible because it is the clearest instance
+  > this project has of the failure family it keeps naming: one fact in two
+  > places, one copy updated, and the wrong copy is the one somebody read.
 
   **What it does not change:** the converter did not emit a plausible, wrong ACL
   for a real firewall. It stopped and named the construct it could not handle.

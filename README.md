@@ -82,10 +82,13 @@ largest gap in the product.
 **Two further limits worth knowing before you try it:**
 
 - **PF Sense configs may be refused.** The converter handles interfaces and
-  filter rules for a single-interface rule set, and **refuses rather than
-  guesses** on NAT, aliases, VPN, IPv6, multi-interface rule sets, and rule
-  orderings where PF Sense's last-match-wins would disagree with the Cisco ACL
-  it produces. A real client export hit three of those.
+  filter rules, including **multi-interface rule sets** — each interface gets
+  its own ACL, checked independently — and it **models** PF Sense's
+  last-match-wins order rather than refusing it wherever it can do so exactly
+  (#104). It **refuses rather than guesses** on NAT, aliases, VPN, IPv6,
+  interfaces with no static address, interfaces named by a rule but never
+  declared, and rule orders it cannot model exactly. A real client export is
+  still refused, on the last two of those.
 - **Nothing has been verified against a real production network.** Every
   published result is on synthetic configs we wrote, which is a much weaker
   claim than it sounds — see [`docs/evaluation.md`](docs/evaluation.md), whose
