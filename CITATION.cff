@@ -1,0 +1,55 @@
+# Citation metadata, in the Citation File Format (https://citation-file-format.github.io).
+#
+# WHY THIS EXISTS
+#   Netwise is a capstone deliverable. It will be cited in a report, and may
+#   be shown to an examiner, an employer, or whoever picks the project up
+#   next. GitHub renders this as a "Cite this repository" panel and generates
+#   BibTeX and APA from it, so the citation people use is one we wrote rather
+#   than one they assemble from a URL.
+#
+#   The authors field deliberately matches LICENSE and NOTICE: an entity,
+#   "The Netwise Authors", not four named individuals. A citation records who
+#   made the work, which for a capstone touches university IP policy and an
+#   external client -- see issue #91. Naming us here would answer that
+#   question quietly, in a metadata file, which is the wrong place to settle
+#   it. NOTICE lists the four of us and what each owns.
+#
+#   If the university requires named authors in a citation, replace the single
+#   entity entry below with four `- family-names: / given-names:` entries.
+#   Nothing else in this file changes.
+cff-version: 1.2.0
+title: "Netwise: offline analysis and plain-English explanation of network device configurations"
+message: "If you reference this software, please cite it using this metadata."
+type: software
+
+authors:
+  - name: "The Netwise Authors"
+
+abstract: >-
+  Netwise reads exported network device configuration files, identifies
+  security misconfigurations in them, and explains those findings in plain
+  English. It orchestrates Batfish to build an offline model of the network
+  and a locally hosted language model to translate the resulting technical
+  findings, so no configuration data leaves the machine. The tool is passive:
+  it reads exported files and never connects to, scans, or modifies a live
+  network. Findings distinguish between a check that ran and found nothing and
+  a check that could not run at all, on the basis that conflating the two is
+  how a security tool reports safety nobody verified.
+
+keywords:
+  - network security
+  - configuration analysis
+  - Batfish
+  - firewall
+  - access control list
+  - misconfiguration detection
+  - explainable security
+  - local language model
+
+repository-code: "https://github.com/ARSH871-bot/Netwise"
+license: Apache-2.0
+
+# Tracks the most recent tagged release. Update both fields together when a
+# new tag is cut -- CONTRIBUTING section 5b covers the release convention.
+version: 0.3.0
+date-released: "2026-08-12"
