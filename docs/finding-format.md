@@ -223,6 +223,35 @@ amendment nobody had scheduled. A-1 took six days to collect four signatures.
 | Member | Why it touches them | Agreed |
 |---|---|---|
 | **Shubham** | Owns both checks; `policy_compliance` is the one that collides, and `change_impact` is the one being renumbered | ✅ |
-| **Arsh** | Owns `findings.py` and `pipeline.duplicate_id_findings()`, the guard this makes redundant for this pair | ⬜ |
+| **Arsh** | Owns `findings.py` and `pipeline.duplicate_id_findings()`, the guard this makes redundant for this pair | ✅ |
 | **Samika** | The dashboard renders `id`, and `web/mock_findings.py` carries the colliding pair deliberately | ✅ |
 | **Ankeet** | The AI layer refers to findings by `id` | ⬜ |
+
+> **A-2's code merged on 13 August while this table was incomplete**, which is
+> the one thing #102's own header said not to do:
+>
+> > ⚠️ *Do not merge before the ratification table is complete.* A-1 could be
+> > merged early because it was wording describing behaviour that already
+> > existed. **This one carries a code change.** Merging it unratified puts the
+> > contract and the code in exactly the disagreement A-1 existed to fix.
+>
+> That is what happened. `change_impact` uses `CH-` on `main` today, and this
+> table says two of four had not agreed to it.
+>
+> **The agreement exists; only the record lagged.** All four approved on
+> GitHub — @patelankeet2 22:35, @SamikaPerera 22:43, Arsh 22:51, and
+> @shubhamkataria2005 as author. Arsh's tick above is therefore a *correction
+> to the record*, not a new decision: it states here what his approving review
+> already stated on the PR.
+>
+> **Ankeet's is deliberately left ⬜.** He approved the code, and I asked on
+> #102 whether that was intended as his A-2 signature rather than "the code
+> looks right" — two different claims, and this table is the one that counts.
+> Ticking it on his behalf would be exactly the guess the amendment mechanism
+> exists to prevent. @patelankeet2, one word on #102 and it goes in.
+>
+> **The lesson is the mechanism, not the people.** An approval and a tick are
+> two records of one fact, kept in different places, updated by different
+> actions. That is the shape of every staleness bug this project has had. If a
+> third amendment ever happens, the tick should be part of approving rather
+> than a separate chore someone remembers.
