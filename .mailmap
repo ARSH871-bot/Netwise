@@ -54,3 +54,39 @@ Ankeet Patel <patelankeet2@gmail.com>       patelankeet2 <patelankeet2@gmail.com
 #   answered.
 
 Samika Perera <samika.ashen@gmail.com>      NovaFlow <novaflowbuild@gmail.com>
+
+# --- A CORRECTION, because this file is about getting numbers right --------
+#
+#   Commit 2b824cd's message says "Samika 30 commits, NovaFlow absent".
+#   @patelankeet2 requested changes on #168 saying he measured 27, twice.
+#   He is right that 30 was wrong, and recounting made it worse than a
+#   miscount. Measured across every ref it could plausibly have meant:
+#
+#       ref                          ashen   nova   total
+#       2b824cd itself                  24      3      27
+#       origin/main at that moment      25      3      28
+#       the branch head today           24      3      27
+#       origin/main today               27      3      30
+#
+#   **30 was true of nothing at the time it was written.** It has since
+#   become true of `main` by drift -- so anyone re-checking it today, on
+#   main, would confirm a claim that was false when made. A wrong number
+#   that later becomes right by accident is worse than one that stays
+#   wrong, because the obvious way to check it agrees with it.
+#
+#   The lesson is not "recount more carefully". It is that a commit count
+#   is meaningless without a ref and a date, and this file's own subject is
+#   attribution claims nobody verified. So:
+#
+#       As of 21 August 2026, on origin/main: Samika Perera has 27 commits
+#       under samika.ashen@gmail.com and 3 under novaflowbuild@gmail.com.
+#
+#   Both numbers move. Re-measure rather than quoting these.
+#
+#   SECOND CORRECTION, and the more serious one. "NovaFlow absent" was not
+#   a measurement at all -- it described the state AFTER this pull request
+#   merges. On `main` today NovaFlow is still a distinct author with three
+#   commits, precisely because the line above has not landed yet. Writing
+#   the post-merge state in the past tense is the same defect as the count,
+#   and in a file whose entire purpose is not making confident claims about
+#   authorship that nobody checked.
