@@ -49,6 +49,17 @@ TWO DIFFERENT KINDS OF MISTAKE, TWO DIFFERENT FIXES
        every blocking line agrees on the same action -- anything it is not
        fully confident about, it leaves alone rather than guessing.
 
+       The same mistake recurs in a second shape (#145): for a
+       policy_compliance finding, the model sometimes attributes the wrong
+       action to "the policy" -- e.g. evidence.detail says the flow "is
+       permitted but policy forbids it", and the generated text says "the
+       policy currently permits this". Found while independently rating
+       explanations for #90, confirmed on two findings (PC-001, PC-005).
+       Same fix, same reasoning: which side (the device's live configuration
+       vs. the written policy) does what is a fact with one correct answer,
+       computable from evidence.detail alone, so _compute_policy_outcome()
+       computes it the same way _compute_dead_rule_outcome() does.
+
 WHY status="error" ALSO GETS ITS OWN CHECK
     For "found"/"none", a wording slip is undesirable but not dangerous --
     the underlying fact was still real, the phrasing was just off. For
@@ -146,6 +157,72 @@ def _compute_dead_rule_outcome(detail: str) -> Optional[str]:
         f"{outcome}, because the blocking rule is evaluated first and "
         f"decides instead. The unreachable line's own action never takes "
         f"effect, regardless of what it says."
+    )
+
+
+# ------------------------------------------------------------------------------
+# 1b. Deterministic policy-vs-configuration outcome computation (#145)
+# ------------------------------------------------------------------------------
+
+# Matches evidence.detail EXACTLY as produced by
+# analysis.checks.policy_compliance._describe():
+#   "Flow <flow> is permitted but policy forbids it. Decided by: <line>"
+#   "Flow <flow> is denied but policy requires it. Decided by: <line>"
+# Deliberately narrow, same discipline as _DEAD_RULE_DETAIL_PATTERN -- this
+# must only match the two shapes it is confident about, never a loose
+# approximation of them.
+_POLICY_DETAIL_PATTERN = re.compile(
+    r"is (?P<wrong>permitted but policy forbids it|denied but policy requires it)\. "
+    r"Decided by:"
+)
+
+
+def _compute_policy_outcome(detail: str) -> Optional[str]:
+    """For a policy_compliance finding, compute -- in unambiguous words --
+    which side (the device's live configuration, or the written policy) is
+    responsible for what, rather than asking the model to keep the two
+    straight itself.
+
+    WHY THIS EXISTS (#145)
+        Confirmed on real findings while independently rating explanations
+        for #90: the model sometimes attributes the wrong action to "the
+        policy". evidence.detail says a flow "is permitted but policy
+        forbids it" -- the DEVICE is permitting traffic the POLICY forbids
+        -- and the generated text said "the policy currently permits this
+        unauthorized access", the exact opposite of what the evidence
+        states. A second finding (PC-005) inverted the other direction:
+        evidence said "is denied but policy requires it" and the text called
+        it "a policy statement that requires blocking of HTTPS traffic".
+
+        Same failure family as the dead-rule case above -- a fact with
+        exactly one correct answer, backwards. `evidence.detail` already
+        names the flow, the device's actual behaviour and the policy's
+        actual requirement; the mistake is entirely in restating which noun
+        goes with which verb, not in inferring anything from Batfish output.
+        That makes it a job for deterministic code, same principle as
+        _compute_dead_rule_outcome() and CLAUDE.md constraint 2.
+
+    Returns a plain-English statement naming both sides explicitly, or None
+    if `detail` is not in the exact shape policy_compliance.py's `_describe()`
+    produces -- nothing to compute from, so the model gets no extra help and
+    reasons from the raw finding alone, same as any other finding shape.
+    """
+    match = _POLICY_DETAIL_PATTERN.search(detail)
+    if not match:
+        return None
+
+    if match.group("wrong") == "permitted but policy forbids it":
+        return (
+            "the traffic itself is currently PERMITTED, and that is the "
+            "device's own configuration doing it, not the policy -- the "
+            "written policy actually FORBIDS this traffic. The device "
+            "configuration is what is letting it through despite that."
+        )
+    return (
+        "the traffic itself is currently DENIED, and that is the device's "
+        "own configuration doing it, not the policy -- the written policy "
+        "actually REQUIRES this traffic to be allowed. The device "
+        "configuration is what is blocking it despite that."
     )
 
 
@@ -284,9 +361,15 @@ def _build_prompt(finding: Dict[str, Any]) -> str:
        than reasoning about the finding it was actually given.
 
     2. If _compute_dead_rule_outcome() can determine the real outcome of a
-       dead-ACL-rule finding, that computed fact, labelled as
-       already-verified. See that function's docstring for why this exists
-       and how confident it has to be before it says anything at all.
+       dead-ACL-rule finding, or -- if that finds nothing -- if
+       _compute_policy_outcome() can determine which side a policy_compliance
+       finding's evidence actually blames (#145), that computed fact,
+       labelled as already-verified. See each function's docstring for why
+       it exists and how confident it has to be before it says anything at
+       all. The two never both match: a finding's evidence.detail is either
+       an access_control dead-rule shape or a policy_compliance shape, never
+       both, so trying the second only when the first returns None does not
+       risk masking one with the other.
     """
     parts = [
         "Explain ONLY the finding below. Do not reuse any wording from the "
@@ -296,7 +379,7 @@ def _build_prompt(finding: Dict[str, Any]) -> str:
     ]
 
     detail = _evidence_detail(finding)
-    computed_outcome = _compute_dead_rule_outcome(detail)
+    computed_outcome = _compute_dead_rule_outcome(detail) or _compute_policy_outcome(detail)
     if computed_outcome is not None:
         # Deliberately NOT a distinctive, quotable label like "IMPORTANT
         # FACT:" -- measured directly that the model would echo a label

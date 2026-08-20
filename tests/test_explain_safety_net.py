@@ -24,6 +24,7 @@ from ai import explain as explain_module
 from ai.explain import (
     _build_prompt,
     _compute_dead_rule_outcome,
+    _compute_policy_outcome,
     _evidence_detail,
     _fallback_error_explanation,
     _fallback_plain_restatement,
@@ -184,6 +185,70 @@ def test_returns_none_for_unrecognised_blocking_line_syntax():
         "Blocked by: remark this is a comment. Reason: BLOCKING_LINES"
     )
     assert _compute_dead_rule_outcome(detail) is None
+
+
+# --- _compute_policy_outcome (#145) ---------------------------------------------
+# Regression coverage for the reasoning mistake found while independently
+# rating explanations for #90: the model attributed the wrong action to "the
+# policy" on two real findings (PC-001, PC-005). Which side (the device's
+# live configuration vs. the written policy) is responsible has one correct
+# answer, so it is computed here rather than left for the model to derive.
+
+
+def test_prohibition_violation_blames_the_device_not_the_policy():
+    """Real evidence.detail shape from policy_compliance._describe() for a
+    'prohibition' rule -- the device permits what the policy forbids."""
+    detail = (
+        "Flow start=10.20.0.5 is permitted but policy forbids it. "
+        "Decided by: permit ip any any"
+    )
+    outcome = _compute_policy_outcome(detail)
+    assert outcome is not None
+    assert "PERMITTED" in outcome
+    assert "FORBIDS" in outcome
+    assert "DENIED" not in outcome
+    assert "REQUIRES" not in outcome
+
+
+def test_requirement_violation_blames_the_device_not_the_policy():
+    """Real evidence.detail shape for a 'requirement' rule -- the device
+    denies what the policy requires."""
+    detail = (
+        "Flow start=10.30.0.9 is denied but policy requires it. "
+        "Decided by: deny tcp any any eq 443"
+    )
+    outcome = _compute_policy_outcome(detail)
+    assert outcome is not None
+    assert "DENIED" in outcome
+    assert "REQUIRES" in outcome
+    assert "PERMITTED" not in outcome
+    assert "FORBIDS" not in outcome
+
+
+def test_policy_outcome_returns_none_for_a_finding_that_is_not_policy_shaped():
+    detail = "BatfishException: Work terminated abnormally"
+    assert _compute_policy_outcome(detail) is None
+
+
+def test_policy_outcome_returns_none_for_a_dead_rule_finding():
+    """The two computations must not cross-match each other's shape."""
+    detail = (
+        "Unreachable line: permit icmp any any (action PERMIT). "
+        "Blocked by: deny   ip any any. Reason: BLOCKING_LINES"
+    )
+    assert _compute_policy_outcome(detail) is None
+
+
+def test_policy_outcome_handles_multiple_example_flows_suffix():
+    """_describe() appends '(N example flows matched)' when more than one
+    row comes back -- the pattern must still match with that suffix present."""
+    detail = (
+        "Flow start=10.20.0.5 is permitted but policy forbids it. "
+        "Decided by: permit ip any any (3 example flows matched)"
+    )
+    outcome = _compute_policy_outcome(detail)
+    assert outcome is not None
+    assert "PERMITTED" in outcome
 
 
 # --- _fallback_plain_restatement -----------------------------------------------
@@ -511,6 +576,43 @@ def test_prompt_omits_the_computed_outcome_for_an_unrelated_finding():
     finding = {"id": "RT-001", "evidence": {"detail": "BatfishException: Work terminated abnormally"}}
     prompt = _build_prompt(finding)
     assert "already verified" not in prompt.lower()
+
+
+def test_prompt_includes_the_computed_outcome_for_a_policy_finding():
+    """#145 -- the model must be handed which side is actually responsible,
+    the same way it is for a dead-rule finding."""
+    finding = {
+        "id": "PC-005",
+        "evidence": {
+            "detail": (
+                "Flow start=10.30.0.9 is denied but policy requires it. "
+                "Decided by: deny tcp any any eq 443"
+            )
+        },
+    }
+    prompt = _build_prompt(finding)
+    assert "already verified" in prompt.lower()
+    assert "DENIED" in prompt
+    assert "REQUIRES" in prompt
+
+
+def test_prompt_prefers_the_dead_rule_computation_when_both_could_apply():
+    """The two patterns are mutually exclusive in practice (see each
+    function's docstring), but _build_prompt() tries the dead-rule check
+    first -- pin that order down directly rather than relying on the two
+    regexes never colliding by accident."""
+    finding = {
+        "id": "AC-002",
+        "evidence": {
+            "detail": (
+                "Unreachable line: permit icmp any any (action PERMIT). "
+                "Blocked by: deny   ip any any. Reason: BLOCKING_LINES"
+            )
+        },
+    }
+    prompt = _build_prompt(finding)
+    assert "already verified" in prompt.lower()
+    assert "denied" in prompt
 
 
 def test_prompt_tells_the_model_not_to_echo_the_computed_fact_as_a_label():
