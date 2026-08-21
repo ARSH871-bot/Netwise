@@ -302,3 +302,81 @@ def load_policy_file(path: Any) -> Policy:
         ) from error
 
     return load_policy(parsed)
+
+
+# ------------------------------------------------------------------------------
+# Delivering a loaded policy to a check (#87, the vertical slice)
+# ------------------------------------------------------------------------------
+#
+# THE PROBLEM THIS SOLVES, AND WHY IT LOOKS LIKE THIS
+#     Everything above was written, tested and merged in #173 -- and wired to
+#     NOTHING. Measured before this change: no module under `analysis/checks/`,
+#     `analysis/pipeline.py`, `web/` or `ai/` imported it. A loader nobody calls
+#     closes no gap at all.
+#
+#     The obvious wiring is to pass the policy in as an argument. That is
+#     blocked, and correctly so: F-3 fixes a check's signature at
+#     `run(bf: Session) -> list[dict]`, and `docs/design/pipeline-feature-shapes.md`
+#     was ADOPTED by all four signatures. Widening it is a contract change
+#     needing the whole team, not something to slip inside a feature branch.
+#
+#     So the policy is set here, before the pipeline runs, and checks read it.
+#     Module-level state, which is a real cost and is stated rather than
+#     hidden -- see below.
+#
+# WHY MODULE-LEVEL STATE IS ACCEPTABLE HERE, AND WHERE IT STOPS BEING SO
+#     Netwise is a single-user local tool. `web/main.py` already keeps
+#     `_uploaded` this way and says the same thing: "Module-level state is only
+#     defensible because this is a single-user local tool... If Netwise ever
+#     serves more than one user, this becomes per-session state." The same
+#     sentence applies here, for the same reason, and the same day it stops
+#     being true it stops being true for both.
+#
+#     It is deliberately NOT a convenience. The alternative -- checks reaching
+#     for a file path themselves -- would put policy loading, and therefore
+#     policy ERRORS, inside three different checks with three different
+#     failure behaviours.
+#
+# THE SAFETY PROPERTY THAT MATTERS MORE THAN THE PLUMBING
+#     A finding produced from the user's policy and a finding produced from
+#     our built-in example policy look identical on screen. That is exactly
+#     the confusion #87 is about: the user believing their rules are enforced
+#     when ours are. So `active_policy()` returning None is a MEANINGFUL
+#     answer, and the check is obliged to say which policy it used rather than
+#     quietly defaulting. See policy_compliance.run().
+
+#: The policy in force for this process, or None when the user supplied none.
+#: None is not "empty" -- an empty policy is a real, valid, deliberate state
+#: (D4) and is a Policy object with empty sections. Conflating the two would
+#: be F-4 in the policy layer: "the user asserted nothing" and "the user
+#: supplied nothing" are different claims.
+_active_policy: Optional[Policy] = None
+
+
+def set_active_policy(policy: Optional[Policy]) -> None:
+    """Install the policy the checks should read, or None to use none.
+
+    Raises TypeError rather than accepting a raw dict: a caller that has not
+    been through `load_policy()` has not been validated, and letting one
+    through would put unvalidated user input in front of a check -- the
+    failure the whole module exists to prevent.
+    """
+    global _active_policy
+    if policy is not None and not isinstance(policy, Policy):
+        raise TypeError(
+            "set_active_policy() takes a Policy from load_policy() or "
+            f"load_policy_file(), not {type(policy).__name__}. Passing a raw "
+            "mapping would hand a check unvalidated user input."
+        )
+    _active_policy = policy
+
+
+def active_policy() -> Optional[Policy]:
+    """The policy in force, or None if the user supplied none."""
+    return _active_policy
+
+
+def clear_active_policy() -> None:
+    """Forget the active policy. Called on upload, and between tests."""
+    global _active_policy
+    _active_policy = None
