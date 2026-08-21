@@ -3,6 +3,23 @@
 **Status:** PROPOSAL, for #87. Nothing here is agreed.
 **Written:** 13 August 2026, measured against `main` at 346 tests.
 
+> **UPDATE, 21 August.** All five decisions below were ratified on #159 (all
+> three of Arsh, Shubham and Samika replied `1A 2A 3A 4A 5A`). D1-D5 are
+> implemented in `analysis/policy.py` (#173): an already-parsed mapping goes
+> in, a validated `Policy` object comes out, failing loudly and naming the
+> offending entry per D5. The vocabulary mismatch this document names below
+> is fixed as of #177 -- `routing.py` adopts `node`, closing the last of the
+> three checks still using the old name.
+>
+> **What has NOT changed: no check reads a `Policy` object yet.** #173 is
+> explicit about this -- the loader exists, but `access_control`, `routing`
+> and `policy_compliance` all still read their own hardcoded lists. The
+> measurement in "The measurement that makes this worth doing" below is
+> therefore still current: renaming a device still halves detection, because
+> nothing has wired the loader into a single check. This document's original
+> table is left as written below, since it is the record of the problem that
+> motivated the decision, not something to quietly edit now that it is fixed.
+
 #87 is the largest gap in the product: every policy assertion is hardcoded to
 our own fixtures, so on a stranger's network Netwise reports only dead rules
 and undefined references. This document exists to make that decidable, not to

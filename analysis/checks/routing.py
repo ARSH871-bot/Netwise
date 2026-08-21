@@ -150,7 +150,7 @@ SUCCESS_DISPOSITIONS = {"ACCEPTED", "DELIVERED_TO_SUBNET"}
 # use itself -- adopted here from the start rather than copied as a known
 # weakness.
 #
-# start_node names two devices that only exist in the routing fixtures: rtr-hq
+# node names two devices that only exist in the routing fixtures: rtr-hq
 # and rtr-branch. Any snapshot without them -- every single-router config, and
 # every snapshot a user uploads through the dashboard -- used to make Batfish
 # fail the query, so BOTH statements came back status="error" ("Work terminated
@@ -162,11 +162,17 @@ SUCCESS_DISPOSITIONS = {"ACCEPTED", "DELIVERED_TO_SUBNET"}
 # statement count as checked? -- was answered by access_control.py (#45) and
 # policy_compliance.py (#50) while this comment sat here: it does not. It is an
 # error, never a "none". Nothing is skipped silently.
+#
+# RENAMED from "start_node" to "node" (#159, decision D1). access_control.py
+# and policy_compliance.py already used "node"; this was the one holdout, and
+# the mismatch is exactly what would let a user-supplied policy file type
+# "node:" under a route statement and get silence instead of an error. Pure
+# rename -- nothing about how routes are evaluated changes.
 ROUTES: List[Dict[str, Any]] = [
     {
         "number": 1,  # RT-001
         "description": "The HQ LAN must be able to reach the branch LAN",
-        "start_node": "rtr-hq",
+        "node": "rtr-hq",
         "src_ip": "10.10.10.5",
         "dst_ip": "10.20.20.5",
         "expected": "REACHABLE",
@@ -176,7 +182,7 @@ ROUTES: List[Dict[str, Any]] = [
     {
         "number": 2,  # RT-002
         "description": "The branch LAN must be able to reach the HQ LAN",
-        "start_node": "rtr-branch",
+        "node": "rtr-branch",
         "src_ip": "10.20.20.5",
         "dst_ip": "10.10.10.5",
         "expected": "REACHABLE",
@@ -240,7 +246,7 @@ def run(bf: Session) -> List[Dict[str, Any]]:
 
     # --- Scope the statements to the devices actually in this snapshot -------
     #
-    # Every statement in ROUTES names a specific start_node. On a snapshot that
+    # Every statement in ROUTES names a specific node. On a snapshot that
     # does not contain it, Batfish fails the query and each statement returns
     # its own "could not check" card -- correct under F-4, but on an ordinary
     # single-router upload that was every card the routing check produced.
@@ -280,8 +286,8 @@ def run(bf: Session) -> List[Dict[str, Any]]:
             )
         ]
 
-    applicable = [r for r in ROUTES if r["start_node"] in present]
-    absent = sorted({r["start_node"] for r in ROUTES if r["start_node"] not in present})
+    applicable = [r for r in ROUTES if r["node"] in present]
+    absent = sorted({r["node"] for r in ROUTES if r["node"] not in present})
     if absent:
         results.append(
             findings.error_finding(
@@ -307,7 +313,7 @@ def run(bf: Session) -> List[Dict[str, Any]]:
         )
 
     for route in applicable:
-        node = route["start_node"]
+        node = route["node"]
 
         # traceroute answers: starting from THIS node, with THESE headers,
         # where does the packet end up, hop by hop? Unlike testFilters it
@@ -396,10 +402,10 @@ def run(bf: Session) -> List[Dict[str, Any]]:
         return [
             findings.no_issues_finding(
                 check=CHECK_NAME,
-                device=applicable[0]["start_node"] if applicable else "unknown",
+                device=applicable[0]["node"] if applicable else "unknown",
                 summary="No issues found by routing",
                 detail=f"All {len(applicable)} route assertion(s) hold",
-                source=", ".join(sorted({r["start_node"] for r in applicable}))
+                source=", ".join(sorted({r["node"] for r in applicable}))
                 or "unknown",
             )
         ]
