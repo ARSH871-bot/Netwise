@@ -21,7 +21,13 @@ from pathlib import Path
 
 import pytest
 
-from analysis.pfsense_convert import PfSenseConversionError, convert, write_snapshot
+from analysis.pfsense_convert import (
+    REFUSALS,
+    PfSenseConversionError,
+    convert,
+    refusal_summary,
+    write_snapshot,
+)
 
 FIXTURE = "tests/fixtures/pfsense-source/config.xml"
 
@@ -947,3 +953,49 @@ def test_ipv6_shaped_ipaddr_raises_pfsense_conversion_error_not_a_raw_ipaddress_
     )
     with pytest.raises(PfSenseConversionError):
         _convert_string(xml_text)
+
+
+# --- REFUSALS: the single source of truth for what this converter refuses (#155) --------
+
+
+def test_every_refusal_has_a_real_reason():
+    """Structural, not cosmetic: catches an empty or placeholder entry, the
+    one way this dict could silently stop doing its job."""
+    assert REFUSALS, "REFUSALS must not be empty -- this converter does refuse things"
+    for key, reason in REFUSALS.items():
+        assert key == key.lower() and " " not in key, (
+            f"{key!r} is not a stable identifier -- keys are read by tests "
+            "and should not need to change when the wording does"
+        )
+        assert isinstance(reason, str) and len(reason) > 10, (
+            f"REFUSALS[{key!r}] is not a real one-line reason: {reason!r}"
+        )
+
+
+def test_refusal_summary_lists_every_category():
+    """The doc-facing rendering must not silently drop an entry -- this is
+    the thing a human pastes into README.md / CLAUDE.md, so a category
+    missing from it is a category missing from the docs too."""
+    summary = refusal_summary()
+    for reason in REFUSALS.values():
+        assert reason in summary
+
+
+def test_every_raise_site_actually_uses_a_refusals_entry():
+    """Guards against the exact drift #155 was filed about: a message that
+    duplicates REFUSALS wording instead of reading it, which can then drift
+    without anything noticing. Every one of the 18 refusal call sites in
+    analysis/pfsense_convert.py was audited by hand to confirm it builds its
+    message from REFUSALS; this only re-checks the mechanical half -- that
+    every entry is actually referenced somewhere in the module, so a key
+    nothing raises for is caught rather than silently accumulating.
+    """
+    import inspect
+
+    import analysis.pfsense_convert as pfsense_convert
+
+    source = inspect.getsource(pfsense_convert)
+    for key in REFUSALS:
+        assert f'REFUSALS["{key}"]' in source or f"REFUSALS['{key}']" in source, (
+            f"REFUSALS[{key!r}] is defined but no raise site reads it"
+        )

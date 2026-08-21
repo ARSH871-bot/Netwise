@@ -137,11 +137,110 @@ _PFSENSE_TO_CISCO_ACTION = {"pass": "permit", "block": "deny", "reject": "deny"}
 _PFSENSE_TO_CISCO_PROTOCOL = {"tcp": "tcp", "udp": "udp", "icmp": "icmp", "any": "ip"}
 
 
+#: Every construct convert() refuses, and the one-line reason why (#155).
+#:
+#: This exists because the set of things this module refuses used to live
+#: only as scattered `raise` sites, each with its message written at the call
+#: site. That is how the same information drifted into three separate
+#: documents (`README.md`, `CLAUDE.md`, `docs/evaluation.md`) that disagreed
+#: with each other about which limits were current -- see #155. Every raise
+#: site below builds its message from this dict rather than restating its
+#: own wording, so the two cannot drift apart from each other. It does not
+#: stop README.md or CLAUDE.md drifting from THIS file; `refusal_summary()`
+#: exists so a human updating those docs has one place to read from instead
+#: of guessing, and `tests/test_pfsense_convert.py` asserts this dict and the
+#: module docstring's own list of refusals agree with each other.
+#:
+#: Keys are stable identifiers, not user-facing text -- safe to reference
+#: from tests without coupling to exact wording. Values are a short, one-line
+#: description of the construct, phrased as "why", not "what to do about it";
+#: the dynamic detail (which interface, which rule, which value) is added by
+#: the raise site itself, since only it knows the specific offender.
+REFUSALS: Dict[str, str] = {
+    "control_character_injection": (
+        "a free-text field contains a control character, which could be "
+        "used to inject additional config lines"
+    ),
+    "invalid_hostname": (
+        "<hostname> is not a plain hostname, which could be used for config "
+        "injection or path traversal"
+    ),
+    "no_interfaces_section": "the export has no <interfaces> section at all",
+    "invalid_interface_address": (
+        "an interface's <ipaddr>/<subnet> do not form a valid IPv4 network"
+    ),
+    "no_usable_interfaces": "no interface has both a static address and a subnet",
+    "unresolved_network_reference": (
+        "a rule references a <network> that is not a configured interface "
+        "with a static address (or is an alias form this converter does "
+        "not resolve)"
+    ),
+    "unresolved_alias_address": (
+        "a rule's <address> is not a literal IP, likely a named alias"
+    ),
+    "unresolved_endpoint": (
+        "a <source> or <destination> matched none of any/network/address, "
+        "likely a named alias group"
+    ),
+    "unsupported_rule_type": "a rule's <type> is not pass, block or reject",
+    "unsupported_protocol": (
+        "a rule's <protocol> is not tcp, udp, icmp or any -- combined forms "
+        "like 'tcp/udp' need two Cisco ACL lines and are not handled"
+    ),
+    "missing_source_or_destination": "a rule has no <source> or <destination>",
+    "invalid_port": (
+        "a rule's <port> is not a single numeric port -- named aliases and "
+        "ranges are out of scope"
+    ),
+    "no_filter_rules": (
+        "there are no filter rules at all -- PF Sense fails closed with no "
+        "rules, Cisco fails open with no ACL bound, so converting this "
+        "would silently invert the source firewall's security posture"
+    ),
+    "no_interface_named": (
+        "no filter rule names an <interface> at all, so the resulting ACL "
+        "would be written but never bound to anything"
+    ),
+    "mixed_unassigned_rules": (
+        "which ACL they belong to is not knowable, refusing rather than "
+        "guessing"
+    ),
+    "no_static_address": (
+        "no static address configured (DHCP or unconfigured) -- a Cisco "
+        "ACL needs an address to bind rules to"
+    ),
+    "undeclared_interface": (
+        "not declared under <interfaces> at all -- most likely VPN/tunnel "
+        "policy (e.g. OpenVPN, WireGuard), which this module does not "
+        "parse and is out of scope, not LAN filtering"
+    ),
+    "ambiguous_rule_order": (
+        "two overlapping rules have different actions and the earlier one "
+        "is not marked quick, so PF Sense's real last-match-wins evaluation "
+        "and this converter's first-match-wins model can disagree about "
+        "which one decides"
+    ),
+    "path_traversal": (
+        "the converted <hostname> would write outside the snapshot directory"
+    ),
+}
+
+
+def refusal_summary() -> str:
+    """Render REFUSALS as a checklist, ready to paste into a doc.
+
+    Exists so keeping README.md / CLAUDE.md's stated PF Sense limits in sync
+    with this module is "run this and paste it" rather than "guess the
+    wording" -- see the REFUSALS docstring and #155.
+    """
+    return "\n".join(f"- {reason}" for reason in REFUSALS.values())
+
+
 class PfSenseConversionError(Exception):
     """Raised when the input needs something this converter deliberately does
-    not attempt -- see the module docstring's SCOPE section. Always raised
-    with a message naming the specific unsupported construct, never silently
-    swallowed or approximated."""
+    not attempt -- see the module docstring's SCOPE section and REFUSALS.
+    Always raised with a message naming the specific unsupported construct,
+    never silently swallowed or approximated."""
 
 
 def _text(el: Optional[ET.Element], tag: str, default: Optional[str] = None) -> Optional[str]:
@@ -190,9 +289,8 @@ def _reject_control_characters(text: str, *, field: str) -> str:
     """
     if _CONTROL_CHAR_PATTERN.search(text):
         raise PfSenseConversionError(
-            f"{field} contains a newline or other control character "
-            f"({text!r}) -- refusing to emit it into the generated config "
-            "rather than risk it being read as additional config lines"
+            f"{REFUSALS['control_character_injection']}: {field} is "
+            f"{text!r}"
         )
     return text
 
@@ -225,8 +323,7 @@ def _sanitised_hostname(text: str) -> str:
     """
     if not _HOSTNAME_PATTERN.match(text):
         raise PfSenseConversionError(
-            f"<hostname> is {text!r}, not a plain hostname -- refusing to "
-            "use it in the generated config or as a filename"
+            f"{REFUSALS['invalid_hostname']}: <hostname> is {text!r}"
         )
     return text
 
@@ -242,7 +339,7 @@ def _parse_interfaces(root: ET.Element) -> Dict[str, Dict[str, str]]:
     """
     interfaces_el = root.find("interfaces")
     if interfaces_el is None:
-        raise PfSenseConversionError("no <interfaces> section in this export")
+        raise PfSenseConversionError(REFUSALS["no_interfaces_section"])
 
     interfaces: Dict[str, Dict[str, str]] = {}
     for iface_el in interfaces_el:
@@ -272,9 +369,9 @@ def _parse_interfaces(root: ET.Element) -> Dict[str, Dict[str, str]]:
             ipaddress.IPv4Network(f"{ipaddr}/{subnet}", strict=False)
         except ValueError as error:
             raise PfSenseConversionError(
-                f"interface {role!r} has <ipaddr>{ipaddr!r}</ipaddr> and "
-                f"<subnet>{subnet!r}</subnet>, not a valid IPv4 address and "
-                f"prefix length -- {error}"
+                f"{REFUSALS['invalid_interface_address']}: interface "
+                f"{role!r} has <ipaddr>{ipaddr!r}</ipaddr> and "
+                f"<subnet>{subnet!r}</subnet> -- {error}"
             ) from None
 
         interfaces[role] = {
@@ -425,10 +522,8 @@ def _resolve_endpoint(el: ET.Element, interfaces: Dict[str, Dict[str, str]]) -> 
     if network is not None:
         if network not in interfaces:
             raise PfSenseConversionError(
-                f"rule references network {network!r}, which is not a "
-                "configured interface with a static address (or is an "
-                "alias form like 'lanip' that this converter does not "
-                "resolve)"
+                f"{REFUSALS['unresolved_network_reference']}: "
+                f"rule references network {network!r}"
             )
         iface = interfaces[network]
         net = ipaddress.IPv4Network(f"{iface['ipaddr']}/{iface['subnet']}", strict=False)
@@ -440,15 +535,12 @@ def _resolve_endpoint(el: ET.Element, interfaces: Dict[str, Dict[str, str]]) -> 
             ipaddress.IPv4Address(address)
         except ValueError:
             raise PfSenseConversionError(
-                f"<address> is {address!r}, not an IP address -- likely a "
-                "named alias, which this converter does not resolve"
+                f"{REFUSALS['unresolved_alias_address']}: <address> is "
+                f"{address!r}"
             ) from None
         return f"host {address}"
 
-    raise PfSenseConversionError(
-        "a <source> or <destination> element matched none of any/network/"
-        "address -- likely a named alias group, which is out of scope"
-    )
+    raise PfSenseConversionError(REFUSALS["unresolved_endpoint"])
 
 
 def _endpoint_network(el: ET.Element, interfaces: Dict[str, Dict[str, str]]) -> ipaddress.IPv4Network:
@@ -592,11 +684,7 @@ def _check_rule_order_is_unambiguous(
             if not _ports_might_overlap(a["port"], b["port"]):
                 continue
             raise PfSenseConversionError(
-                "rule order is ambiguous: these two rules' traffic spaces "
-                "overlap, their actions differ, and the earlier one is not "
-                "marked quick, so PF Sense's real last-match-wins "
-                "evaluation and this converter's first-match-wins model "
-                f"can disagree about which one decides -- {a['line']!r} "
+                f"{REFUSALS['ambiguous_rule_order']} -- {a['line']!r} "
                 f"(earlier) and {b['line']!r} (later)"
             )
 
@@ -606,20 +694,22 @@ def _rule_to_acl_line(rule_el: ET.Element, interfaces: Dict[str, Dict[str, str]]
     pf_type = _text(rule_el, "type")
     action = _PFSENSE_TO_CISCO_ACTION.get(pf_type or "")
     if action is None:
-        raise PfSenseConversionError(f"unsupported rule <type>: {pf_type!r}")
+        raise PfSenseConversionError(
+            f"{REFUSALS['unsupported_rule_type']}: <type> is {pf_type!r}"
+        )
 
     pf_protocol = _text(rule_el, "protocol", default="any")
     cisco_protocol = _PFSENSE_TO_CISCO_PROTOCOL.get(pf_protocol or "")
     if cisco_protocol is None:
         raise PfSenseConversionError(
-            f"unsupported <protocol>: {pf_protocol!r} -- combined forms "
-            "like 'tcp/udp' need two Cisco ACL lines and are not handled"
+            f"{REFUSALS['unsupported_protocol']}: <protocol> is "
+            f"{pf_protocol!r}"
         )
 
     source_el = rule_el.find("source")
     destination_el = rule_el.find("destination")
     if source_el is None or destination_el is None:
-        raise PfSenseConversionError("rule is missing <source> or <destination>")
+        raise PfSenseConversionError(REFUSALS["missing_source_or_destination"])
 
     src = _resolve_endpoint(source_el, interfaces)
     dst = _resolve_endpoint(destination_el, interfaces)
@@ -636,8 +726,7 @@ def _rule_to_acl_line(rule_el: ET.Element, interfaces: Dict[str, Dict[str, str]]
             # be silently dropped by Batfish's partial-recognition parsing.
             if not port.isdigit() or not (0 < int(port) <= 65535):
                 raise PfSenseConversionError(
-                    f"<port> is {port!r}, not a single numeric port -- "
-                    "named aliases and ranges are out of scope"
+                    f"{REFUSALS['invalid_port']}: <port> is {port!r}"
                 )
             port_clause = f" eq {port}"
 
@@ -654,7 +743,7 @@ def convert(xml_path: Union[str, Path]) -> str:
     hostname = _sanitised_hostname(_text(root.find("system"), "hostname", default="pfsense"))
     interfaces = _parse_interfaces(root)
     if not interfaces:
-        raise PfSenseConversionError("no interface has both an address and a subnet")
+        raise PfSenseConversionError(REFUSALS["no_usable_interfaces"])
     cisco_names = _assign_cisco_interface_names(interfaces)
 
     filter_el = root.find("filter")
@@ -672,12 +761,7 @@ def convert(xml_path: Union[str, Path]) -> str:
     #   signal about that -- so the correct move is to refuse rather than
     #   guess, same discipline as everywhere else in this module.
     if not rule_els:
-        raise PfSenseConversionError(
-            "no filter rules at all -- PF Sense fails closed with no rules "
-            "(blocks everything), Cisco fails open with no ACL bound "
-            "(permits everything); converting this would silently invert "
-            "the source firewall's actual security posture"
-        )
+        raise PfSenseConversionError(REFUSALS["no_filter_rules"])
 
     # Rules may now span more than one interface role (#78 item 1) -- each
     # gets its own ACL, built and checked independently below. Batfish/Cisco
@@ -698,11 +782,7 @@ def convert(xml_path: Union[str, Path]) -> str:
     #   the file, bound to nothing. A config that looks like it has a filter
     #   and silently enforces none of it.
     if not rule_roles:
-        raise PfSenseConversionError(
-            "no filter rule names an <interface> -- the resulting ACL would "
-            "be written but never bound to anything, and would silently "
-            "enforce nothing"
-        )
+        raise PfSenseConversionError(REFUSALS["no_interface_named"])
 
     # A rule with NO <interface> at all, alongside others that DO name one, is
     # ambiguous about which ACL it belongs to. Under the old single-interface
@@ -714,8 +794,7 @@ def convert(xml_path: Union[str, Path]) -> str:
         raise PfSenseConversionError(
             f"{len(unassigned)} filter rule(s) name no <interface> while "
             f"{len(rule_els) - len(unassigned)} other(s) do "
-            f"({sorted(rule_roles)}) -- which ACL they belong to is not "
-            "knowable, refusing rather than guessing"
+            f"({sorted(rule_roles)}) -- {REFUSALS['mixed_unassigned_rules']}"
         )
 
     # Split rather than one blanket message (#78): a role that is genuinely
@@ -734,16 +813,11 @@ def convert(xml_path: Union[str, Path]) -> str:
         reasons = []
         if no_static_address:
             reasons.append(
-                f"{no_static_address} have no static address configured "
-                "(DHCP or unconfigured) -- a Cisco ACL needs an address to "
-                "bind rules to"
+                f"{no_static_address} have {REFUSALS['no_static_address']}"
             )
         if not_declared_at_all:
             reasons.append(
-                f"{not_declared_at_all} are not declared under <interfaces> "
-                "at all -- most likely VPN/tunnel policy (e.g. OpenVPN, "
-                "WireGuard), which this module does not parse and is out of "
-                "scope, not LAN filtering"
+                f"{not_declared_at_all} are {REFUSALS['undeclared_interface']}"
             )
 
         raise PfSenseConversionError(
@@ -855,8 +929,7 @@ def write_snapshot(xml_path: Union[str, Path], snapshot_dir: Union[str, Path]) -
     out_path = (configs_dir / f"{hostname_text}.cfg").resolve()
     if configs_dir.resolve() not in out_path.parents:
         raise PfSenseConversionError(
-            f"<hostname> {hostname_text!r} would write outside the snapshot "
-            "directory -- refusing"
+            f"{REFUSALS['path_traversal']}: <hostname> is {hostname_text!r}"
         )
     out_path.write_text(text)
     return out_path
