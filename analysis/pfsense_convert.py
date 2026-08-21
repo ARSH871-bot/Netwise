@@ -148,8 +148,13 @@ _PFSENSE_TO_CISCO_PROTOCOL = {"tcp": "tcp", "udp": "udp", "icmp": "icmp", "any":
 #: own wording, so the two cannot drift apart from each other. It does not
 #: stop README.md or CLAUDE.md drifting from THIS file; `refusal_summary()`
 #: exists so a human updating those docs has one place to read from instead
-#: of guessing, and `tests/test_pfsense_convert.py` asserts this dict and the
-#: module docstring's own list of refusals agree with each other.
+#: of guessing. `tests/test_pfsense_convert.py` asserts every key here is
+#: actually referenced by a raise site in this module -- the mechanical half
+#: only. It does NOT assert wording, and it does not check this dict against
+#: the module docstring's own OUT OF SCOPE prose above; that is text, not a
+#: list, and asserting agreement with it would mean generating it rather than
+#: writing it. Caught overclaiming this in review (#180) -- Arsh mutated a
+#: value's wording alone and the suite stayed green.
 #:
 #: Keys are stable identifiers, not user-facing text -- safe to reference
 #: from tests without coupling to exact wording. Values are a short, one-line
