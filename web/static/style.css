@@ -157,6 +157,39 @@ body {
   border: 1px solid var(--high);
 }
 
+/* NOTHING FAILED, BUT SOMETHING WAS DISCARDED (#87).
+   A new config clears the staged policy, because a policy names devices and
+   one written for the previous upload asserts nothing true about this one.
+   That is correct behaviour, so it is not `bad` -- but green would undersell
+   it: the user is being told their file is gone, and a success colour invites
+   them to skim past that.
+
+   Amber is already the project's colour for "this is not a failure, and you
+   still need to know" -- it is what a `could not check` finding wears, for
+   the same reason. Reusing the tokens rather than inventing a third yellow
+   keeps that meaning single. */
+.upload-message.warn {
+  display: block;
+  background: var(--blind-fill);
+  color: var(--blind-ink);
+  border: 1px solid var(--blind);
+}
+
+/* A key the loader corrected rather than rejected -- `severity` became
+   `violation_severity` in #159. Accepted, so it sits inside the success
+   message; a heads-up rather than an error, so it must not read as part of
+   the success sentence either.
+
+   Italic and muted, not a second colour: a warning hue here would compete
+   with the amber above, which means something stronger. */
+.rename-note {
+  display: block;
+  margin-top: 0.35rem;
+  font-style: italic;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
 /* The action that actually runs the analysis. Styled as the primary control
    in this panel, because it is now the only way to start one.
 

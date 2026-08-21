@@ -43,6 +43,22 @@
           <!-- Validation result: accepted or rejected, with the reason. -->
           <p id="upload-message" class="upload-message" role="status"></p>
 
+          <!-- ---- Policy (optional) ---- #87
+               Its own picker, not a second accepted extension on the config
+               one: a policy goes somewhere else, is validated differently,
+               and fails differently. The hint says it is optional AND that it
+               is not yet applied, because a control that looks like it is
+               working is worse than one that says what it is waiting for. -->
+          <label class="file-picker policy-picker">
+            <input type="file" id="policy-input" accept=".json" />
+            <span>Choose a policy file (optional)</span>
+          </label>
+          <p class="hint">
+            A JSON policy of your own rules (#87). Staged and validated now;
+            not yet applied to the analysis — that wiring lands with #181.
+          </p>
+          <p id="policy-message" class="upload-message" role="status"></p>
+
           <!-- Runs the analysis. Disabled until a file has actually been
                accepted by the SERVER, not merely chosen in the picker -- there
                is nothing staged to scan until then, and an enabled button that
