@@ -78,10 +78,32 @@ Samika Perera <samika.ashen@gmail.com>      NovaFlow <novaflowbuild@gmail.com>
 #   is meaningless without a ref and a date, and this file's own subject is
 #   attribution claims nobody verified. So:
 #
-#       As of 21 August 2026, on origin/main: Samika Perera has 27 commits
+#       As of 22 August 2026, on origin/main: Samika Perera has 28 commits
 #       under samika.ashen@gmail.com and 3 under novaflowbuild@gmail.com.
 #
 #   Both numbers move. Re-measure rather than quoting these.
+#
+#   THIRD ROUND, and it is about METHOD rather than arithmetic.
+#   @patelankeet2 re-checked and measured 28/3/31 where the line above said
+#   27/3/30. He is right about today. He also concluded it was "already 28"
+#   when I wrote 27, and that part does not follow from the command he used:
+#
+#       git log origin/main --until=<T> ...        -> 28 at EVERY cutoff tried
+#       git rev-list -1 --before=<T> origin/main   -> a main where it was 27
+#
+#   `--until` filters TODAY'S main by committer date. It counts a commit
+#   authored before T but MERGED after it, so it cannot answer "what did
+#   main contain at T" -- which is the question. `rev-list --before` picks
+#   the tip as it actually stood. Both numbers are correct answers to
+#   different questions, and the disagreement was the two questions, not
+#   the two people.
+#
+#   So 27 was right for main when written, and 28 is right for main now:
+#   origin/main has moved 47 commits ahead of this branch since. Which is
+#   the same conclusion as the paragraph above, arrived at a second time,
+#   by a second person, using a command that quietly answers a different
+#   question. Recorded because a measurement that LOOKS like it settles a
+#   dispute and does not is exactly this project's recurring shape.
 #
 #   SECOND CORRECTION, and the more serious one. "NovaFlow absent" was not
 #   a measurement at all -- it described the state AFTER this pull request
