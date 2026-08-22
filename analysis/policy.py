@@ -90,6 +90,58 @@ _SECTION_KEYS: Dict[str, frozenset] = {
 #: required only AFTER the top-level default is applied (D2).
 _REQUIRED_KEYS = ("description", "node")
 
+#: Additionally required, per section: the keys that section's check
+#: DEREFERENCES rather than merely accepts.
+#:
+#: WHY THIS EXISTS (found by @patelankeet2 on #181)
+#:     He wrote a policy file by hand -- the exact thing `--policy` exists
+#:     for -- left out `number`, and got a bare `KeyError: 'number'` from
+#:     inside the check four calls later. D5 promised the opposite:
+#:     "validate by hand, failing loudly, naming the offending entry".
+#:
+#:     Measured after his report, and it is wider and worse than one key.
+#:     Six keys the check dereferences were optional here, and they split
+#:     into two classes:
+#:
+#:         missing key          no violation found   violation found
+#:         filter               KeyError             KeyError
+#:         kind                 KeyError             KeyError
+#:         queries              KeyError             KeyError
+#:         number               none                 KeyError   <--
+#:         violation_severity   none                 KeyError   <--
+#:         violation_summary    none                 KeyError   <--
+#:
+#:     The last three are the dangerous ones. A policy missing any of them
+#:     reports "checked, all clear" every single run -- and fails on the
+#:     first day it actually catches something. A green tick that turns into
+#:     an error exactly when there is a real problem to report is F-4's worst
+#:     shape, reached through the input rather than the output.
+#:
+#: WHY THIS LIST IS NOT DERIVED AT IMPORT TIME
+#:     Reading it out of the check modules would make `analysis.policy`
+#:     import `analysis.checks`, which import `analysis.policy`. So it is
+#:     declared here and `tests/test_policy_wiring.py` asserts it matches
+#:     what the check actually dereferences -- the drift is caught by a
+#:     test rather than prevented by an import cycle.
+#:
+#: WHY ONLY policy_compliance IS LISTED
+#:     A section joins this dict when its check is WIRED to read a user
+#:     policy, not before. `access_control` and `routing` still assert only
+#:     their own hardcoded rules, so requiring keys for them would enforce a
+#:     contract nothing consumes -- and it broke five of #173's own loader
+#:     tests, which build minimal access_control entries precisely because
+#:     nothing dereferences the rest yet. Demanding fields no code reads is
+#:     how a format goes unused, which the comment above _REQUIRED_KEYS
+#:     already warns about.
+#:
+#: `number` is NOT here: see _assign_missing_numbers().
+_SECTION_REQUIRED: Dict[str, frozenset] = {
+    "policy_compliance": frozenset({
+        "filter", "kind", "queries",
+        "violation_severity", "violation_summary",
+    }),
+}
+
 #: Renames we accept and correct rather than reject, because these are the
 #: names our own code used until #159 and a user copying from our docs or
 #: from a check would write them. Accepting silently would defeat D1, so
@@ -123,12 +175,18 @@ class Policy:
         self,
         sections: Dict[str, List[Dict[str, Any]]],
         renamed: Optional[List[str]] = None,
+        assigned: Optional[List[str]] = None,
     ) -> None:
         self.sections = sections
         #: Legacy key names that were corrected, as human-readable notes.
         #: Reported rather than silent, because a user who wrote
         #: `start_node:` should learn the name changed.
         self.renamed = renamed or []
+        #: Values we supplied because the user did not -- currently only
+        #: `number`. Same contract as `renamed` and for the same reason:
+        #: this module forbids SILENT defaults, not defaults. A user whose
+        #: finding ids were chosen for them is entitled to know (#181).
+        self.assigned = assigned or []
 
     @property
     def is_empty(self) -> bool:
@@ -208,7 +266,13 @@ def _validate_entry(
     if "node" not in normalised and default_node is not None:
         normalised["node"] = default_node
 
-    missing = [k for k in _REQUIRED_KEYS if k not in normalised]
+    # Universal keys first, then the ones this section's check dereferences.
+    # Reported TOGETHER rather than one round-trip per key: a user fixing
+    # their first policy file should learn everything that is wrong with an
+    # entry in one go, not discover a second missing field after correcting
+    # the first. (#181, @patelankeet2.)
+    required = list(_REQUIRED_KEYS) + sorted(_SECTION_REQUIRED.get(section, ()))
+    missing = [k for k in required if k not in normalised]
     if missing:
         raise PolicyError(
             f"{where}: missing required key(s): {', '.join(missing)}"
@@ -220,6 +284,70 @@ def _validate_entry(
         )
 
     return normalised, renamed
+
+
+def _assign_missing_numbers(
+    sections: Dict[str, List[Dict[str, Any]]]
+) -> List[str]:
+    """Give every entry a `number`, and REPORT any we had to invent.
+
+    WHY number IS NOT SIMPLY REQUIRED (#181)
+        @patelankeet2 found that an entry without it produced a bare
+        `KeyError: 'number'` from inside the check. The obvious fix is to
+        demand it -- and that is the wrong fix.
+
+        `number` is OUR id-numbering concern, not the user's: it is what
+        turns a rule into `PC-00n`. `docs/policy-rules.md` discusses it only
+        as our built-in rules' internal numbering and never as something a
+        user-supplied entry needs. Demanding a field whose meaning we have
+        never explained, from the exact audience `--policy` exists for, is
+        how a format goes unused.
+
+    WHY ASSIGNING IT IS NOT A "SILENT DEFAULT"
+        This module's own docstring forbids silent defaults, and rightly.
+        So this is not silent: every assignment is reported on
+        `Policy.assigned`, exactly as `Policy.renamed` reports a corrected
+        legacy key. The caller shows them; the CLI prints them. A user who
+        did not write `number` learns that we chose one and what it means
+        for their finding ids.
+
+    WHY POSITION, AND WHAT THAT COSTS
+        Numbers come from the entry's position in its section, 1-based, so
+        the same file always produces the same ids -- which is what makes a
+        finding id comparable between runs. The cost is real and worth
+        stating: REORDERING a policy file renumbers the findings after the
+        moved entry. A user who wants an id pinned across edits should set
+        `number` themselves, which is exactly what our own built-in rules do.
+
+        Explicit numbers are never overwritten, and a file mixing explicit
+        and assigned numbers is refused rather than silently producing two
+        rules with the same id -- see below.
+    """
+    notes: List[str] = []
+    for section, entries in sections.items():
+        if not entries:
+            continue
+        explicit = [e for e in entries if "number" in e]
+        if explicit and len(explicit) != len(entries):
+            # Half-numbered is the case that would silently collide: an
+            # explicit 2 and a positional 2 are the same finding id, and
+            # duplicate_id_findings() would report a broken contract that the
+            # user's file caused and our numbering hid.
+            raise PolicyError(
+                f"{section}: {len(explicit)} of {len(entries)} entries set "
+                f"'number' and the rest do not. Either set it on every entry "
+                f"or on none -- mixing them can give two rules the same "
+                f"finding id."
+            )
+        if explicit:
+            continue
+        for position, entry in enumerate(entries, start=1):
+            entry["number"] = position
+        notes.append(
+            f"{section}: no entry set 'number', so they were numbered 1-"
+            f"{len(entries)} in file order (finding ids follow that order)"
+        )
+    return notes
 
 
 def load_policy(data: Any) -> Policy:
@@ -274,7 +402,8 @@ def load_policy(data: Any) -> Policy:
             sections[section].append(validated)
             renamed.extend(entry_renamed)
 
-    return Policy(sections, renamed)
+    assigned = _assign_missing_numbers(sections)
+    return Policy(sections, renamed, assigned)
 
 
 def load_policy_file(path: Any) -> Policy:

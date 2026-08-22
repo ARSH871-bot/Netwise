@@ -42,6 +42,7 @@ RUN
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List
 
 import pytest
@@ -114,6 +115,180 @@ def test_the_builtin_rules_round_trip_through_the_loader():
     for original, entry in zip(policy_compliance.POLICY_RULES, entries):
         assert entry["node"] == original["node"]
         assert entry["violation_severity"] == original["violation_severity"]
+
+
+# --- A user's first policy file fails at the LOADER, not inside the check -----
+#
+# @patelankeet2 wrote one by hand on #181 -- the exact thing `--policy` exists
+# for -- and got `KeyError: 'number'` from inside the check, four calls after
+# load_policy() had accepted it clean. D5 promised the opposite: "validate by
+# hand, failing loudly, naming the offending entry".
+#
+# Measured after his report, the gap was wider AND worse than one key:
+#
+#     missing key          no violation found   violation found
+#     filter               KeyError             KeyError
+#     kind                 KeyError             KeyError
+#     queries              KeyError             KeyError
+#     number               none                 KeyError   <--
+#     violation_severity   none                 KeyError   <--
+#     violation_summary    none                 KeyError   <--
+#
+# The last three are the dangerous class: a policy missing any of them reports
+# "checked, all clear" on every run and fails the first day it catches
+# something real. A green tick that becomes an error exactly when there is a
+# problem to report is F-4's worst shape, reached through the input.
+
+
+def _complete(**overrides) -> Dict[str, Any]:
+    entry = {
+        "description": "DNS to the approved resolver must be allowed",
+        "node": "rtr-us5",
+        "kind": "requirement",
+        "filter": "acl_in",
+        "violation_severity": "medium",
+        "violation_summary": "DNS lookups are blocked",
+        "queries": [{"dstIps": "218.8.104.58"}],
+    }
+    entry.update(overrides)
+    return entry
+
+
+@pytest.mark.parametrize(
+    "key",
+    sorted(policy._SECTION_REQUIRED["policy_compliance"]),
+)
+def test_a_missing_key_the_check_dereferences_is_refused_by_the_loader(key):
+    """Parametrised over the declared set, not a list I typed twice.
+
+    So a key added to `_SECTION_REQUIRED` is covered the day it is added,
+    and one removed stops being asserted -- rather than the two lists
+    drifting, which is the defect this whole project keeps finding.
+    """
+    entry = {k: v for k, v in _complete().items() if k != key}
+
+    with pytest.raises(policy.PolicyError) as caught:
+        policy.load_policy({"policy_compliance": [entry]})
+
+    message = str(caught.value)
+    assert key in message, f"the error does not name the missing key {key!r}"
+    assert "DNS to the approved resolver" in message, (
+        "the error does not name the entry, which is what D5 promised"
+    )
+
+
+def test_every_missing_key_is_reported_at_once():
+    """A user fixing their first policy file should learn everything wrong
+    with an entry in one go, not discover a second missing field after
+    correcting the first."""
+    with pytest.raises(policy.PolicyError) as caught:
+        policy.load_policy(
+            {"policy_compliance": [{"description": "d", "node": "rtr-us5"}]})
+
+    message = str(caught.value)
+    for key in policy._SECTION_REQUIRED["policy_compliance"]:
+        assert key in message, f"{key!r} missing from a one-shot error"
+
+
+def test_the_declared_required_keys_match_what_the_check_dereferences():
+    """The drift guard for `_SECTION_REQUIRED`.
+
+    It cannot be derived at import time -- `analysis.policy` importing
+    `analysis.checks` would be a cycle -- so it is declared by hand and
+    checked here against the check's real source. Without this, the list
+    and the code are one fact in two places.
+
+    `number` is excluded because the loader ASSIGNS it rather than
+    requiring it; see _assign_missing_numbers().
+    """
+    import re
+    from pathlib import Path
+
+    source = (Path(policy_compliance.__file__)).read_text(encoding="utf-8")
+    dereferenced = set(re.findall(r'rule\["(\w+)"\]', source))
+
+    declared = set(policy._SECTION_REQUIRED["policy_compliance"])
+    universal = set(policy._REQUIRED_KEYS)
+    assigned = {"number"}
+
+    should_be_declared = dereferenced - universal - assigned
+    assert declared == should_be_declared, (
+        f"_SECTION_REQUIRED['policy_compliance'] is {sorted(declared)} but "
+        f"the check dereferences {sorted(should_be_declared)}. A key the "
+        f"check reads and the loader does not require becomes a KeyError "
+        f"inside the check instead of a named policy error."
+    )
+
+
+def test_a_complete_entry_loads_and_runs(monkeypatch):
+    """The other direction, so the tests above cannot pass by refusing
+    everything."""
+    monkeypatch.setattr(policy_compliance.snapshot, "device_names",
+                        lambda bf: {"rtr-us5"})
+    monkeypatch.setattr(
+        policy_compliance, "_search",
+        lambda *a, **k: [{"Flow": "f", "Line_Content": "deny ip any any"}])
+
+    policy.set_active_policy(
+        policy.load_policy({"policy_compliance": [_complete()]}))
+    results = policy_compliance.run(bf=None)
+
+    assert any(f["status"] == "found" for f in results)
+
+
+# --- `number` is assigned, not demanded, and never silently ------------------
+
+
+def test_number_is_assigned_when_absent():
+    """It is OUR id-numbering concern, not the user's. docs/policy-rules.md
+    only ever discusses it as our built-in rules' internal numbering."""
+    loaded = policy.load_policy(
+        {"policy_compliance": [_complete(description="one"),
+                               _complete(description="two")]})
+    entries = loaded.entries_for("policy_compliance")
+
+    assert [e["number"] for e in entries] == [1, 2]
+
+
+def test_an_assigned_number_is_reported_not_silent():
+    """This module's docstring forbids SILENT defaults, not defaults."""
+    loaded = policy.load_policy({"policy_compliance": [_complete()]})
+
+    assert loaded.assigned, "a number was invented and nothing said so"
+    assert "number" in loaded.assigned[0]
+    assert "file order" in loaded.assigned[0]
+
+
+def test_an_explicit_number_is_never_overwritten():
+    loaded = policy.load_policy(
+        {"policy_compliance": [_complete(number=7)]})
+
+    assert loaded.entries_for("policy_compliance")[0]["number"] == 7
+    assert not loaded.assigned, "nothing was assigned, so nothing to report"
+
+
+def test_mixing_explicit_and_absent_numbers_is_refused():
+    """The case that would silently collide: an explicit 2 and a positional
+    2 are the same finding id, and `duplicate_id_findings()` would report a
+    broken contract the user's file caused and our numbering hid."""
+    with pytest.raises(policy.PolicyError) as caught:
+        policy.load_policy(
+            {"policy_compliance": [_complete(description="a", number=2),
+                                   _complete(description="b")]})
+
+    assert "same finding id" in str(caught.value)
+
+
+def test_assigned_numbers_are_stable_across_loads():
+    """A finding id is only comparable between runs if it is deterministic."""
+    data = {"policy_compliance": [_complete(description="a"),
+                                  _complete(description="b"),
+                                  _complete(description="c")]}
+    first = policy.load_policy(json.loads(json.dumps(data)))
+    second = policy.load_policy(json.loads(json.dumps(data)))
+
+    assert ([e["number"] for e in first.entries_for("policy_compliance")]
+            == [e["number"] for e in second.entries_for("policy_compliance")])
 
 
 # --- The three states ---------------------------------------------------------

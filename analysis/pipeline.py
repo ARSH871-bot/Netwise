@@ -756,7 +756,11 @@ def main() -> None:
             # check assertions they did not make -- which is the #87
             # confusion arriving through the error path.
             sys.exit(f"Policy not loaded, so nothing was analysed.\n  {error}")
-        for note in user_policy.renamed:
+        # Both channels, not just renames. `assigned` reports values we
+        # supplied because the user did not -- currently the rule numbers
+        # that become finding ids. This module forbids SILENT defaults, and
+        # printing only half of what we changed would be exactly that.
+        for note in list(user_policy.renamed) + list(user_policy.assigned):
             print(f"note: {note}")
 
     config_dir = argv[0]
