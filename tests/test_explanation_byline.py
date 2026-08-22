@@ -37,6 +37,7 @@ HOW
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -128,3 +129,82 @@ def test_no_explanation_renders_no_block_at_all(rendered):
     would promise an explanation that does not exist.
     """
     assert rendered["no_explanation"] is None
+
+
+# ---------------------------------------------------------------------------
+# The WORDS, not just the class
+# ---------------------------------------------------------------------------
+#
+# Everything above asserts which CSS CLASS a card gets. The words a reader
+# actually sees are `content:` strings in web/static/style.css, and nothing
+# asserted them.
+#
+# Found by mutation, on a fix that looked fully defended:
+#
+#     always claim the model wrote it                6 failed   caught
+#     invert the fail-safe direction                 5 failed   caught
+#     never apply the fallback class                 6 failed   caught
+#     fallback byline says the same as the model one  474 passed  NOT CAUGHT
+#
+# That last mutation restores the exact defect #109 was filed about -- text
+# no model wrote, under an "AI explanation" byline -- and the suite stayed
+# green. The mechanism was pinned; the claim was not. Someone tidying the
+# stylesheet could undo the whole issue and be told everything was fine.
+#
+# These read the stylesheet rather than the rendered page, because the
+# ::before content never appears in the DOM the harness can see. That is a
+# real limit: this asserts what the stylesheet SAYS, not what a browser
+# paints. It is still the difference between the claim being pinned and not.
+
+
+def _byline_content(selector: str) -> str:
+    """The `content:` string of one ::before rule in style.css."""
+    css = (Path(__file__).parent.parent / "web" / "static"
+           / "style.css").read_text(encoding="utf-8")
+    match = re.search(
+        re.escape(selector) + r"\s*\{[^}]*?content:\s*\"([^\"]*)\"",
+        css, re.S)
+    assert match is not None, (
+        f"no ::before rule with a content: string found for {selector!r}. "
+        f"If the byline moved out of CSS, move this test with it -- do not "
+        f"delete it, because the claim it pins is the whole of #109."
+    )
+    return match.group(1)
+
+
+def test_the_model_byline_claims_ai_authorship():
+    """The other half, so the test below cannot pass by both being neutral."""
+    assert "AI" in _byline_content(".ai-explanation::before")
+
+
+def test_the_fallback_byline_does_not_claim_ai_authorship():
+    """#109 itself, at the level of the words rather than the class.
+
+    `_fallback_plain_restatement()` is the finding's own summary and detail
+    concatenated -- correct and grounded (#52), and written by no model. A
+    byline over it that says "AI" is the product attributing authorship it
+    does not have.
+    """
+    fallback = _byline_content(".ai-explanation.fallback::before")
+
+    assert "AI" not in fallback, (
+        f"the fallback byline reads {fallback!r}, which claims a model wrote "
+        f"text that _fallback_plain_restatement() produced deterministically. "
+        f"That is #109, reintroduced."
+    )
+    assert fallback.strip(), "the fallback block must still be labelled"
+
+
+def test_the_two_bylines_are_different():
+    """A distinction that renders identically is not a distinction.
+
+    Both classes could carry honest-looking text and still say the same
+    thing, which would make the class assignment above pointless.
+    """
+    model = _byline_content(".ai-explanation::before")
+    fallback = _byline_content(".ai-explanation.fallback::before")
+
+    assert model != fallback, (
+        f"both bylines read {model!r}, so a reader cannot tell model-written "
+        f"prose from deterministic text -- which is what #109 is about"
+    )
