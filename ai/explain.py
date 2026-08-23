@@ -184,8 +184,8 @@ def _compute_dead_rule_outcome(detail: str) -> Optional[str]:
 # must only match the two shapes it is confident about, never a loose
 # approximation of them.
 _POLICY_DETAIL_PATTERN = re.compile(
-    r"is (?P<wrong>permitted but policy forbids it|denied but policy requires it)\. "
-    r"Decided by:"
+    r"is (?P<wrong>permitted|denied) but policy requires it to be "
+    r"(?P<required>DENIED|PERMITTED)\. Decided by:"
 )
 
 
@@ -223,7 +223,7 @@ def _compute_policy_outcome(detail: str) -> Optional[str]:
     if not match:
         return None
 
-    if match.group("wrong") == "permitted but policy forbids it":
+    if match.group("wrong") == "permitted":
         return (
             "the traffic itself is currently PERMITTED, and that is the "
             "device's own configuration doing it, not the policy -- the "

@@ -361,6 +361,38 @@ more than the five we have, and a test asserts the two bands cannot overlap and
 stay clear of `PC-999`, which `pipeline.duplicate_id_findings()` uses for its
 own complaint.
 
+### The evidence text names the required action (#145)
+
+Both wordings say what the policy requires **as an action**, not as a pronoun:
+
+```
+prohibition   ... is permitted but policy requires it to be DENIED. Decided by: <line>
+requirement   ... is denied but policy requires it to be PERMITTED. Decided by: <line>
+```
+
+They used to end `"policy forbids it"` and `"policy requires it"`. The required
+action was left as a reference, and the nearest thing to resolve it to is the
+flow's *current* treatment — which is the opposite of what policy wants. So the
+reference resolves backwards.
+
+Generated explanations inverted it in both directions. `PC-005` said *"a policy
+statement that requires blocking of HTTPS traffic"* when policy requires it
+permitted; `PC-001` said *"the policy currently permits this unauthorized
+access"* when policy forbids it. Three of us caught `PC-005` independently.
+`PC-001` was only found when a fourth reader rated it cold — *"the first
+sentence is good enough that I nearly accepted the second."*
+
+**One template, not two.** `forbids` is gone entirely, so there is a single
+place a reader looks for the required action and no second construction that can
+drift. `access_control` has always done this — `"Expected PERMIT but got DENY"`
+names both actions and leaves nothing to resolve.
+
+`ai/explain.py`'s `_POLICY_DETAIL_PATTERN` parses these exact strings, so it
+moved with them, and `tests/test_explain_safety_net.py` now asserts the join by
+calling `_describe()` rather than a copy of its output.
+
+---
+
 ### Sentinel IDs — agreed fix
 
 The split above fixes the numbered findings but not the sentinels.

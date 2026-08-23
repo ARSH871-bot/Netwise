@@ -71,7 +71,7 @@ def two_arm_rule(monkeypatch):
         "kind": "prohibition",
         "node": "rtr-us5",
         "filter": "acl_in",
-        "severity": "high",
+        "violation_severity": "high",
         "violation_summary": "The internal server accepts traffic other than HTTPS",
         "queries": [{"arm": "A"}, {"arm": "B"}],
     }

@@ -21,6 +21,8 @@ RUN
 import ollama
 
 from ai import explain as explain_module
+import pytest
+
 from ai.explain import (
     _build_prompt,
     _compute_dead_rule_outcome,
@@ -200,7 +202,7 @@ def test_prohibition_violation_blames_the_device_not_the_policy():
     """Real evidence.detail shape from policy_compliance._describe() for a
     'prohibition' rule -- the device permits what the policy forbids."""
     detail = (
-        "Flow start=10.20.0.5 is permitted but policy forbids it. "
+        "Flow start=10.20.0.5 is permitted but policy requires it to be DENIED. "
         "Decided by: permit ip any any"
     )
     outcome = _compute_policy_outcome(detail)
@@ -215,7 +217,7 @@ def test_requirement_violation_blames_the_device_not_the_policy():
     """Real evidence.detail shape for a 'requirement' rule -- the device
     denies what the policy requires."""
     detail = (
-        "Flow start=10.30.0.9 is denied but policy requires it. "
+        "Flow start=10.30.0.9 is denied but policy requires it to be PERMITTED. "
         "Decided by: deny tcp any any eq 443"
     )
     outcome = _compute_policy_outcome(detail)
@@ -244,7 +246,7 @@ def test_policy_outcome_handles_multiple_example_flows_suffix():
     """_describe() appends '(N example flows matched)' when more than one
     row comes back -- the pattern must still match with that suffix present."""
     detail = (
-        "Flow start=10.20.0.5 is permitted but policy forbids it. "
+        "Flow start=10.20.0.5 is permitted but policy requires it to be DENIED. "
         "Decided by: permit ip any any (3 example flows matched)"
     )
     outcome = _compute_policy_outcome(detail)
@@ -637,7 +639,7 @@ def test_prompt_includes_the_computed_outcome_for_a_policy_finding():
         "id": "PC-005",
         "evidence": {
             "detail": (
-                "Flow start=10.30.0.9 is denied but policy requires it. "
+                "Flow start=10.30.0.9 is denied but policy requires it to be PERMITTED. "
                 "Decided by: deny tcp any any eq 443"
             )
         },
@@ -771,3 +773,79 @@ def test_explain_still_returns_only_the_text_it_always_did(monkeypatch):
 
     assert isinstance(result, str)
     assert "allows all traffic" in result
+
+
+# --- the seam between policy_compliance and this module ------------------------
+#
+# _POLICY_DETAIL_PATTERN parses a string that another module writes. Every other
+# test in this file passes that string as a LITERAL, so all of them keep passing
+# if policy_compliance._describe() changes its wording -- and the safeguard just
+# silently stops matching, which is its documented "nothing to compute from"
+# path rather than an error.
+#
+# That is exactly what would have happened when #145's evidence-format fix
+# landed: the pattern matched the old pronoun wording, the fix replaced it, and
+# nothing on either side asserted the join. Caught on review of #169 before both
+# shipped.
+#
+# These call the REAL _describe(), so a wording change on either side fails here.
+
+
+def _real_detail(kind):
+    """The genuine evidence string, from the genuine function."""
+    from analysis.checks import policy_compliance as pc
+
+    rule = {
+        "number": 1,
+        "description": "d",
+        "kind": kind,
+        "node": "rtr-us5",
+        "filter": "acl_in",
+        "violation_severity": "high",
+        "violation_summary": "s",
+        "queries": [{}],
+    }
+    hit = {"Flow": "start=rtr-us5 [10.10.10.0:49152->10.20.0.5:443 TCP]",
+           "Line_Content": "deny   ip 10.10.10.0 0.0.0.255 any"}
+    return pc._describe(rule, [hit])
+
+
+@pytest.mark.parametrize("kind", ["prohibition", "requirement"])
+def test_the_safeguard_can_read_what_policy_compliance_actually_writes(kind):
+    """The join, asserted against the real producer rather than a literal."""
+    detail = _real_detail(kind)
+    outcome = _compute_policy_outcome(detail)
+
+    assert outcome is not None, (
+        f"policy_compliance._describe() emits a {kind} string this module "
+        f"cannot parse, so the safeguard silently stops helping: {detail!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "kind, current, required",
+    [("prohibition", "PERMITTED", "FORBIDS"), ("requirement", "DENIED", "REQUIRES")],
+)
+def test_the_computed_outcome_matches_the_direction_it_was_given(kind, current, required):
+    """Both halves right, not just parseable.
+
+    Parsing the string and then attributing the wrong side would be the
+    original bug with an extra step, so the direction is checked too.
+    """
+    outcome = _compute_policy_outcome(_real_detail(kind))
+    assert current in outcome, f"{kind}: should say the traffic is currently {current}"
+    assert required in outcome.upper(), f"{kind}: should say what the policy {required}"
+
+
+def test_evidence_never_leaves_the_required_action_as_a_pronoun():
+    """#145 itself: both wordings must name the action, not refer to it.
+
+    The defect was "policy forbids it" / "policy requires it" -- the required
+    action left as a reference the reader resolves to the nearest noun, which
+    is the flow's CURRENT treatment, i.e. backwards.
+    """
+    for kind in ("prohibition", "requirement"):
+        detail = _real_detail(kind)
+        assert "requires it to be" in detail, f"{kind}: names the required action"
+        assert "forbids it." not in detail, f"{kind}: no bare pronoun ending"
+        assert "requires it." not in detail, f"{kind}: no bare pronoun ending"

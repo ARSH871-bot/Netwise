@@ -89,6 +89,8 @@ largest gap in the product.
   interfaces with no static address, interfaces named by a rule but never
   declared, and rule orders it cannot model exactly. A real client export is
   still refused, on the last two of those.
+  `analysis/pfsense_convert.REFUSALS` is the single source of truth for
+  exactly what is refused and why (#155).
 - **Nothing has been verified against a real production network.** Every
   published result is on synthetic configs we wrote, which is a much weaker
   claim than it sounds — see [`docs/evaluation.md`](docs/evaluation.md), whose

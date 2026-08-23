@@ -130,7 +130,7 @@ POLICY_RULES: List[Dict[str, Any]] = [
         "kind": "prohibition",
         "node": "rtr-us5",
         "filter": "acl_in",
-        "severity": "high",
+        "violation_severity": "high",
         "violation_summary": "The internal network can reach servers it should not",
         "queries": [
             {
@@ -147,7 +147,7 @@ POLICY_RULES: List[Dict[str, Any]] = [
         "kind": "prohibition",
         "node": "rtr-us5",
         "filter": "acl_in",
-        "severity": "high",
+        "violation_severity": "high",
         "violation_summary": "The internal server accepts traffic other than HTTPS",
         # TWO queries, because "everything except TCP/443" cannot be written as
         # one headerspace. Do NOT try to collapse this using invertSearch: that
@@ -176,7 +176,7 @@ POLICY_RULES: List[Dict[str, Any]] = [
         "kind": "prohibition",
         "node": "rtr-us5",
         "filter": "acl_in",
-        "severity": "medium",
+        "violation_severity": "medium",
         "violation_summary": "Traffic with a forged source address is permitted",
         "queries": [
             {"srcIps": "0.0.0.0/0 \\ 10.10.10.0/24"},
@@ -188,7 +188,7 @@ POLICY_RULES: List[Dict[str, Any]] = [
         "kind": "requirement",
         "node": "rtr-us5",
         "filter": "acl_in",
-        "severity": "medium",
+        "violation_severity": "medium",
         "violation_summary": "DNS to the approved resolver is blocked, so name lookups fail",
         "queries": [
             # UDP/53 written out rather than applications=["dns"]. Both behave
@@ -208,7 +208,7 @@ POLICY_RULES: List[Dict[str, Any]] = [
         "kind": "requirement",
         "node": "rtr-us5",
         "filter": "acl_in",
-        "severity": "medium",
+        "violation_severity": "medium",
         "violation_summary": "HTTPS to the internal server is blocked, so the service is unreachable",
         "queries": [
             {
@@ -251,12 +251,41 @@ def _describe(rule: Dict[str, Any], hits: List[Any]) -> str:
     We quote the flow and the ACL line verbatim and do not paraphrase them --
     the AI layer rephrases this text later, and it can only stay grounded if
     what it receives is the real Batfish result.
+
+    BOTH WORDINGS NAME THE REQUIRED ACTION EXPLICITLY (#145)
+        They used to end in a pronoun -- "policy forbids it", "policy requires
+        it" -- leaving the required action as a reference the reader had to
+        resolve. The nearest resolvable noun phrase is the flow's CURRENT
+        treatment, which is the opposite of what policy wants, so the reference
+        resolves backwards.
+
+        That is not hypothetical. Generated explanations inverted it in both
+        directions: PC-005 said "a policy statement that requires blocking of
+        HTTPS traffic" when policy requires it PERMITTED, and PC-001 said "the
+        policy currently permits this unauthorized access" when policy forbids
+        it. Three of us caught PC-005 independently; PC-001 was found only when
+        a fourth reader rated it cold, and his note is the reason both wordings
+        changed rather than one: "the first sentence is good enough that I
+        nearly accepted the second -- the quiet inversion is the one that
+        survives review."
+
+        access_control never had this problem because it names both actions
+        outright: "Expected PERMIT but got DENY". This now does the same.
+
+        ONE TEMPLATE, NOT TWO. "forbids" is gone entirely, so both kinds read
+        "policy requires it to be X" and there is one place a reader -- human
+        or model -- looks for the required action. A third rule kind would
+        inherit the shape rather than invent a third phrasing.
+
+        ai/explain.py's _POLICY_DETAIL_PATTERN parses these exact strings, so
+        it moves with them. tests/test_explain_safety_net.py asserts the join
+        by calling THIS function rather than a copy of its output.
     """
     first = hits[0]
     if rule["kind"] == "prohibition":
-        wrong = "is permitted but policy forbids it"
+        wrong = "is permitted but policy requires it to be DENIED"
     else:
-        wrong = "is denied but policy requires it"
+        wrong = "is denied but policy requires it to be PERMITTED"
 
     detail = (
         f"Flow {first['Flow']} {wrong}. "
@@ -356,7 +385,7 @@ def run(bf: Session) -> List[Dict[str, Any]]:
             results.append(
                 findings.make_finding(
                     check=CHECK_NAME,
-                    severity=rule["severity"],
+                    severity=rule["violation_severity"],
                     device=node,
                     summary=rule["violation_summary"],
                     detail=_describe(rule, hits),
