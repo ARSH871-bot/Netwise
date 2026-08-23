@@ -227,6 +227,130 @@ def reset_explanation_cache() -> None:
     _explanation_cache.clear()
 
 
+# --- The analysis cache (#92b) -----------------------------------------------
+#
+# WHY THIS IS SEPARATE FROM THE EXPLANATION CACHE ABOVE
+#     It is the LARGER cost, and the one nobody was counting. Measured on
+#     rtr-us5-insecure, Batfish up:
+#
+#         hit 1:  3.72s   6 findings
+#         hit 2:  3.61s   6 findings
+#         hit 3:  3.61s   6 findings
+#         hit 4:  3.60s   6 findings
+#
+#     Unlike the model calls, that price is paid **whether or not Ollama is
+#     installed** -- so on CI, and on every machine we have demonstrated
+#     this on, it was the entire observable cost of a page load.
+#
+# WHY THE KEY IS THE SNAPSHOT'S CONTENT
+#     Same discipline as the explanation cache: content, never a name. A key
+#     of "the current snapshot" would serve one network's findings for
+#     another the moment a second config is staged at the same path -- which
+#     is precisely what an upload does. Hashing the bytes makes a different
+#     config a different key by construction.
+#
+# WHY AN OUTAGE IS NEVER CACHED, AND HOW THAT IS DETECTED
+#     Caching a failed analysis would freeze "we could not check" as the
+#     permanent answer -- F-4's own failure, made durable. That is the same
+#     mistake as caching fallback explanation text, one layer down.
+#
+#     Measured rather than guessed, because the obvious rule ("refuse if any
+#     finding is an error") would disable the cache entirely -- every fixture
+#     legitimately produces one structural error on every healthy run:
+#
+#         BATFISH UP     rtr-us5-insecure  {'found': 5, 'error': 1}
+#                        rtr-us5-secure    {'none': 2,  'error': 1}
+#                          the error is RT-050, routing assertions that name
+#                          rtr-hq/rtr-branch and do not apply here. Stable,
+#                          correct, and present every single run.
+#
+#         BATFISH DOWN   rtr-us5-insecure  {'error': 3}
+#                        rtr-us5-secure    {'error': 3}
+#                          AC-000 / PC-000 / RT-000, "Analysis could not run:
+#                          Batfish is not reachable" -- EVERY check, and no
+#                          found or none anywhere.
+#
+#     So the rule is: cache only if at least one check produced a real
+#     result. That separates the two measured cases exactly, without parsing
+#     a summary string or depending on id numbering.
+#
+#     KNOWN LIMIT, stated rather than papered over: if one check were
+#     transiently broken while the others worked, its error would be cached
+#     alongside their real results. All three checks share one Batfish
+#     session, so a transient failure takes all three (measured above); a
+#     single-check failure is a bug in that check, which is stable rather
+#     than transient. Small, and real.
+
+#: How many analysed snapshots to remember. Small on purpose: this is a
+#: single-user local tool and each entry holds a whole findings list.
+ANALYSIS_CACHE_MAX = 8
+
+_analysis_cache: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
+
+
+def _snapshot_fingerprint(configs_dir: Path) -> Optional[str]:
+    """Hash every staged config file: names and bytes.
+
+    Returns None if the directory cannot be read, which disables the cache
+    for that request rather than inventing a key. A fingerprint that cannot
+    be computed must never collapse to a constant -- that would make every
+    snapshot share one entry, which is the id-keyed mistake with a different
+    hat on.
+    """
+    try:
+        digest = hashlib.sha256()
+        for path in sorted(configs_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            digest.update(path.relative_to(configs_dir).as_posix().encode())
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def _analysis_is_worth_caching(results: List[Dict[str, Any]]) -> bool:
+    """Did any check actually produce a result?
+
+    See the block comment above for the measurements this encodes. An
+    all-error list means nothing ran, and remembering it would turn a
+    stopped container into a permanent verdict.
+    """
+    return any(f.get("status") in ("found", "none") for f in results)
+
+
+def _cached_analysis(key: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+    if key is None:
+        return None
+    hit = _analysis_cache.get(key)
+    if hit is not None:
+        _analysis_cache.move_to_end(key)
+    return hit
+
+
+def _remember_analysis(key: Optional[str], results: List[Dict[str, Any]]) -> None:
+    if key is None or not _analysis_is_worth_caching(results):
+        return
+    _analysis_cache[key] = results
+    _analysis_cache.move_to_end(key)
+    while len(_analysis_cache) > ANALYSIS_CACHE_MAX:
+        _analysis_cache.popitem(last=False)
+
+
+def reset_analysis_cache() -> None:
+    """Empty the analysis cache.
+
+    Called on every upload (see upload_config) and by tests. Content-keying
+    already makes a stale hit impossible, so this is belt and braces rather
+    than the mechanism -- but #82 exists because a staged config and a
+    checked one were once confused, and a cache is exactly where that could
+    come back. Cheap insurance on the path that matters.
+    """
+    _analysis_cache.clear()
+
+
 def _attach_explanations(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Attach a plain-English explanation to every status="found" finding
     (US-19 / #31).
@@ -278,27 +402,36 @@ def _attach_explanations(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         case -- the finding still renders, just without them, matching
         #31's acceptance criterion for an unreachable Ollama exactly.
 
-    NOTE: MUTATES `results` IN PLACE
-        Flagged in review, worth stating rather than leaving implicit.
-        Safe today because `get_findings()` calls `analyse()` fresh on
-        every request and nothing re-validates or caches that list
-        afterwards -- the extra key is never observed anywhere F-1
-        validation runs. Would stop being safe the moment either of those
-        changes (a cached analyse() result, or a second consumer of the
-        same list that expects exactly the F-1 shape); switch to building
-        a new list of shallow copies at that point rather than assuming
-        this comment still holds.
+    DOES NOT MUTATE `results` -- and that changed in #92b
+        This used to add the two keys to the caller's dicts in place. The
+        docstring said so, and said exactly when it would stop being safe:
 
-        STILL TRUE AFTER #92, and worth saying because the cache above
-        invites the opposite assumption. What #92 caches is the explanation
-        TEXT, keyed by a hash of the finding -- never the findings list
-        itself. `get_findings()` still calls `analyse()` fresh on every
-        request, so the dict mutated here is a new one every time and no
-        cached object ever acquires these two keys. Caching `analyse()` is
-        the change that would break this, and it is deliberately left to a
-        separate issue for exactly that reason.
+            "Would stop being safe the moment either of those changes (a
+             cached analyse() result, or a second consumer of the same list
+             that expects exactly the F-1 shape); switch to building a new
+             list of shallow copies at that point."
+
+        #92b is that moment. `get_findings()` now serves a CACHED findings
+        list, so mutating in place would write `explanation` and
+        `explanation_source` onto the cached dicts -- and the next request
+        would find them already there, on an object F-1 validation is
+        entitled to see in its exact contracted shape. The warning was
+        written for this change and this change honours it rather than
+        re-deciding whether it still applies.
+
+        So each finding is shallow-copied before the keys are added, and a
+        new list is returned. The nested `evidence` dict is deliberately
+        SHARED rather than deep-copied: nothing here writes to it, deep
+        copying every finding on every request would undo the cost this
+        change exists to remove, and a test asserts the cached original is
+        never modified.
     """
-    for finding in results:
+    attached: List[Dict[str, Any]] = []
+    for original in results:
+        # A shallow copy per finding: the caller's dict (which may be the
+        # cached one) must come out of this function exactly as it went in.
+        finding = dict(original)
+        attached.append(finding)
         if finding.get("status") != "found":
             continue
         try:
@@ -316,7 +449,7 @@ def _attach_explanations(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             finding["explanation_source"] = source
         except Exception:
             pass
-    return results
+    return attached
 
 
 @app.get("/api/findings")
@@ -339,7 +472,22 @@ def get_findings() -> List[Dict[str, Any]]:
     """
     if not _uploaded:
         return mock_findings.get_mock_findings()
-    results = analysis_pipeline.analyse(SNAPSHOT_DIR, snapshot_name=SNAPSHOT_NAME)
+
+    # #92b: re-analysing an unchanged snapshot costs ~3.6s of real Batfish
+    # work on every page load. The key is the staged config's CONTENT, so a
+    # new upload is a new key and no stale result can be served; an analysis
+    # that could not run is never stored. See the block comment above.
+    key = _snapshot_fingerprint(CONFIGS_DIR)
+    results = _cached_analysis(key)
+    if results is None:
+        results = analysis_pipeline.analyse(
+            SNAPSHOT_DIR, snapshot_name=SNAPSHOT_NAME
+        )
+        _remember_analysis(key, results)
+
+    # _attach_explanations() copies rather than mutating, so the list held in
+    # the cache never acquires the two extra keys. That is not incidental --
+    # it is the condition this module's own docstring set for caching here.
     return _attach_explanations(results)
 
 
@@ -436,6 +584,14 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
 
     global _uploaded
     _uploaded = True
+
+    # #92b / #82. Content-keying already makes a stale hit impossible, so
+    # this is belt and braces -- but #82 exists precisely because a staged
+    # config and a checked one were once confused, and a cache is where that
+    # could return. Clearing on upload means the invariant holds even if the
+    # fingerprint is ever weakened, which is the failure worth insuring
+    # against rather than the one we expect.
+    reset_analysis_cache()
 
     return {
         "filename": display_name,
