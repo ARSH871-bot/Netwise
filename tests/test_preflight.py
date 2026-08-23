@@ -34,6 +34,10 @@ These need neither Batfish nor Docker.
 from __future__ import annotations
 
 import builtins
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -283,3 +287,220 @@ def test_the_version_check_is_required_not_optional():
     code, because a local test run on it is not testing what CI tests."""
     assert preflight.check_dependency_versions in preflight.REQUIRED
     assert preflight.check_dependency_versions not in preflight.OPTIONAL
+# Both invocation forms must reach the same conclusion (#172)
+# ---------------------------------------------------------------------------
+#
+# THE BUG THIS DEFENDS, which was live on main and had no test
+#     `python tools/preflight.py` puts tools/ on sys.path instead of the
+#     repository root, so `import analysis` fails inside
+#     check_batfish_service(). Before #172 that ImportError was caught by a
+#     broad `except Exception` and reported as:
+#
+#         [ BROKEN ] Batfish service
+#                    port is open but the service did not answer:
+#                    ModuleNotFoundError: No module named 'analysis'
+#
+#     Batfish was fine. A sys.path problem was reported as a specific,
+#     confident, wrong diagnosis -- in the one tool whose entire purpose is
+#     attributing failures to the right cause. Somebody would have restarted
+#     the container, watched it fail again, and gone looking at Docker.
+#
+# WHY THESE TESTS ARE SHAPED THIS WAY
+#     `tests/test_preflight.py` imports preflight as a module, with the root
+#     already on sys.path, so it CANNOT reproduce the broken invocation. That
+#     is structural rather than an oversight: the failure only exists when the
+#     file is run as a script from a shell.
+#
+#     So the first test runs both documented forms as real subprocesses and
+#     asserts they agree. It needs no Batfish and no Docker:
+#
+#         Batfish up      both say OK                      -> agree
+#         Batfish down    both say the port is not open    -> agree
+#         sys.path broken module says one thing, script
+#                         says "could not import"          -> DISAGREE, fails
+#
+#     The second test is a unit test for the other half of the fix: an import
+#     failure must never be described as a service failure.
+#
+# A THIRD TEST WAS WRITTEN AND THEN REMOVED, WHICH IS WORTH RECORDING
+#     It asserted that the script form never prints the original wording --
+#     "did not answer" alongside a ModuleNotFoundError. It cost 6.3 seconds
+#     per run, and when both halves of the fix were mutated it caught
+#     NEITHER: the invocation test below catches the sys.path half, and the
+#     unit test catches the attribution half. A subprocess test that fails
+#     for no mutation is paying for coverage it does not provide, which is
+#     the same standard tests/test_suite_hygiene.py applies to assertions.
+
+
+def _batfish_line(output: str) -> str:
+    """The Batfish service check's status and detail, as one string."""
+    lines = output.splitlines()
+    for i, line in enumerate(lines):
+        if "Batfish service" in line:
+            detail = lines[i + 1].strip() if i + 1 < len(lines) else ""
+            return (line + " " + detail).strip()
+    return ""
+
+
+def _status_of(line: str) -> str:
+    for status in ("BROKEN", "MISSING", "OK"):
+        if status in line:
+            return status
+    return "UNKNOWN"
+
+
+def _run(args, cwd):
+    """Run preflight in a subprocess with PYTHONPATH REMOVED.
+
+    This matters more than it looks. The subprocess inherits the parent
+    environment, and a developer who has exported PYTHONPATH=. gets the
+    repository root on sys.path for free -- which papers over exactly the
+    missing sys.path handling this test exists to detect.
+
+    Found by mutation: with PYTHONPATH unset the mutation was caught, and
+    with PYTHONPATH=. exported the same mutation passed. A guard that holds
+    only against an unstated condition is the defect this whole file is
+    about, so the condition is removed rather than assumed.
+    """
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+    return subprocess.run(
+        [sys.executable, *args],
+        cwd=str(cwd), capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=180, env=env,
+    )
+
+
+def test_the_script_invocation_makes_the_package_importable():
+    """The sys.path half, tested where Batfish cannot hide it.
+
+    WHY THIS EXISTS -- found by @SamikaPerera reviewing #174
+        The invocation-agreement test below only reaches the import when the
+        Batfish port is OPEN. With the port closed, check_batfish_service()
+        returns at its first guard and both forms agree on "nothing is
+        listening" whether the sys.path fix exists or not.
+
+        Reproduced by stopping the container and re-running the mutation:
+
+            Batfish up    fix removed -> 1 failed   (caught)
+            Batfish down  fix removed -> 12 passed  (NO coverage)
+
+        CI has no Docker and no Batfish, so on CI -- the one place this most
+        needs to hold -- that test was a no-op that read as coverage. That is
+        the same "holds only under an unstated condition" defect this file was
+        written to defend against, one layer up from where it was fixed.
+
+        This test reaches the mechanism directly instead. It executes
+        preflight.py exactly as the script form does -- tools/ on sys.path,
+        __package__ None -- and asserts the repository package becomes
+        importable afterwards. It never calls a check, so it needs neither
+        Docker nor Batfish and costs no port timeouts.
+    """
+    root = Path(preflight.__file__).resolve().parent.parent
+
+    probe = (
+        "import os, sys\n"
+        "here = os.getcwd()\n"
+        # `python -c` puts the CURRENT DIRECTORY on sys.path; `python
+        # tools/preflight.py` does not -- it puts the script's own folder there
+        # instead. Without stripping it, the probe imports the package from the
+        # working directory and rescues the very fix it is meant to test. That
+        # is the same unstated-condition failure this file keeps finding, and it
+        # got past one round of review here before being caught.
+        "sys.path = [q for q in sys.path if q not in ('', here, os.curdir)]\n"
+        # Now do what the script form actually does.
+        "sys.path.insert(0, os.path.join(here, 'tools'))\n"
+        "src = open(os.path.join('tools', 'preflight.py'), encoding='utf-8').read()\n"
+        # __name__ is deliberately not __main__, so run() does not fire; and
+        # __package__ is None, which is the condition preflight's fix tests for.
+        "ns = {'__name__': 'preflight_probe',\n"
+        "      '__file__': os.path.abspath(os.path.join('tools', 'preflight.py')),\n"
+        "      '__package__': None}\n"
+        "exec(compile(src, 'tools/preflight.py', 'exec'), ns)\n"
+        "import analysis.pipeline\n"
+        "print('IMPORT_OK')\n"
+    )
+
+    result = _run(["-c", probe], root)
+
+    assert "IMPORT_OK" in (result.stdout or ""), (
+        "running preflight the way the README documents it does not make the "
+        "repository package importable, so check_batfish_service() would report "
+        "an import failure as a Batfish failure:\n"
+        f"  stdout: {(result.stdout or '').strip()[-300:]}\n"
+        f"  stderr: {(result.stderr or '').strip()[-300:]}"
+    )
+
+
+def test_both_documented_invocations_agree_about_batfish():
+    """The regression #172 fixed, and the one no existing test could reach.
+
+    Both forms are documented -- the README gives the module form and refers
+    to the file by path -- so both must work and both must reach the same
+    conclusion about the same machine.
+    """
+    root = Path(preflight.__file__).resolve().parent.parent
+
+    # SKIP BEFORE PAYING FOR IT, NOT AFTER.
+    #     With the port closed this comparison cannot detect anything (see
+    #     below), and running preflight twice to discover that costs about
+    #     thirty seconds in port and docker timeouts -- on CI, every time,
+    #     for no coverage. Checking the port first makes the no-op nearly free.
+    if not preflight._port_open(preflight.BATFISH_HOST, preflight.BATFISH_PORT,
+                                timeout=1.0):
+        pytest.skip(
+            "Batfish port is closed, so neither invocation reaches the import "
+            "and this comparison cannot detect the sys.path fix. The mechanism "
+            "is covered without Batfish by "
+            "test_the_script_invocation_makes_the_package_importable."
+        )
+
+    as_module = _run(["-m", "tools.preflight"], root)
+    as_script = _run([str(Path("tools") / "preflight.py")], root)
+
+    module_line = _batfish_line(as_module.stdout)
+    script_line = _batfish_line(as_script.stdout)
+
+    assert module_line, "module form produced no Batfish service line"
+    assert script_line, "script form produced no Batfish service line"
+
+
+    assert _status_of(module_line) == _status_of(script_line), (
+        "the two documented ways of running preflight disagree about Batfish, "
+        "which means one of them is reporting something about itself rather "
+        "than about the service:\n"
+        f"  python -m tools.preflight   {module_line}\n"
+        f"  python tools/preflight.py   {script_line}"
+    )
+
+
+def test_an_import_failure_is_not_reported_as_a_service_failure(monkeypatch):
+    """The other half of #172, as a unit test.
+
+    Even with the sys.path fix in place, something else could break the
+    import -- a broken install, a renamed package. When that happens the
+    honest answer is that we could not check, not that Batfish is at fault.
+    """
+    monkeypatch.setattr(preflight, "_port_open", lambda *a, **k: True)
+
+    real_import = builtins.__import__
+
+    def _no_analysis(name, *args, **kwargs):
+        if name.startswith("analysis"):
+            raise ImportError("No module named 'analysis'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _no_analysis)
+
+    label, status, detail = preflight.check_batfish_service()
+    assert label == "Batfish service"
+    assert status == preflight.BROKEN
+
+    lowered = detail.lower()
+    assert "did not answer" not in lowered, (
+        "an import failure is being described as the service not answering: " + detail
+    )
+    assert "nothing" in lowered or "could not check" in lowered or "import" in lowered, (
+        "the detail should say the import failed and that this says nothing "
+        "about Batfish; got: " + detail
+    )
