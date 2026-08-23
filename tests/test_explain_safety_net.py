@@ -24,6 +24,7 @@ from ai import explain as explain_module
 from ai.explain import (
     _build_prompt,
     _compute_dead_rule_outcome,
+    _compute_expected_actual_outcome,
     _compute_policy_outcome,
     _evidence_detail,
     _fallback_error_explanation,
@@ -249,6 +250,57 @@ def test_policy_outcome_handles_multiple_example_flows_suffix():
     outcome = _compute_policy_outcome(detail)
     assert outcome is not None
     assert "PERMITTED" in outcome
+
+
+# --- _compute_expected_actual_outcome (testFilters) ------------------------------
+# Not a bug found by accident -- added on the same structural reasoning that
+# found the two above: this evidence shape is the same "which of two opposite
+# states is which" attribution task, on real access_control policy-statement
+# findings. Live-tested six times against a real finding in this shape before
+# adding the guard; no inversion reproduced on that occasion, recorded as a
+# clean but limited result rather than proof of safety.
+
+
+def test_a_required_permit_that_is_actually_denied():
+    """Real evidence.detail shape from access_control.run()'s policy-
+    statement loop -- something required to be allowed is currently blocked."""
+    detail = "Expected PERMIT but got DENY, decided by: deny ip any any"
+    outcome = _compute_expected_actual_outcome(detail)
+    assert outcome is not None
+    assert "DENY" in outcome
+    assert "PERMIT" in outcome
+
+
+def test_a_required_deny_that_is_actually_permitted():
+    """The other direction -- something required to be blocked is currently
+    let through."""
+    detail = "Expected DENY but got PERMIT, decided by: permit ip any any"
+    outcome = _compute_expected_actual_outcome(detail)
+    assert outcome is not None
+    assert "PERMIT" in outcome
+    assert "DENY" in outcome
+
+
+def test_expected_actual_outcome_returns_none_for_an_unrelated_finding():
+    detail = "BatfishException: Work terminated abnormally"
+    assert _compute_expected_actual_outcome(detail) is None
+
+
+def test_expected_actual_outcome_returns_none_for_a_dead_rule_finding():
+    """The three computations must not cross-match each other's shape."""
+    detail = (
+        "Unreachable line: permit icmp any any (action PERMIT). "
+        "Blocked by: deny   ip any any. Reason: BLOCKING_LINES"
+    )
+    assert _compute_expected_actual_outcome(detail) is None
+
+
+def test_expected_actual_outcome_returns_none_for_a_policy_compliance_finding():
+    detail = (
+        "Flow start=10.20.0.5 is permitted but policy forbids it. "
+        "Decided by: permit ip any any"
+    )
+    assert _compute_expected_actual_outcome(detail) is None
 
 
 # --- _fallback_plain_restatement -----------------------------------------------
@@ -597,9 +649,9 @@ def test_prompt_includes_the_computed_outcome_for_a_policy_finding():
 
 
 def test_prompt_prefers_the_dead_rule_computation_when_both_could_apply():
-    """The two patterns are mutually exclusive in practice (see each
+    """The three patterns are mutually exclusive in practice (see each
     function's docstring), but _build_prompt() tries the dead-rule check
-    first -- pin that order down directly rather than relying on the two
+    first -- pin that order down directly rather than relying on the
     regexes never colliding by accident."""
     finding = {
         "id": "AC-002",
@@ -613,6 +665,19 @@ def test_prompt_prefers_the_dead_rule_computation_when_both_could_apply():
     prompt = _build_prompt(finding)
     assert "already verified" in prompt.lower()
     assert "denied" in prompt
+
+
+def test_prompt_includes_the_computed_outcome_for_a_testfilters_finding():
+    """access_control's own policy-statement findings get the same
+    deterministic help as a dead-rule or policy_compliance finding."""
+    finding = {
+        "id": "AC-099",
+        "evidence": {"detail": "Expected PERMIT but got DENY, decided by: deny ip any any"},
+    }
+    prompt = _build_prompt(finding)
+    assert "already verified" in prompt.lower()
+    assert "DENY" in prompt
+    assert "PERMIT" in prompt
 
 
 def test_prompt_tells_the_model_not_to_echo_the_computed_fact_as_a_label():
