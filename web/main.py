@@ -26,6 +26,7 @@ THE SEAM
 import hashlib
 import json
 import shutil
+import tempfile
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -38,6 +39,7 @@ from pydantic import BaseModel
 from ai.explain import explain_with_source
 from ai.query import answer_question
 from analysis import findings, pipeline as analysis_pipeline
+from analysis.policy import PolicyError, load_policy_file
 from web import mock_findings
 
 # --- Upload validation rules ------------------------------------------------
@@ -103,6 +105,30 @@ CONFIG_ROOT = Path(__file__).parent / "uploaded_configs"
 SNAPSHOT_NAME = "current"
 SNAPSHOT_DIR = CONFIG_ROOT / SNAPSHOT_NAME
 CONFIGS_DIR = SNAPSHOT_DIR / "configs"
+
+# --- Where an uploaded POLICY is staged (#87) -------------------------------
+#
+# DELIBERATELY OUTSIDE configs/, AND THAT IS THE POINT.
+#     Batfish reads every file under `configs/`. A policy landing there would
+#     be handed to the parser as if it were a device, which produces either a
+#     parse error blamed on the user's network or -- worse -- a snapshot that
+#     analyses cleanly while quietly containing a file that is not a config.
+#
+#     So it sits beside the snapshot rather than inside it, and nothing that
+#     walks `configs/` can ever see it.
+#
+#         uploaded_configs/
+#           current/
+#             configs/            <- Batfish reads THIS
+#               device.cfg
+#             policy.json         <- and never this
+POLICY_PATH = SNAPSHOT_DIR / "policy.json"
+
+#: A policy is JSON and only JSON. `analysis/policy.py` explains why the
+#: loader is JSON-only rather than YAML -- picking YAML would add a runtime
+#: dependency to a security tool on one person's say-so -- and this endpoint
+#: must not accept a format the loader cannot read.
+POLICY_EXTENSIONS = {".json"}
 
 # Has a config been uploaded in this process? Until one has, /api/findings
 # serves mock data, because there is genuinely nothing to analyse yet.
@@ -582,6 +608,20 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     staged_path = CONFIGS_DIR / f"device{extension}"
     staged_path.write_bytes(bytes(contents))
 
+    # A NEW NETWORK MUST NOT INHERIT THE OLD NETWORK'S POLICY (#87, #82).
+    #     The policy names devices -- `node: rtr-us5` -- so a policy written
+    #     for the previous upload asserts nothing true about this one. Leaving
+    #     it staged would either check the new config against rules meant for
+    #     a different network, or report "could not check" for every rule and
+    #     blame the new config for it.
+    #
+    #     Same discipline as clearing the findings, and the same reason: #82
+    #     exists because a staged file and a checked one were once confused.
+    #     Two files staged from two different intentions is that failure with
+    #     one more moving part.
+    policy_was_staged = POLICY_PATH.exists()
+    _discard_staged_policy()
+
     global _uploaded
     _uploaded = True
 
@@ -609,6 +649,175 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
         "message": (
             f"'{display_name}' accepted ({size:,} bytes) and staged. "
             "Nothing has been analysed yet — click Scan Now to check it."
+        ),
+        # Reported rather than done silently: a user who uploaded a policy and
+        # then a config needs to know the policy went with it, not discover it
+        # by wondering why their rules stopped appearing.
+        "policy_cleared": policy_was_staged,
+    }
+
+
+# --- The policy upload (#87) -------------------------------------------------
+#
+# WHY THIS IS A SEPARATE ENDPOINT AND NOT A SECOND EXTENSION ON /api/upload
+#     A config and a policy share nothing except arriving as files. They have
+#     different accepted extensions, different destinations, different
+#     validation (`load_policy_file()` versus Batfish's parser), and different
+#     consequences when they are wrong. Widening ALLOWED_EXTENSIONS to include
+#     `.json` would let a policy be staged into `configs/` as a device file,
+#     which is the one place it must never land.
+#
+# WHAT THIS ENDPOINT DELIBERATELY DOES NOT DO -- SEE #181 AND #182
+#     It stages a validated policy. It does NOT install it, because the
+#     mechanism for a policy reaching a check is still being decided:
+#
+#         #181  a PR that installs the policy in module-level state, so the
+#               ADOPTED `run(bf)` signature never changes
+#         #182  an open decision request asking the team to choose between
+#               three other options for that same question
+#
+#     `analysis.policy.set_active_policy()` exists only on #181's branch, not
+#     on `main`. Calling it from here would pick the winner of an open team
+#     decision from inside a feature branch -- the exact thing #182 was raised
+#     to prevent. So the wiring is one call, added when that settles, and the
+#     message on screen says plainly that nothing is applied yet.
+#
+# THE SAFETY PROPERTY, WHICH IS WHY VALIDATION HAPPENS BEFORE STAGING
+#     A rejected policy must never reach POLICY_PATH. If it did, a user who
+#     saw an error message would still have a broken policy staged, and the
+#     next analysis would either fail on it or -- once #181 lands -- run
+#     against a file nobody accepted. So the bytes go to a temp file the
+#     loader can read, and the staged copy is written ONLY after
+#     `load_policy_file()` has returned without raising.
+
+
+def _discard_staged_policy() -> None:
+    """Remove the staged policy file, if there is one.
+
+    Not `set_active_policy(None)` -- see the block comment above. This only
+    unstages the FILE, which is all this branch is entitled to do until
+    #181/#182 settle how a policy reaches a check.
+    """
+    POLICY_PATH.unlink(missing_ok=True)
+
+
+@app.post("/api/policy")
+async def upload_policy(file: UploadFile) -> Dict[str, Any]:
+    """Accept and validate a policy file, staging it only if it loads.
+
+    Mirrors `upload_config()`'s discipline deliberately: reduce the client's
+    filename to a basename at the boundary, check the extension, read in
+    chunks against a size limit, refuse an empty upload, and write our own
+    filename rather than theirs. The differences are the accepted extension,
+    the destination, and that the CONTENT is validated rather than merely
+    accepted.
+
+    A rejection comes back as HTTP 400 carrying `PolicyError`'s own message,
+    unchanged. That message names the entry and offers a did-you-mean for an
+    unknown key -- work `analysis/policy.py` already did, and which a
+    rephrasing here could only degrade.
+    """
+    display_name = Path(file.filename or "").name
+    if not display_name:
+        raise HTTPException(status_code=400, detail="No file was uploaded.")
+
+    extension = Path(display_name).suffix.lower()
+    if extension not in POLICY_EXTENSIONS:
+        allowed = ", ".join(sorted(POLICY_EXTENSIONS))
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{display_name}' is not a policy file Netwise can read. "
+                f"A policy is {allowed}. YAML is not supported yet -- see "
+                f"analysis/policy.py for why."
+            ),
+        )
+
+    size = 0
+    contents = bytearray()
+    while chunk := await file.read(CHUNK_BYTES):
+        size += len(chunk)
+        if size > MAX_UPLOAD_BYTES:
+            limit_mb = MAX_UPLOAD_BYTES / (1024 * 1024)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{display_name}' is larger than the {limit_mb:.0f} MB "
+                    "limit. A policy file is a short list of rules -- is this "
+                    "definitely a policy?"
+                ),
+            )
+        contents.extend(chunk)
+
+    if size == 0:
+        # NOT the same as an empty POLICY. `load_policy_file()` treats an
+        # empty file as a policy that asserts nothing, which is valid (D4).
+        # But a zero-byte UPLOAD is far more likely to be a mistake -- the
+        # wrong file, or a failed export -- and accepting it would stage "I
+        # assert nothing" on the user's behalf without them having said it.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{display_name}' is empty. To assert nothing deliberately, "
+                "upload a policy whose sections are empty rather than an "
+                "empty file, so that it is a choice on the record."
+            ),
+        )
+
+    # --- Validate BEFORE staging ------------------------------------------
+    #
+    # The temp file exists so `load_policy_file()` can be used unchanged: it
+    # takes a path, and it produces the JSON error messages -- with line and
+    # column -- that the `--policy` command line already produces. Parsing
+    # the bytes here instead would mean writing a second set of messages for
+    # the same failures, which is how two paths start disagreeing about what
+    # the same file means.
+    handle, temp_name = tempfile.mkstemp(suffix=".json")
+    temp_path = Path(temp_name)
+    try:
+        with open(handle, "wb") as staging:
+            staging.write(bytes(contents))
+        policy = load_policy_file(temp_path)
+    except PolicyError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+    # --- Only now does anything reach the staging location -----------------
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    POLICY_PATH.write_bytes(bytes(contents))
+
+    rule_count = sum(len(entries) for entries in policy.sections.values())
+    if policy.is_empty:
+        summary = (
+            "It asserts nothing, which is a valid choice -- every "
+            "policy-driven check will say so rather than fall back to ours."
+        )
+    else:
+        sections = ", ".join(
+            f"{name} {len(entries)}"
+            for name, entries in sorted(policy.sections.items())
+            if entries
+        )
+        summary = f"{rule_count} rule(s): {sections}."
+
+    return {
+        "filename": display_name,
+        "size_bytes": size,
+        "accepted": True,
+        "rule_count": rule_count,
+        "is_empty": policy.is_empty,
+        # Corrected legacy key names, reported rather than applied silently.
+        # A user who wrote `start_node:` should learn the name changed in
+        # #159 -- accepting it and saying nothing is how one vocabulary
+        # splits back into the dialects D1 was agreed to remove.
+        "renamed": list(policy.renamed),
+        # The same honest-staging pattern as #82: say what has happened and
+        # what has NOT. "Accepted and staged" is true; "in force" is not, and
+        # will not be until the wiring lands.
+        "message": (
+            f"'{display_name}' accepted ({size:,} bytes) and staged. {summary} "
+            "Not yet applied — wiring to the analysis lands with #181."
         ),
     }
 
