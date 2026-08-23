@@ -298,11 +298,14 @@ def test_expected_actual_outcome_returns_none_for_a_dead_rule_finding():
 
 
 def test_expected_actual_outcome_returns_none_for_a_policy_compliance_finding():
+    """Current evidence.detail wording (#194), not the pre-#194 shape --
+    the two guards must still not cross-match after that PR's rewording."""
     detail = (
-        "Flow start=10.20.0.5 is permitted but policy forbids it. "
-        "Decided by: permit ip any any"
+        "Flow start=10.20.0.5 is permitted but policy requires it to be "
+        "DENIED. Decided by: permit ip any any"
     )
     assert _compute_expected_actual_outcome(detail) is None
+    assert _compute_policy_outcome(detail) is not None  # the OTHER guard still matches
 
 
 # --- _fallback_plain_restatement -----------------------------------------------
