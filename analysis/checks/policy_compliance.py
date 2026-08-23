@@ -12,18 +12,52 @@ WHAT THIS CHECK DOES
 
 WHY searchFilters AND NOT reachability
     The obvious question to ask is "can this traffic get through?", which is
-    what reachability answers. On our fixtures that question lies.
+    what reachability answers. On our fixtures that question lies -- and it
+    lies in TWO directions, which is why the headers below are written out in
+    full rather than described.
 
-    rtr-us5 has one interface and no route to 10.20.0.5, so reachability
-    reports zero successful flows -- for a ROUTING reason, not a policy one.
     Measured against the INSECURE fixture (the one containing `permit ip any
-    any`), reachability(actions="success") returns nothing at all, and
-    actions="failure" shows why: NO_ROUTE(Discarded). A check that read "empty
-    means the policy holds" would put a green tick on the config that permits
-    everything. That is precisely the failure F-4 exists to prevent.
+    any`), asking about the exact traffic POL-2 forbids:
+
+        reachability(startLocation="rtr-us5",
+                     srcIps="10.10.10.0/24", dstIps="10.20.0.5",
+                     ipProtocols=["tcp"], dstPorts="80")
+
+          actions="success" -> 0 rows
+          actions="failure" -> 1 row   ORIGINATED(default), NO_ROUTE(Discarded)
+
+    rtr-us5 has one interface and no route to 10.20.0.5, so the dangerous flow
+    lands in the FAILURE bucket for a ROUTING reason, not a policy one. A check
+    reading "no successful flows means the policy holds" would put a green tick
+    on the config that permits everything -- precisely the failure F-4 exists
+    to prevent.
+
+    THE SECOND DIRECTION, and the one that trips up anyone re-running this by
+    hand: widen the destination and a success row appears.
+
+        ... same query but dstIps="0.0.0.0/0"
+          actions="success" -> 1 row
+             start=rtr-us5 [10.10.10.0->10.10.10.0 ICMP (type=8, code=0)]
+
+    That is the router reaching its own directly-connected LAN. Batfish returns
+    one example flow per disposition, and over a wide headerspace the example it
+    picks can be trivially local and irrelevant to the rule being tested.
+
+    So the honest statement is not "reachability returns nothing". It is that
+    reachability answers a question about PATHS: the flow we care about is
+    filed under failure for the wrong reason, while a flow we do not care about
+    can surface as success. Neither bucket means what a policy check needs it
+    to mean.
 
     searchFilters reasons about the FILTER, not the path, so it needs no
-    routing and cannot be fooled this way.
+    routing and cannot be fooled in either direction.
+
+    (The broad-destination case was found by @ARSH871-bot re-running this
+    paragraph rather than reading it. The earlier wording said "returns nothing
+    at all" without naming the headers, so anyone trying the obvious wide query
+    would see a success row and conclude the paragraph was wrong. The
+    measurement was right; the sentence describing it was not specific enough
+    to reproduce.)
 
 HOW A RULE BECOMES A QUERY
     Rules come in two directions, and the direction picks the question:
