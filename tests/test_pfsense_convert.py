@@ -23,6 +23,7 @@ import pytest
 
 from analysis.pfsense_convert import (
     REFUSALS,
+    ConversionResult,
     PfSenseConversionError,
     convert,
     refusal_summary,
@@ -78,7 +79,17 @@ def _minimal_xml(
 
 def _convert_string(xml_text: str) -> str:
     """convert() takes a path; tests build XML in memory, so write it to a
-    real temp file rather than duplicating convert()'s parsing logic here."""
+    real temp file rather than duplicating convert()'s parsing logic here.
+
+    Returns just the text -- most tests only care what got converted. For a
+    test that needs to check what was SKIPPED (#78), use
+    _convert_string_full() instead."""
+    return _convert_string_full(xml_text).text
+
+
+def _convert_string_full(xml_text: str) -> ConversionResult:
+    """Same as _convert_string(), but returns convert()'s full result,
+    including the `skipped` list -- for tests about partial conversion."""
     import tempfile
     from pathlib import Path
 
@@ -97,7 +108,7 @@ def _convert_string(xml_text: str) -> str:
 
 
 def test_the_real_fixture_converts_without_raising():
-    output = convert(FIXTURE)
+    output = convert(FIXTURE).text
     assert "hostname pfsense-us5" in output
 
 
@@ -106,14 +117,14 @@ def test_the_real_fixture_produces_the_expected_acl():
     see the reference doc. Pinning it here means a change to the converter
     that alters this output gets caught immediately, before anyone has to
     re-run Batfish to notice."""
-    output = convert(FIXTURE)
+    output = convert(FIXTURE).text
     assert "permit udp 10.10.10.0 0.0.0.255 host 218.8.104.58 eq 53" in output
     assert "permit tcp 10.10.10.0 0.0.0.255 host 10.20.0.5 eq 443" in output
     assert "deny ip any any" in output
 
 
 def test_the_real_fixture_binds_the_acl_to_the_lan_interface():
-    output = convert(FIXTURE)
+    output = convert(FIXTURE).text
     assert "ip access-group acl_in in" in output
 
 
@@ -121,7 +132,7 @@ def test_the_real_fixture_uses_a_valid_cisco_interface_name_not_the_raw_pfsense_
     """Regression coverage for the reason interface names are rewritten at
     all: 'em0'/'em1' are FreeBSD device names, not valid Cisco IOS syntax,
     and Batfish's Cisco grammar would fail to parse them."""
-    output = convert(FIXTURE)
+    output = convert(FIXTURE).text
     assert "interface GigabitEthernet0/0" in output
     assert "interface em0" not in output
     assert "em0" in output  # kept as a comment for traceability, not discarded
@@ -167,9 +178,11 @@ def test_no_interfaces_with_an_address_raises():
 #
 # _parse_interfaces() silently drops a DHCP/unconfigured role, and PF Sense
 # lets a rule's <interface> name something that was never declared under
-# <interfaces> at all (VPN/tunnel policy, most often). Both used to collapse
-# into one message, "no static address configured" -- true of the first,
-# wrong about the second. These pin the split.
+# <interfaces> at all (VPN/tunnel policy, most often). Both used to REFUSE
+# THE WHOLE FILE -- a real client export with six good interfaces and one
+# DHCP interface converted nothing. Re-scoped (#78): the rule(s) naming an
+# unmodellable interface are skipped, named in ConversionResult.skipped, and
+# every OTHER interface converts exactly as if they were never there.
 
 
 def _dhcp_wan_and_lan_interfaces() -> str:
@@ -187,22 +200,27 @@ def _rule_on(role: str) -> str:
     )
 
 
-def test_a_rule_on_a_dhcp_interface_names_the_real_reason():
+def test_a_rule_on_a_dhcp_interface_is_skipped_and_named_the_real_reason():
     """Declared under <interfaces>, just has no static address -- the
-    message should say so, not imply the role does not exist."""
+    skip note should say so, not imply the role does not exist. The LAN
+    rule must still convert normally."""
     xml_text = _minimal_xml(
         interfaces_xml=_dhcp_wan_and_lan_interfaces(),
         rules_xml=_rule_on("wan") + _ONE_BENIGN_LAN_RULE,
     )
-    with pytest.raises(PfSenseConversionError) as excinfo:
-        _convert_string(xml_text)
-    message = str(excinfo.value)
-    assert "wan" in message
-    assert "no static address configured" in message
-    assert "not declared" not in message
+    result = _convert_string_full(xml_text)
+
+    assert len(result.skipped) == 1
+    note = result.skipped[0]
+    assert "wan" in note
+    assert "no static address configured" in note
+    assert "not declared" not in note
+
+    assert "interface GigabitEthernet0/0" in result.text  # lan still converts
+    assert "em0" not in result.text  # wan's rule never reaches the output
 
 
-def test_a_rule_on_an_undeclared_interface_names_the_real_reason():
+def test_a_rule_on_an_undeclared_interface_is_skipped_and_named_the_real_reason():
     """WireGuard/openvpn-shaped case: the role never appears under
     <interfaces> at all. Must not be blamed on a missing address -- adding
     one would not make tunnel policy convertible."""
@@ -212,27 +230,88 @@ def test_a_rule_on_an_undeclared_interface_names_the_real_reason():
         """,
         rules_xml=_rule_on("WireGuard") + _ONE_BENIGN_LAN_RULE,
     )
-    with pytest.raises(PfSenseConversionError) as excinfo:
-        _convert_string(xml_text)
-    message = str(excinfo.value)
-    assert "WireGuard" in message
-    assert "not declared under <interfaces>" in message
-    assert "VPN/tunnel" in message
-    assert "no static address configured" not in message
+    result = _convert_string_full(xml_text)
+
+    assert len(result.skipped) == 1
+    note = result.skipped[0]
+    assert "WireGuard" in note
+    assert "not declared under <interfaces>" in note
+    assert "VPN/tunnel" in note
+    assert "no static address configured" not in note
+
+    assert "interface GigabitEthernet0/0" in result.text
+    assert "WireGuard" not in result.text  # never leaks into the Cisco output
 
 
-def test_both_kinds_at_once_are_both_named_in_one_message():
+def test_both_kinds_at_once_are_both_named_as_separate_skip_notes():
     """Matches the real client export: a DHCP wan and tunnel-role rules in
-    the same file. One refusal naming both, not just the first one hit."""
+    the same file. Two distinct notes, not one message conflating them --
+    and the LAN rule still converts."""
     xml_text = _minimal_xml(
         interfaces_xml=_dhcp_wan_and_lan_interfaces(),
         rules_xml=_rule_on("wan") + _rule_on("WireGuard") + _ONE_BENIGN_LAN_RULE,
     )
-    with pytest.raises(PfSenseConversionError) as excinfo:
-        _convert_string(xml_text)
-    message = str(excinfo.value)
-    assert "wan" in message and "no static address configured" in message
-    assert "WireGuard" in message and "not declared under <interfaces>" in message
+    result = _convert_string_full(xml_text)
+
+    assert len(result.skipped) == 2
+    joined = " | ".join(result.skipped)
+    assert "wan" in joined and "no static address configured" in joined
+    assert "WireGuard" in joined and "not declared under <interfaces>" in joined
+    assert "interface GigabitEthernet0/0" in result.text
+
+
+def test_a_clean_file_has_nothing_skipped():
+    """The common case: skipped is an empty list, not absent or None --
+    callers should be able to check `if result.skipped` unconditionally."""
+    result = _convert_string_full(_minimal_xml())
+    assert result.skipped == []
+
+
+def test_the_bad_interface_never_gets_an_acl_or_interface_block():
+    """Beyond "the rule doesn't appear" -- the unmodellable role must not
+    show up as an interface stanza or an ACL name either, since this
+    module never had a Cisco name or address to give it in the first
+    place."""
+    xml_text = _minimal_xml(
+        interfaces_xml=_dhcp_wan_and_lan_interfaces(),
+        rules_xml=_rule_on("wan") + _ONE_BENIGN_LAN_RULE,
+    )
+    result = _convert_string_full(xml_text)
+    assert "acl_wan" not in result.text
+    assert result.text.count("ip access-list extended") == 1
+
+
+def test_when_every_rule_is_unmodellable_the_good_interface_still_gets_a_deny_all():
+    """The degenerate case: nothing survives to convert, but the file is
+    not refused outright -- every declared interface still gets its
+    fail-closed default, and skipped explains why nothing else is there."""
+    xml_text = _minimal_xml(
+        interfaces_xml=_dhcp_wan_and_lan_interfaces(),
+        rules_xml=_rule_on("wan"),
+    )
+    result = _convert_string_full(xml_text)
+    assert len(result.skipped) == 1
+    assert "interface GigabitEthernet0/0" in result.text  # lan, still present
+    assert " deny ip any any" in result.text  # lan's fail-closed default
+
+
+def test_write_snapshot_surfaces_skipped_too():
+    """write_snapshot() must not swallow what convert() reports skipped --
+    a file written to disk with no explanation of what is missing from it
+    would be the same silent gap one level further from the caller."""
+    xml_text = _minimal_xml(
+        interfaces_xml=_dhcp_wan_and_lan_interfaces(),
+        rules_xml=_rule_on("wan") + _ONE_BENIGN_LAN_RULE,
+    )
+    xml_path = _write_temp_xml(xml_text)
+    with tempfile.TemporaryDirectory() as snapshot_dir:
+        try:
+            result = write_snapshot(xml_path, snapshot_dir)
+            assert len(result.skipped) == 1
+            assert "wan" in result.skipped[0]
+            assert "interface GigabitEthernet0/0" in result.path.read_text()
+        finally:
+            xml_path.unlink()
 
 
 # --- Rules: action and protocol mapping -----------------------------------------
@@ -780,11 +859,12 @@ def test_write_snapshot_writes_inside_the_configs_subdirectory():
     )
     with tempfile.TemporaryDirectory() as snapshot_dir:
         try:
-            out_path = write_snapshot(xml_path, snapshot_dir)
+            result = write_snapshot(xml_path, snapshot_dir)
             expected_dir = (Path(snapshot_dir) / "configs").resolve()
-            assert out_path.resolve().parent == expected_dir
-            assert out_path.name == "rtr-normal.cfg"
-            assert out_path.read_text().startswith("hostname rtr-normal")
+            assert result.path.resolve().parent == expected_dir
+            assert result.path.name == "rtr-normal.cfg"
+            assert result.path.read_text().startswith("hostname rtr-normal")
+            assert result.skipped == []
         finally:
             xml_path.unlink()
 
@@ -904,7 +984,7 @@ def test_the_real_fixture_without_quick_now_converts_correctly_instead_of_refusi
         f.write(without_quick)
         path = Path(f.name)
     try:
-        output = convert(path)
+        output = convert(path).text
     finally:
         path.unlink()
 
