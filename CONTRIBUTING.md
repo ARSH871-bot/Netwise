@@ -313,6 +313,33 @@ you depend on, say so in the description, and name the merge order. Writing
 documentation that describes behaviour not yet on `main` is how this repo has
 gone wrong before.
 
+**Retarget a stacked PR to `main` BEFORE you merge its parent.** One command,
+and skipping it costs the child pull request permanently.
+
+```bash
+gh pr edit <child> --base main      # FIRST
+gh pr merge <parent> --merge --delete-branch
+```
+
+`--delete-branch` removes the parent's head branch, which is the child's *base*.
+GitHub then closes the child automatically — and refuses both repairs:
+
+```
+gh pr edit 179 --base main   -> Cannot change the base branch of a closed pull request
+gh pr reopen 179             -> Could not open the pull request
+```
+
+A deadlock: the base cannot be fixed while the PR is closed, and it cannot be
+opened while the base is missing. **Measured on #179**, which was stacked on
+#178 and approved. No work was lost — the head branch survives, and the same
+commits went up again as #187 — but the number, the review, and the discussion
+thread did not move with them, and a teammate had to approve an identical tree
+twice.
+
+If you have already merged the parent, that is the recovery: open a new PR from
+the surviving branch, and comment on the closed one saying which number
+replaced it, so the thread is not a dead end for anyone reading back.
+
 ## 5b. Releases, tags, and why there are no packages
 
 We tag a release at the **end of each sprint**, once that sprint's work is

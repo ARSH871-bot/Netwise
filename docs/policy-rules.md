@@ -83,8 +83,36 @@ Zero successful flows, because there is no route. A check that read "empty =
 policy holds" would report **`status="none"` — a green tick — on the config that
 permits everything.** That is exactly the failure F-4 exists to prevent.
 
+**Widen the destination and a success row appears — do not be fooled by it.**
+This is the half the paragraph above used to omit, and it is the half that
+makes a live demo go wrong. Same query, same fixture, `dstIps` opened up:
+
+```
+reachability(actions="success", 10.10.10.0/24 -> 0.0.0.0/0)         ->  1 row
+    Flow: start=rtr-us5 [10.10.10.0->10.10.10.0 ICMP (type=8, code=0)]
+```
+
+That "reachable" flow is the router reaching its own directly-connected LAN.
+Batfish returns **one example flow per disposition**, so over a wide
+headerspace the example it picks can be trivially local and say nothing about
+the rule under test.
+
+So the accurate statement is not *"reachability returns nothing"*. It is that
+reachability answers a question about **paths**: the flow we care about is
+filed under `failure` for the wrong reason, while a flow we do not care about
+can surface as `success`. **Neither bucket means what a policy check needs it
+to mean.**
+
 `searchFilters` reasons at the filter level and needs no routing, so it is
-correct on these fixtures and on any config where policy intent lives in ACLs.
+correct on these fixtures and on any config where policy intent lives in ACLs
+— and it cannot be fooled in either direction.
+
+> Found by @ARSH871-bot re-running this section rather than reading it, after
+> it was quoted in a team message. The measurement here was right and the
+> headers were named; `policy_compliance`'s module docstring stated the same
+> result *without* naming them, so anyone trying the obvious wide query would
+> see a success row and conclude the claim was false. Fixed in both places.
+> A measurement is only reproducible if the parameters travel with it.
 
 ### Why an empty result is safe to trust
 
@@ -360,6 +388,38 @@ checked", on every run. The offset caps the policy at 49 rules, which is far
 more than the five we have, and a test asserts the two bands cannot overlap and
 stay clear of `PC-999`, which `pipeline.duplicate_id_findings()` uses for its
 own complaint.
+
+### The evidence text names the required action (#145)
+
+Both wordings say what the policy requires **as an action**, not as a pronoun:
+
+```
+prohibition   ... is permitted but policy requires it to be DENIED. Decided by: <line>
+requirement   ... is denied but policy requires it to be PERMITTED. Decided by: <line>
+```
+
+They used to end `"policy forbids it"` and `"policy requires it"`. The required
+action was left as a reference, and the nearest thing to resolve it to is the
+flow's *current* treatment — which is the opposite of what policy wants. So the
+reference resolves backwards.
+
+Generated explanations inverted it in both directions. `PC-005` said *"a policy
+statement that requires blocking of HTTPS traffic"* when policy requires it
+permitted; `PC-001` said *"the policy currently permits this unauthorized
+access"* when policy forbids it. Three of us caught `PC-005` independently.
+`PC-001` was only found when a fourth reader rated it cold — *"the first
+sentence is good enough that I nearly accepted the second."*
+
+**One template, not two.** `forbids` is gone entirely, so there is a single
+place a reader looks for the required action and no second construction that can
+drift. `access_control` has always done this — `"Expected PERMIT but got DENY"`
+names both actions and leaves nothing to resolve.
+
+`ai/explain.py`'s `_POLICY_DETAIL_PATTERN` parses these exact strings, so it
+moved with them, and `tests/test_explain_safety_net.py` now asserts the join by
+calling `_describe()` rather than a copy of its output.
+
+---
 
 ### Sentinel IDs — agreed fix
 

@@ -119,8 +119,20 @@ _TO_KEYWORD = re.compile(r"\bto\b", re.IGNORECASE)
 _IP_OR_CIDR = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?)\b")
 _ANY_KEYWORD = re.compile(r"\bany\b", re.IGNORECASE)
 
+# Anchored on the literal word "on" -- the template's own grammar is
+# "<action> <source> to <destination> on <protocol>[/<port>]", so the token
+# introduced by "on" is unambiguously the protocol. Found in review (#183):
+# an unanchored version matched the word "any" wherever it first appeared in
+# the whole request, including as a SOURCE or DESTINATION endpoint (both of
+# which are also allowed to be "any") -- silently reading "allow any to
+# 10.20.0.5 on tcp/80" as protocol "any" (-> "ip") instead of "tcp", four of
+# nine template-legal requests tested. Requiring "on" immediately before the
+# protocol word is not a positional guess; it is exactly what the closed
+# template already promises, so a request that is genuinely ambiguous about
+# where its protocol clause is has already failed to match the template at
+# all, rather than being resolved by which match happened to come first.
 _PROTOCOL_KEYWORDS = re.compile(
-    r"\b(tcp|udp|icmp|ip|any)\b(?:\s*(?:/|port\s+)\s*(\d{1,5}))?",
+    r"\bon\s+(tcp|udp|icmp|ip|any)\b(?:\s*(?:/|port\s+)\s*(\d{1,5}))?",
     re.IGNORECASE,
 )
 _PROTOCOL_TO_CISCO = {"tcp": "tcp", "udp": "udp", "icmp": "icmp", "ip": "ip", "any": "ip"}
@@ -385,22 +397,37 @@ def propose_change(
         impact = change_impact.analyse_change(before_dir, after_dir, host=host)
 
     proposed_change = {"device": device, "filter": acl_name, "line": rule_line}
+    # verified and warning are two DIFFERENT facts and must never be ANDed
+    # into one boolean (#183, found by Shubham). A proved high-severity
+    # opening must be reported as a warning even when something ELSE in the
+    # same impact list failed to run -- change_impact.py's own
+    # differentialReachability failure path is built to preserve exactly
+    # that pair (a proven finding beside an error), the same reasoning
+    # policy_compliance's #22 fix already established: a proven violation
+    # outranks an unrelated query failing, and replacing it with "we don't
+    # know" reads as LESS alarming than the truth. Gating warning on
+    # verified silently swallowed the proof in that direction.
     verified = all(f["status"] != "error" for f in impact)
-    warning = verified and any(
+    warning = any(
         f["status"] == "found" and f["severity"] == "high" for f in impact
     )
 
-    if not verified:
-        answer = (
-            f"Generated: {rule_line}, on {device}'s {acl_name!r} filter. Its "
-            "impact could not be fully verified -- see the impact list for "
-            "what went wrong. This is NOT a claim that the change is safe."
-        )
-    elif warning:
+    if warning:
         answer = (
             f"Generated: {rule_line}, on {device}'s {acl_name!r} filter. "
             "Warning: simulating this change shows it newly opens access "
             "that was previously blocked -- see the impact list."
+        )
+        if not verified:
+            answer += (
+                " Some of the impact analysis also could not run, so this "
+                "may not be the whole picture."
+            )
+    elif not verified:
+        answer = (
+            f"Generated: {rule_line}, on {device}'s {acl_name!r} filter. Its "
+            "impact could not be fully verified -- see the impact list for "
+            "what went wrong. This is NOT a claim that the change is safe."
         )
     elif any(f["status"] == "found" for f in impact):
         answer = (

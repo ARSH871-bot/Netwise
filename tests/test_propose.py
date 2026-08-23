@@ -151,6 +151,46 @@ def test_find_protocol_and_port_rejects_a_port_above_the_valid_range():
     assert propose._find_protocol_and_port("on tcp/99999") is None
 
 
+# --- Composition: a full request, not one substring at a time -------------
+#
+# Found in review (#183, Arsh): every helper above was tested in isolation --
+# _find_endpoint() with "any", _find_protocol_and_port() with "on tcp/80" --
+# and each was individually correct. Nothing tested a request containing
+# BOTH, where an unanchored protocol search matched the word "any" used as a
+# SOURCE or DESTINATION before it ever reached the real "on <protocol>"
+# clause -- silently generating "permit ip any host X" for a request that
+# asked for "allow any to X on tcp/80". Four of nine template-legal requests
+# were wrong. These test the full parse, on full requests, specifically
+# because the bug lived in the seam between two individually-correct units.
+
+
+@pytest.mark.parametrize(
+    "request_text, expected_protocol, expected_port",
+    [
+        ("allow any to 10.20.0.5 on tcp/80", "tcp", 80),
+        ("block any to 10.20.0.5 on udp/53", "udp", 53),
+        ("block 10.10.10.5 to any on tcp/443", "tcp", 443),
+        ("allow any to any on tcp/80", "tcp", 80),
+        ("allow 10.10.10.5 to 10.20.0.5 on tcp/80", "tcp", 80),
+        ("block 10.10.10.5 to 10.20.0.5 on icmp", "icmp", None),
+        ("allow 10.10.10.5 to 10.20.0.5 on any", "ip", None),
+        ("allow any to any on any", "ip", None),
+        ("block any to any on ip", "ip", None),
+    ],
+)
+def test_protocol_is_not_confused_with_an_any_endpoint(
+    request_text, expected_protocol, expected_port
+):
+    """The exact nine requests from #183's review. An "any" endpoint must
+    never be read as the protocol, in either position, with or without a
+    real protocol also present."""
+    result = propose._find_protocol_and_port(request_text)
+    assert result == (expected_protocol, expected_port), (
+        f"{request_text!r} -> {result}, expected "
+        f"({expected_protocol!r}, {expected_port!r})"
+    )
+
+
 def test_cisco_endpoint_any_stays_any():
     assert propose._cisco_endpoint("any") == "any"
 
@@ -376,6 +416,22 @@ def test_a_well_formed_request_that_opens_something_is_a_warning(monkeypatch, tm
     assert "Warning" in result["answer"]
 
 
+def test_a_request_with_an_any_endpoint_still_generates_the_right_protocol(monkeypatch, tmp_path):
+    """End-to-end version of the #183 regression above: not just that the
+    parser returns the right tuple, but that the line propose_change()
+    actually generates keeps the requested protocol -- "any" as an endpoint
+    must never widen the generated ACL line to "ip"."""
+    before_dir = _write_snapshot(tmp_path)
+    _stub_batfish(monkeypatch)
+    _stub_change_impact(monkeypatch, [_found(severity="high")])
+
+    result = propose.propose_change(
+        "allow any to 10.20.0.5 on tcp/80 on rtr-us5", before_dir
+    )
+
+    assert result["proposed_change"]["line"] == "permit tcp any host 10.20.0.5 eq 80"
+
+
 def test_a_well_formed_request_that_only_closes_something_is_not_a_warning(monkeypatch, tmp_path):
     before_dir = _write_snapshot(tmp_path)
     _stub_batfish(monkeypatch)
@@ -419,6 +475,41 @@ def test_an_impact_that_could_not_be_verified_is_not_called_safe(monkeypatch, tm
     assert result["verified"] is False
     assert result["warning"] is False
     assert "NOT a claim" in result["answer"]
+
+
+def test_a_proven_opening_still_warns_even_with_an_unrelated_error_present(
+    monkeypatch, tmp_path
+):
+    """Found by Shubham in review: `warning = verified and any(...)` meant a
+    PROVEN high-severity opening was silently suppressed by any OTHER error
+    in the same impact list, even one that has nothing to do with the
+    opening. change_impact.analyse_change() is specifically built to return
+    exactly this pair (see its own #22 handling) -- a proven finding beside
+    an error, neither discarding the other -- so this state is not
+    hypothetical. `warning` and `verified` are two different facts and must
+    never be ANDed into one boolean; this pins the state that would not
+    have turned up by accident."""
+    before_dir = _write_snapshot(tmp_path)
+    _stub_batfish(monkeypatch)
+    from analysis import findings
+
+    proven_opening = _found(severity="high", number=1)
+    unrelated_error = findings.error_finding(
+        check="change_impact",
+        summary="The reachability comparison could not run",
+        detail="d", source="s", number=52,
+    )
+    _stub_change_impact(monkeypatch, [proven_opening, unrelated_error])
+
+    result = propose.propose_change(GOOD_REQUEST, before_dir)
+
+    assert result["verified"] is False
+    assert result["warning"] is True, (
+        "a proven high-severity opening must warn regardless of an "
+        "unrelated error in the same impact list"
+    )
+    assert "Warning" in result["answer"]
+    assert "could not run" in result["answer"]  # the caveat, appended not substituted
 
 
 def test_the_before_snapshot_is_never_written_to(monkeypatch, tmp_path):
