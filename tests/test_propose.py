@@ -477,6 +477,41 @@ def test_an_impact_that_could_not_be_verified_is_not_called_safe(monkeypatch, tm
     assert "NOT a claim" in result["answer"]
 
 
+def test_a_proven_opening_still_warns_even_with_an_unrelated_error_present(
+    monkeypatch, tmp_path
+):
+    """Found by Shubham in review: `warning = verified and any(...)` meant a
+    PROVEN high-severity opening was silently suppressed by any OTHER error
+    in the same impact list, even one that has nothing to do with the
+    opening. change_impact.analyse_change() is specifically built to return
+    exactly this pair (see its own #22 handling) -- a proven finding beside
+    an error, neither discarding the other -- so this state is not
+    hypothetical. `warning` and `verified` are two different facts and must
+    never be ANDed into one boolean; this pins the state that would not
+    have turned up by accident."""
+    before_dir = _write_snapshot(tmp_path)
+    _stub_batfish(monkeypatch)
+    from analysis import findings
+
+    proven_opening = _found(severity="high", number=1)
+    unrelated_error = findings.error_finding(
+        check="change_impact",
+        summary="The reachability comparison could not run",
+        detail="d", source="s", number=52,
+    )
+    _stub_change_impact(monkeypatch, [proven_opening, unrelated_error])
+
+    result = propose.propose_change(GOOD_REQUEST, before_dir)
+
+    assert result["verified"] is False
+    assert result["warning"] is True, (
+        "a proven high-severity opening must warn regardless of an "
+        "unrelated error in the same impact list"
+    )
+    assert "Warning" in result["answer"]
+    assert "could not run" in result["answer"]  # the caveat, appended not substituted
+
+
 def test_the_before_snapshot_is_never_written_to(monkeypatch, tmp_path):
     """CLAUDE.md's non-negotiable: generate and simulate only. The original
     config file must be byte-for-byte unchanged after a proposal."""
