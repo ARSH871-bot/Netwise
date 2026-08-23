@@ -119,8 +119,20 @@ _TO_KEYWORD = re.compile(r"\bto\b", re.IGNORECASE)
 _IP_OR_CIDR = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?)\b")
 _ANY_KEYWORD = re.compile(r"\bany\b", re.IGNORECASE)
 
+# Anchored on the literal word "on" -- the template's own grammar is
+# "<action> <source> to <destination> on <protocol>[/<port>]", so the token
+# introduced by "on" is unambiguously the protocol. Found in review (#183):
+# an unanchored version matched the word "any" wherever it first appeared in
+# the whole request, including as a SOURCE or DESTINATION endpoint (both of
+# which are also allowed to be "any") -- silently reading "allow any to
+# 10.20.0.5 on tcp/80" as protocol "any" (-> "ip") instead of "tcp", four of
+# nine template-legal requests tested. Requiring "on" immediately before the
+# protocol word is not a positional guess; it is exactly what the closed
+# template already promises, so a request that is genuinely ambiguous about
+# where its protocol clause is has already failed to match the template at
+# all, rather than being resolved by which match happened to come first.
 _PROTOCOL_KEYWORDS = re.compile(
-    r"\b(tcp|udp|icmp|ip|any)\b(?:\s*(?:/|port\s+)\s*(\d{1,5}))?",
+    r"\bon\s+(tcp|udp|icmp|ip|any)\b(?:\s*(?:/|port\s+)\s*(\d{1,5}))?",
     re.IGNORECASE,
 )
 _PROTOCOL_TO_CISCO = {"tcp": "tcp", "udp": "udp", "icmp": "icmp", "ip": "ip", "any": "ip"}
