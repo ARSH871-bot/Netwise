@@ -301,6 +301,50 @@ function showUploadMessage(text, ok) {
 }
 
 /**
+ * Show the policy pane's message in one of three tones.
+ *
+ * THREE, NOT TWO, AND THE THIRD IS THE POINT
+ *     "ok"    accepted, nothing lost
+ *     "bad"   rejected, nothing staged
+ *     "warn"  nothing failed, but something was DISCARDED -- a new config
+ *             clearing the staged policy. Green would invite the user to
+ *             skim past a file of theirs being thrown away; red would say a
+ *             failure happened, and none did. Amber is what a "could not
+ *             check" finding already wears, for the same reason.
+ */
+function showPolicyMessage(text, tone) {
+  const box = document.getElementById("policy-message");
+  box.replaceChildren();
+  box.textContent = text;
+  box.className = `upload-message ${tone}`;
+}
+
+/**
+ * Clear the results, and say why nothing is on screen.
+ *
+ * ONE FUNCTION, BOTH UPLOADS, AND THAT IS THE POINT (#82, #87).
+ *     Findings on screen describe a config checked against a policy. Change
+ *     EITHER and they stop describing anything that is currently staged --
+ *     a new config makes them another network's results, and a new policy
+ *     makes them the old rules' results. #82's argument does not depend on
+ *     which of the two moved.
+ *
+ *     Clearing lived inline in the config upload handler until #87 needed
+ *     the same behaviour. Copying it would have left two clearing paths free
+ *     to drift, which is how one of them ends up quietly not clearing.
+ *
+ * The replacement is a neutral notice, never a loading state: nothing is
+ * running, and saying otherwise is the same false claim in the other
+ * direction.
+ */
+function clearStaleResults(reason) {
+  document.getElementById("summary").replaceChildren();
+  document.getElementById("findings").replaceChildren(
+    el("div", "notice staged", reason)
+  );
+}
+
+/**
  * Run the analysis on whatever config is currently staged, and show it.
  *
  * This is the block that used to run automatically at the end of a successful
@@ -414,14 +458,22 @@ function setUpUpload() {
         // What replaces them is a neutral prompt rather than a loading state,
         // because nothing is running yet and saying otherwise would be the
         // same lie in the other direction.
-        document.getElementById("summary").replaceChildren();
-        document.getElementById("findings").replaceChildren(
-          el(
-            "div",
-            "notice staged",
-            "Config staged, nothing analysed yet. Click Scan Now to check it."
-          )
+        clearStaleResults(
+          "Config staged, nothing analysed yet. Click Scan Now to check it."
         );
+
+        // The server discards a staged policy when a new config arrives, so
+        // a new network is never checked against the previous one's rules.
+        // Reported here rather than left to be noticed: a user who staged a
+        // policy and then a config would otherwise wonder where it went.
+        if (result.policy_cleared) {
+          showPolicyMessage(
+            "The staged policy was cleared, because it was written for the " +
+              "previous config. Upload it again if it applies to this one.",
+            "warn"
+          );
+          document.getElementById("policy-input").value = "";
+        }
 
         scanButton.disabled = false;
       } else {
@@ -555,7 +607,102 @@ function setUpChat() {
   });
 }
 
+/**
+ * The policy picker (#87).
+ *
+ * WHAT IT DOES NOT CLAIM
+ *     A staged policy is not an applied policy. The server says so in its
+ *     own message and this pane repeats nothing beyond it -- the message is
+ *     rendered verbatim rather than summarised, so the one place that
+ *     sentence can drift is the server.
+ *
+ * WHY IT CLEARS THE FINDINGS
+ *     Whatever is on screen was computed against the PREVIOUS policy, so it
+ *     is exactly as stale as it would be after a new config. Same call, same
+ *     reason -- see clearStaleResults().
+ */
+function setUpPolicyUpload() {
+  const input = document.getElementById("policy-input");
+  if (!input) return;
+
+  input.addEventListener("change", async () => {
+    const file = input.files[0];
+    if (!file) return;
+
+    const name = file.name;
+    const extension = name.slice(name.lastIndexOf(".")).toLowerCase();
+
+    // A courtesy check only. The server decides, and its answer is the one
+    // that counts -- the same division of labour as the config upload.
+    if (extension !== ".json") {
+      showPolicyMessage(
+        `'${name}' is not a policy file. A policy is .json — YAML is not ` +
+          `supported yet.`,
+        "bad"
+      );
+      input.value = "";
+      return;
+    }
+
+    const body = new FormData();
+    body.append("file", file);
+    try {
+      const response = await fetch("/api/policy", { method: "POST", body });
+      const result = await response.json();
+
+      if (!response.ok) {
+        // The server's own words. PolicyError names the entry and suggests a
+        // correction for an unknown key; rewording it here would lose the
+        // part that makes it actionable.
+        showPolicyMessage(result.detail, "bad");
+        input.value = "";
+        return;
+      }
+
+      showPolicyMessage(result.message, "ok");
+
+      // Corrected legacy names, surfaced rather than swallowed. The user
+      // wrote a key that no longer exists and we accepted it -- they should
+      // learn that, or they will keep writing it.
+      if (result.renamed && result.renamed.length) {
+        addRenameNotes(result.renamed);
+      }
+
+      clearStaleResults(
+        "Policy staged. Previous findings cleared — they were checked " +
+          "against the old rules. Click Scan Now to check again."
+      );
+    } catch (error) {
+      showPolicyMessage(
+        `Could not upload that policy: ${error.message}. Nothing was staged.`,
+        "bad"
+      );
+      input.value = "";
+    }
+  });
+}
+
+/**
+ * Show the loader's rename notes under the policy message.
+ *
+ * textContent, never innerHTML -- these strings quote the user's own file
+ * back at them, which is untrusted input arriving through a path that looks
+ * like our own text.
+ */
+function addRenameNotes(notes) {
+  const box = document.getElementById("policy-message");
+  notes.forEach((note) => {
+    // Its own element, so CSS can make it read as a heads-up rather than as
+    // another sentence of the success message. textContent, never innerHTML:
+    // these strings quote the user's own file back at them, which is
+    // untrusted input arriving by a path that looks like our own text.
+    const line = el("span", "rename-note", note);
+    box.appendChild(line);
+  });
+}
+
 /* ------------------------------------------------------------------------ */
 loadFindings();
 setUpUpload();
+setUpPolicyUpload();
 setUpChat();
