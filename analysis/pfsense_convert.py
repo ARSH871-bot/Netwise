@@ -36,15 +36,22 @@ SCOPE -- TIMEBOXED ON PURPOSE, PER CLAUDE.md SECTION 7
     explicit deny-all, matching PF Sense's real fail-closed default rather
     than leaving it unbound. See convert() and _acl_name().
 
-    A RULE NAMING AN INTERFACE THIS MODULE CANNOT MODEL is refused with one
-    of two distinct reasons, not one blanket message (#78, re-measured
-    against the real export after item 1 landed): a role declared under
-    <interfaces> but lacking a static address (DHCP or unconfigured) genuinely
-    has no address to bind a Cisco ACL to; a role never declared under
-    <interfaces> at all is most likely VPN/tunnel policy (OpenVPN, WireGuard),
-    which this module does not parse and is out of scope regardless of
-    addressing. See _declared_interface_roles() for why conflating the two
-    was actively wrong about the second kind, not just imprecise.
+    A RULE NAMING AN INTERFACE THIS MODULE CANNOT MODEL is SKIPPED, not a
+    reason to refuse the whole file (#78, re-scoped once the real client
+    export showed both an "everything refuses" and an "only this bit
+    refuses" case could exist in the same file). Every OTHER interface's
+    rules still convert normally; the skipped rule(s) are named, with one of
+    two distinct reasons, in the `skipped` list `convert()` and
+    `write_snapshot()` return alongside their normal result -- never
+    silently dropped, and never conflated with each other: a role declared
+    under <interfaces> but lacking a static address (DHCP or unconfigured)
+    genuinely has no address to bind a Cisco ACL to; a role never declared
+    under <interfaces> at all is most likely VPN/tunnel policy (OpenVPN,
+    WireGuard), which this module does not parse and is out of scope
+    regardless of addressing. See _declared_interface_roles() for why
+    conflating the two was actively wrong about the second kind, not just
+    imprecise. The file is refused outright only if NOTHING in it can be
+    modelled at all -- see convert()'s own docstring for that boundary.
 
 RULE ORDER: MODELLED WHERE IT CAN BE, REFUSED WHERE IT CANNOT (issues #47, #78)
     PF Sense's real rule evaluation is "last matching rule wins" unless a
@@ -120,7 +127,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, NamedTuple, Optional, Union
 
 # The ACL name every other fixture in this project already uses for a single
 # inbound filter. Reusing it, rather than inventing a new name, is what lets
@@ -738,10 +745,33 @@ def _rule_to_acl_line(rule_el: ET.Element, interfaces: Dict[str, Dict[str, str]]
     return f"{action} {cisco_protocol} {src} {dst}{port_clause}"
 
 
-def convert(xml_path: Union[str, Path]) -> str:
+class ConversionResult(NamedTuple):
+    """convert()'s return shape: the Cisco config text, plus every interface
+    whose rules could not be modelled and were left out of it (#78).
+
+    `text` is never partial or best-guess about what it DOES contain -- every
+    line in it is exactly as certain as convert() always promised. `skipped`
+    is the explicit, named account of what is NOT in it and why, so a caller
+    reading `text` alone can never mistake "not modelled" for "not present in
+    the source file" -- the F-4 discipline this project holds everywhere
+    else, applied to a converter's own output for the first time.
+    """
+
+    text: str
+    skipped: List[str]
+
+
+def convert(xml_path: Union[str, Path]) -> ConversionResult:
     """Parse a PF Sense config.xml export and return equivalent Cisco IOS
-    config text. Raises PfSenseConversionError for anything out of scope --
-    see the module docstring. Never returns a partial or best-guess result.
+    config text, plus a list of anything skipped -- see ConversionResult and
+    the module docstring.
+
+    Raises PfSenseConversionError only when NOTHING in the file can be
+    modelled at all, or when a construct is dangerous to guess about (an
+    injection attempt, an ambiguous rule order -- see REFUSALS). A rule
+    naming an interface this module cannot model (#78) is NOT one of those:
+    it is skipped, named in the result, and every other interface converts
+    normally. Never silently drops or approximates what IS converted.
     """
     root = ET.parse(xml_path).getroot()
 
@@ -809,33 +839,50 @@ def convert(xml_path: Union[str, Path]) -> str:
     # parse and is out of scope regardless of addressing. Conflating the two
     # under "no static address configured" is wrong about the second kind --
     # see _declared_interface_roles().
+    #
+    # SKIPPED, NOT REFUSED (#78, re-scoped): the client's real export has
+    # BOTH a modellable interface and an unmodellable one in the same file.
+    # Refusing the whole file the moment ANY interface is unmodellable meant
+    # a file with six good interfaces and one bad one converted nothing.
+    # Every rule naming one of these roles is simply left out of the ACLs
+    # built below; every other interface converts exactly as if the bad
+    # rule(s) were never there. The exclusion itself is never silent -- see
+    # `skipped` below and ConversionResult's own docstring.
     unknown_roles = rule_roles - set(interfaces)
+    skipped: List[str] = []
     if unknown_roles:
         declared = _declared_interface_roles(root)
         no_static_address = sorted(unknown_roles & declared)
         not_declared_at_all = sorted(unknown_roles - declared)
 
-        reasons = []
         if no_static_address:
-            reasons.append(
-                f"{no_static_address} have {REFUSALS['no_static_address']}"
+            count = sum(
+                1 for r in rule_els if _rule_interface(r) in no_static_address
+            )
+            skipped.append(
+                f"{no_static_address} have {REFUSALS['no_static_address']} "
+                f"-- {count} rule(s) skipped, not converted"
             )
         if not_declared_at_all:
-            reasons.append(
-                f"{not_declared_at_all} are {REFUSALS['undeclared_interface']}"
+            count = sum(
+                1 for r in rule_els if _rule_interface(r) in not_declared_at_all
+            )
+            skipped.append(
+                f"{not_declared_at_all} are {REFUSALS['undeclared_interface']} "
+                f"-- {count} rule(s) skipped, not converted"
             )
 
-        raise PfSenseConversionError(
-            "filter rules apply to interface(s) that cannot be modelled: "
-            + "; ".join(reasons)
-        )
-
-    # One bucket of rules per interface, in document order within each --
-    # rule ORDER only matters relative to other rules on the same ACL, never
-    # across interfaces, since no real firewall ever compares them that way.
-    rules_by_role: Dict[str, List[ET.Element]] = {role: [] for role in rule_roles}
+    # One bucket of rules per MODELLABLE interface, in document order within
+    # each -- rule ORDER only matters relative to other rules on the same
+    # ACL, never across interfaces, since no real firewall ever compares them
+    # that way. A rule naming a role in `unknown_roles` is deliberately never
+    # added to any bucket -- see the block above.
+    modelled_roles = rule_roles - unknown_roles
+    rules_by_role: Dict[str, List[ET.Element]] = {role: [] for role in modelled_roles}
     for r in rule_els:
-        rules_by_role[_rule_interface(r)].append(r)
+        role = _rule_interface(r)
+        if role in rules_by_role:
+            rules_by_role[role].append(r)
 
     # Each interface's rule-order ambiguity is checked against only ITS OWN
     # rules (#47/#58's guard, now run once per ACL instead of once globally).
@@ -894,11 +941,11 @@ def convert(xml_path: Union[str, Path]) -> str:
         #   is possible. Left unbound, an address-only interface with no
         #   rules of its own would read to Cisco/Batfish as unfiltered, fail
         #   OPEN -- the exact inversion that refusal exists to prevent.
-        lines.append(f" ip access-group {_acl_name(role, rule_bearing_roles=rule_roles)} in")
+        lines.append(f" ip access-group {_acl_name(role, rule_bearing_roles=modelled_roles)} in")
         lines.append("!")
 
     for role in interfaces:
-        acl_name = _acl_name(role, rule_bearing_roles=rule_roles)
+        acl_name = _acl_name(role, rule_bearing_roles=modelled_roles)
         lines.append(f"ip access-list extended {acl_name}")
         if role in acl_lines_by_role:
             lines.extend(f" {line}" for line in acl_lines_by_role[role])
@@ -906,13 +953,24 @@ def convert(xml_path: Union[str, Path]) -> str:
             lines.append(" deny ip any any")
         lines.append("!")
 
-    return "\n".join(lines) + "\n"
+    return ConversionResult(text="\n".join(lines) + "\n", skipped=skipped)
 
 
-def write_snapshot(xml_path: Union[str, Path], snapshot_dir: Union[str, Path]) -> Path:
+class WriteResult(NamedTuple):
+    """write_snapshot()'s return shape: the file written, plus whatever
+    convert() reported as skipped (#78) -- see ConversionResult."""
+
+    path: Path
+    skipped: List[str]
+
+
+def write_snapshot(
+    xml_path: Union[str, Path], snapshot_dir: Union[str, Path]
+) -> WriteResult:
     """Convert `xml_path` and write it as a Batfish-ready snapshot at
     `snapshot_dir` (device files land in `snapshot_dir/configs/`, matching
-    what analysis.pipeline.load_snapshot expects). Returns the file written.
+    what analysis.pipeline.load_snapshot expects). Returns the file written,
+    plus anything convert() skipped -- see WriteResult.
 
     WHY THE OUTPUT PATH IS VALIDATED TWICE
         `_sanitised_hostname()` already rejects anything but a plain
@@ -925,7 +983,7 @@ def write_snapshot(xml_path: Union[str, Path], snapshot_dir: Union[str, Path]) -
         `<hostname>../../../../evil</hostname>` wrote a file four
         directories above the intended `snapshot_dir` entirely.
     """
-    text = convert(xml_path)
+    result = convert(xml_path)
     hostname = ET.parse(xml_path).getroot().find("system")
     hostname_text = _sanitised_hostname(_text(hostname, "hostname", default="pfsense"))
 
@@ -936,8 +994,8 @@ def write_snapshot(xml_path: Union[str, Path], snapshot_dir: Union[str, Path]) -
         raise PfSenseConversionError(
             f"{REFUSALS['path_traversal']}: <hostname> is {hostname_text!r}"
         )
-    out_path.write_text(text)
-    return out_path
+    out_path.write_text(result.text)
+    return WriteResult(path=out_path, skipped=result.skipped)
 
 
 if __name__ == "__main__":
@@ -948,6 +1006,11 @@ if __name__ == "__main__":
             "tests/fixtures/pfsense-source/config.xml /tmp/pfsense-converted"
         )
     written = write_snapshot(sys.argv[1], sys.argv[2])
-    print(f"Wrote {written}")
+    print(f"Wrote {written.path}")
+    if written.skipped:
+        print()
+        print("Skipped, not converted:")
+        for note in written.skipped:
+            print(f"  - {note}")
     print()
-    print(written.read_text())
+    print(written.path.read_text())
