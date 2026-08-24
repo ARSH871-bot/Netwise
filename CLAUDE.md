@@ -385,6 +385,7 @@ ai/         Layer 2 — local LLM explanation and Q&A
 web/        Layer 3 — FastAPI backend and dashboard
 tests/      pytest suite + synthetic fixtures (committed, see §7b)
 tools/      Standalone helpers, run by hand, not imported by the product
+              make_traceability.py  regenerate docs/traceability.md from the repo
               pfsense_shape.py    describe an export's structure, never a value
               preflight.py        is this machine set up to run Netwise?
               stranger_config.py  measure the #87 policy gap on every fixture
