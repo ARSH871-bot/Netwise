@@ -388,6 +388,10 @@ tools/      Standalone helpers, run by hand, not imported by the product
               pfsense_shape.py    describe an export's structure, never a value
               preflight.py        is this machine set up to run Netwise?
               stranger_config.py  measure the #87 policy gap on every fixture
+              live_check.py       does the running system still behave
+                                    correctly, layer by layer (not the same
+                                    question preflight asks — see its own
+                                    docstring)
 docs/       Sprint records, design notes, evidence for reviews
 configs/    Config files under test — GIT-IGNORED, never committed
 ```
