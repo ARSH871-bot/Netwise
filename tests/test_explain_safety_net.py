@@ -21,9 +21,12 @@ RUN
 import ollama
 
 from ai import explain as explain_module
+import pytest
+
 from ai.explain import (
     _build_prompt,
     _compute_dead_rule_outcome,
+    _compute_expected_actual_outcome,
     _compute_policy_outcome,
     _evidence_detail,
     _fallback_error_explanation,
@@ -199,7 +202,7 @@ def test_prohibition_violation_blames_the_device_not_the_policy():
     """Real evidence.detail shape from policy_compliance._describe() for a
     'prohibition' rule -- the device permits what the policy forbids."""
     detail = (
-        "Flow start=10.20.0.5 is permitted but policy forbids it. "
+        "Flow start=10.20.0.5 is permitted but policy requires it to be DENIED. "
         "Decided by: permit ip any any"
     )
     outcome = _compute_policy_outcome(detail)
@@ -214,7 +217,7 @@ def test_requirement_violation_blames_the_device_not_the_policy():
     """Real evidence.detail shape for a 'requirement' rule -- the device
     denies what the policy requires."""
     detail = (
-        "Flow start=10.30.0.9 is denied but policy requires it. "
+        "Flow start=10.30.0.9 is denied but policy requires it to be PERMITTED. "
         "Decided by: deny tcp any any eq 443"
     )
     outcome = _compute_policy_outcome(detail)
@@ -243,12 +246,66 @@ def test_policy_outcome_handles_multiple_example_flows_suffix():
     """_describe() appends '(N example flows matched)' when more than one
     row comes back -- the pattern must still match with that suffix present."""
     detail = (
-        "Flow start=10.20.0.5 is permitted but policy forbids it. "
+        "Flow start=10.20.0.5 is permitted but policy requires it to be DENIED. "
         "Decided by: permit ip any any (3 example flows matched)"
     )
     outcome = _compute_policy_outcome(detail)
     assert outcome is not None
     assert "PERMITTED" in outcome
+
+
+# --- _compute_expected_actual_outcome (testFilters) ------------------------------
+# Not a bug found by accident -- added on the same structural reasoning that
+# found the two above: this evidence shape is the same "which of two opposite
+# states is which" attribution task, on real access_control policy-statement
+# findings. Live-tested six times against a real finding in this shape before
+# adding the guard; no inversion reproduced on that occasion, recorded as a
+# clean but limited result rather than proof of safety.
+
+
+def test_a_required_permit_that_is_actually_denied():
+    """Real evidence.detail shape from access_control.run()'s policy-
+    statement loop -- something required to be allowed is currently blocked."""
+    detail = "Expected PERMIT but got DENY, decided by: deny ip any any"
+    outcome = _compute_expected_actual_outcome(detail)
+    assert outcome is not None
+    assert "DENY" in outcome
+    assert "PERMIT" in outcome
+
+
+def test_a_required_deny_that_is_actually_permitted():
+    """The other direction -- something required to be blocked is currently
+    let through."""
+    detail = "Expected DENY but got PERMIT, decided by: permit ip any any"
+    outcome = _compute_expected_actual_outcome(detail)
+    assert outcome is not None
+    assert "PERMIT" in outcome
+    assert "DENY" in outcome
+
+
+def test_expected_actual_outcome_returns_none_for_an_unrelated_finding():
+    detail = "BatfishException: Work terminated abnormally"
+    assert _compute_expected_actual_outcome(detail) is None
+
+
+def test_expected_actual_outcome_returns_none_for_a_dead_rule_finding():
+    """The three computations must not cross-match each other's shape."""
+    detail = (
+        "Unreachable line: permit icmp any any (action PERMIT). "
+        "Blocked by: deny   ip any any. Reason: BLOCKING_LINES"
+    )
+    assert _compute_expected_actual_outcome(detail) is None
+
+
+def test_expected_actual_outcome_returns_none_for_a_policy_compliance_finding():
+    """Current evidence.detail wording (#194), not the pre-#194 shape --
+    the two guards must still not cross-match after that PR's rewording."""
+    detail = (
+        "Flow start=10.20.0.5 is permitted but policy requires it to be "
+        "DENIED. Decided by: permit ip any any"
+    )
+    assert _compute_expected_actual_outcome(detail) is None
+    assert _compute_policy_outcome(detail) is not None  # the OTHER guard still matches
 
 
 # --- _fallback_plain_restatement -----------------------------------------------
@@ -585,7 +642,7 @@ def test_prompt_includes_the_computed_outcome_for_a_policy_finding():
         "id": "PC-005",
         "evidence": {
             "detail": (
-                "Flow start=10.30.0.9 is denied but policy requires it. "
+                "Flow start=10.30.0.9 is denied but policy requires it to be PERMITTED. "
                 "Decided by: deny tcp any any eq 443"
             )
         },
@@ -597,9 +654,9 @@ def test_prompt_includes_the_computed_outcome_for_a_policy_finding():
 
 
 def test_prompt_prefers_the_dead_rule_computation_when_both_could_apply():
-    """The two patterns are mutually exclusive in practice (see each
+    """The three patterns are mutually exclusive in practice (see each
     function's docstring), but _build_prompt() tries the dead-rule check
-    first -- pin that order down directly rather than relying on the two
+    first -- pin that order down directly rather than relying on the
     regexes never colliding by accident."""
     finding = {
         "id": "AC-002",
@@ -613,6 +670,19 @@ def test_prompt_prefers_the_dead_rule_computation_when_both_could_apply():
     prompt = _build_prompt(finding)
     assert "already verified" in prompt.lower()
     assert "denied" in prompt
+
+
+def test_prompt_includes_the_computed_outcome_for_a_testfilters_finding():
+    """access_control's own policy-statement findings get the same
+    deterministic help as a dead-rule or policy_compliance finding."""
+    finding = {
+        "id": "AC-099",
+        "evidence": {"detail": "Expected PERMIT but got DENY, decided by: deny ip any any"},
+    }
+    prompt = _build_prompt(finding)
+    assert "already verified" in prompt.lower()
+    assert "DENY" in prompt
+    assert "PERMIT" in prompt
 
 
 def test_prompt_tells_the_model_not_to_echo_the_computed_fact_as_a_label():
@@ -706,3 +776,79 @@ def test_explain_still_returns_only_the_text_it_always_did(monkeypatch):
 
     assert isinstance(result, str)
     assert "allows all traffic" in result
+
+
+# --- the seam between policy_compliance and this module ------------------------
+#
+# _POLICY_DETAIL_PATTERN parses a string that another module writes. Every other
+# test in this file passes that string as a LITERAL, so all of them keep passing
+# if policy_compliance._describe() changes its wording -- and the safeguard just
+# silently stops matching, which is its documented "nothing to compute from"
+# path rather than an error.
+#
+# That is exactly what would have happened when #145's evidence-format fix
+# landed: the pattern matched the old pronoun wording, the fix replaced it, and
+# nothing on either side asserted the join. Caught on review of #169 before both
+# shipped.
+#
+# These call the REAL _describe(), so a wording change on either side fails here.
+
+
+def _real_detail(kind):
+    """The genuine evidence string, from the genuine function."""
+    from analysis.checks import policy_compliance as pc
+
+    rule = {
+        "number": 1,
+        "description": "d",
+        "kind": kind,
+        "node": "rtr-us5",
+        "filter": "acl_in",
+        "violation_severity": "high",
+        "violation_summary": "s",
+        "queries": [{}],
+    }
+    hit = {"Flow": "start=rtr-us5 [10.10.10.0:49152->10.20.0.5:443 TCP]",
+           "Line_Content": "deny   ip 10.10.10.0 0.0.0.255 any"}
+    return pc._describe(rule, [hit])
+
+
+@pytest.mark.parametrize("kind", ["prohibition", "requirement"])
+def test_the_safeguard_can_read_what_policy_compliance_actually_writes(kind):
+    """The join, asserted against the real producer rather than a literal."""
+    detail = _real_detail(kind)
+    outcome = _compute_policy_outcome(detail)
+
+    assert outcome is not None, (
+        f"policy_compliance._describe() emits a {kind} string this module "
+        f"cannot parse, so the safeguard silently stops helping: {detail!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "kind, current, required",
+    [("prohibition", "PERMITTED", "FORBIDS"), ("requirement", "DENIED", "REQUIRES")],
+)
+def test_the_computed_outcome_matches_the_direction_it_was_given(kind, current, required):
+    """Both halves right, not just parseable.
+
+    Parsing the string and then attributing the wrong side would be the
+    original bug with an extra step, so the direction is checked too.
+    """
+    outcome = _compute_policy_outcome(_real_detail(kind))
+    assert current in outcome, f"{kind}: should say the traffic is currently {current}"
+    assert required in outcome.upper(), f"{kind}: should say what the policy {required}"
+
+
+def test_evidence_never_leaves_the_required_action_as_a_pronoun():
+    """#145 itself: both wordings must name the action, not refer to it.
+
+    The defect was "policy forbids it" / "policy requires it" -- the required
+    action left as a reference the reader resolves to the nearest noun, which
+    is the flow's CURRENT treatment, i.e. backwards.
+    """
+    for kind in ("prohibition", "requirement"):
+        detail = _real_detail(kind)
+        assert "requires it to be" in detail, f"{kind}: names the required action"
+        assert "forbids it." not in detail, f"{kind}: no bare pronoun ending"
+        assert "requires it." not in detail, f"{kind}: no bare pronoun ending"

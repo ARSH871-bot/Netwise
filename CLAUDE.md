@@ -221,6 +221,21 @@ Batfish runs in Docker container `batfish` (image `batfish/allinone`), exposing
   That is #53, #54 and #58 working on the first real file they have ever seen,
   and the strongest evidence yet that refusing rather than guessing was right.
 
+  > **UPDATE, 23 August.** The example above no longer matches current
+  > behaviour and is left as the historical record of what #78 measured, not
+  > edited in place. The DHCP-WAN and undeclared-VPN-interface cases stopped
+  > refusing the whole file: the rule(s) naming an unmodellable interface are
+  > now skipped and named in `ConversionResult.skipped`, and every other
+  > interface in the same file converts normally. Verified live on a
+  > client-shaped file (one DHCP interface, one undeclared VPN interface, two
+  > good interfaces): the two good interfaces converted and parsed cleanly
+  > against real Batfish with zero problems, while the skipped list named
+  > exactly the two excluded interfaces and why. What is still true: nothing
+  > here is guessed. An unmodellable rule is still refused, individually,
+  > just no longer at the cost of the whole file. The NAT decision and the
+  > missing `<type>`/`<protocol>` question (#80) are unaffected by this and
+  > remain open.
+
 ## 7a. The finding format (F-1) — the one contract
 
 **`docs/finding-format.md` is authoritative.** It was agreed by all four team
