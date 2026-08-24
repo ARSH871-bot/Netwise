@@ -126,20 +126,53 @@ def test_five_findings_cost_five_calls_once_not_once_per_request(monkeypatch):
 def test_re_explaining_an_already_explained_list_is_still_a_hit(monkeypatch):
     """The two keys this module adds must not change the fingerprint.
 
-    _attach_explanations() mutates in place, so a caller that passed the
-    same list twice would present a dict that now carries "explanation" and
-    "explanation_source". If those took part in the key, the second pass
-    would miss every time and the cache would silently do nothing.
+    A finding that has already been through here carries "explanation" and
+    "explanation_source". If those took part in the key, feeding the result
+    back in would miss every time and the cache would silently do nothing.
+
+    UPDATED IN #92b. This test used to assert that `_attach_explanations()`
+    mutated its argument in place, and it failed the moment that changed --
+    correctly, because the behaviour it pinned was deliberately removed.
+    Caching `analyse()` means the list passed in here can be the CACHED one,
+    and writing the two keys onto it would put them on an object F-1
+    validation is entitled to see unchanged.
+
+    So the property under test is the same and the route to it is not: the
+    already-explained list is now the RETURNED one rather than the argument.
     """
     stub = _Counter()
     monkeypatch.setattr(main, "explain_with_source", stub)
 
-    findings = [_finding()]
-    main._attach_explanations(findings)
-    assert "explanation" in findings[0]
+    explained = main._attach_explanations([_finding()])
+    assert "explanation" in explained[0]
 
-    main._attach_explanations(findings)      # same list, now carrying the keys
+    # Feed the already-explained result straight back in.
+    main._attach_explanations(explained)
     assert stub.n == 1
+
+
+def test_attach_explanations_does_not_touch_the_list_it_is_given(monkeypatch):
+    """The condition #92b had to meet before analyse() could be cached.
+
+    web/main.py's own docstring named this as the moment to stop mutating in
+    place. If it still mutated, the cached findings list would acquire two
+    non-F-1 keys on the first request and hand them to every later one.
+    """
+    stub = _Counter()
+    monkeypatch.setattr(main, "explain_with_source", stub)
+
+    original = _finding()
+    before = dict(original)
+
+    returned = main._attach_explanations([original])
+
+    assert original == before, (
+        "the caller's finding was modified; with a cached analyse() that "
+        "dict is the cached one and would keep the extra keys for ever"
+    )
+    assert "explanation" not in original
+    assert "explanation" in returned[0]
+    assert returned[0] is not original
 
 
 # --- Criterion 2: a new upload never serves the previous network's text -------
