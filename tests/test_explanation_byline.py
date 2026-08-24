@@ -68,6 +68,14 @@ def rendered():
 
 
 # ---------------------------------------------------------------------------
+# PART 1 -- WHICH CLASS THE CARD GETS.  Every test here is @needs_node.
+# ---------------------------------------------------------------------------
+#
+# These drive the REAL renderFinding() through a Node harness and read the
+# class off the resulting DOM. They need Node, and they SKIP without it --
+# which is why Part 2 below exists and deliberately does not.
+#
+# ---------------------------------------------------------------------------
 # The two real cases
 # ---------------------------------------------------------------------------
 
@@ -132,8 +140,20 @@ def test_no_explanation_renders_no_block_at_all(rendered):
 
 
 # ---------------------------------------------------------------------------
-# The WORDS, not just the class
+# PART 2 -- THE WORDS, not just the class.  NOTHING here needs Node.
 # ---------------------------------------------------------------------------
+#
+# Requested by @SamikaPerera on #189, and it is worth more than a tidy-up.
+# Part 1 SKIPS wherever `node` is absent, and a skipped test is
+# indistinguishable from a passing one in pytest's summary line. CI installs
+# Node deliberately (`actions/setup-node`, added because the runner image only
+# "happened to" ship it), so Part 1 does run there -- but it asserts nothing on
+# any teammate's machine without Node.
+#
+# These read the stylesheet as text and need nothing but Python, so they are
+# the half that always runs. That is the reason to keep both halves in one
+# file rather than split them: whoever touches the byline later should see the
+# coverage that runs everywhere next to the coverage that does not.
 #
 # Everything above asserts which CSS CLASS a card gets. The words a reader
 # actually sees are `content:` strings in web/static/style.css, and nothing
