@@ -72,8 +72,25 @@
         <!-- ---- Coverage summary ----
              Three counts, never merged. "Could not check" is shown even when
              it is zero, because an explicit zero is a stronger statement than
-             an absent row. -->
-        <h2 id="results-heading">Findings</h2>
+             an absent row.
+
+             THE HEADING USED TO BE THE SINGLE WORD "Findings", AND THE CLIENT
+             TOLD US IT MISLEADS (meeting, 24 August 2026). He was right, and
+             the reason is worth keeping: F-4 is enforced carefully in colour,
+             in layout and in section order -- and then one noun above all
+             three tiles undid it, by naming a "could not check" a finding.
+             Two of these three counts are findings. The third is the absence
+             of one, which is the distinction the whole contract exists to
+             protect. The line below states it in words rather than relying on
+             the reader to infer it from three tile colours. -->
+        <h2 id="results-heading">Scan results</h2>
+        <p class="hint" id="results-explainer">
+          Three separate counts, not one total.
+          <strong>Problems found</strong> and <strong>checked, nothing
+          found</strong> are both results — the check ran either way.
+          <strong>Could not check</strong> is not a pass: those checks did not
+          run, so nothing is known about what they cover.
+        </p>
         <div id="summary" class="summary" aria-live="polite"></div>
 
         <!-- ---- The findings themselves, grouped by status ---- -->
