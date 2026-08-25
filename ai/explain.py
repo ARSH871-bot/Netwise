@@ -60,6 +60,18 @@ TWO DIFFERENT KINDS OF MISTAKE, TWO DIFFERENT FIXES
        computable from evidence.detail alone, so _compute_policy_outcome()
        computes it the same way _compute_dead_rule_outcome() does.
 
+       A third shape was added on the same reasoning without waiting for a
+       third accident: access_control's own policy-statement findings use
+       the identical "which of two opposite states is which" attribution
+       ("Expected PERMIT but got DENY, decided by: ..."), the same task
+       that went wrong twice already. Live-tested six times against a real
+       finding in this shape before adding the guard -- no inversion
+       reproduced on that occasion, recorded honestly as a clean but limited
+       result rather than proof of safety, since both earlier bugs were
+       also found on one specific real finding each, not from exhaustive
+       testing. _compute_expected_actual_outcome() computes it the same way
+       the other two do, and costs nothing when it does not match.
+
 WHY status="error" ALSO GETS ITS OWN CHECK
     For "found"/"none", a wording slip is undesirable but not dangerous --
     the underlying fact was still real, the phrasing was just off. For
@@ -227,6 +239,69 @@ def _compute_policy_outcome(detail: str) -> Optional[str]:
 
 
 # ------------------------------------------------------------------------------
+# 1c. Deterministic expected-vs-actual outcome computation (testFilters)
+# ------------------------------------------------------------------------------
+
+# Matches evidence.detail EXACTLY as produced by
+# analysis.checks.access_control.run()'s policy-statement loop:
+#   "Expected PERMIT but got DENY, decided by: <line>"
+#   "Expected DENY but got PERMIT, decided by: <line>"
+# Deliberately narrow, same discipline as the two patterns above -- this
+# must only match the one shape it is confident about, never a loose
+# approximation of it.
+_EXPECTED_ACTUAL_DETAIL_PATTERN = re.compile(
+    r"Expected (?P<expected>PERMIT|DENY) but got (?P<actual>PERMIT|DENY), "
+    r"decided by:"
+)
+
+
+def _compute_expected_actual_outcome(detail: str) -> Optional[str]:
+    """For an access_control policy-statement finding, state -- in
+    unambiguous words -- what the device actually does versus what was
+    required, rather than asking the model to keep the two straight itself.
+
+    WHY THIS EXISTS
+        Not a bug caught by accident this time -- checked deliberately,
+        because this evidence shape is structurally the same "which of two
+        opposite states is which" attribution task that #52 (dead rules) and
+        #145 (policy_compliance) already got backwards on real findings.
+        `evidence.detail` here even uses the same two-sided phrasing
+        ("Expected X but got Y") the other two shapes needed a fix for.
+
+        Live-tested against the local model before adding this: six runs of
+        a real finding in this shape (`Expected PERMIT but got DENY`) all
+        correctly identified DENY as the actual, current behaviour -- no
+        inversion reproduced on this occasion. Recorded rather than treated
+        as proof of safety: #52 and #145 were both found on one specific
+        real finding each, not from exhaustive testing, and this module's
+        own docstring is explicit that a 3B model cannot be promised zero
+        failures of this kind. The fix costs a few lines and never blocks a
+        finding from being explained if it does not match; the failure mode
+        it guards against is a security tool stating the opposite of the
+        truth. That asymmetry is why this is added on structural risk plus
+        a clean but limited live test, the same bar #52 and #145 were
+        originally found at, not waited on until it reproduces here too.
+
+    Returns a plain-English statement naming both sides explicitly, or None
+    if `detail` is not in the exact shape access_control.py's testFilters
+    loop produces -- nothing to compute from, so the model gets no extra
+    help and reasons from the raw finding alone, same as any other finding
+    shape.
+    """
+    match = _EXPECTED_ACTUAL_DETAIL_PATTERN.search(detail)
+    if not match:
+        return None
+
+    expected, actual = match.group("expected"), match.group("actual")
+    return (
+        f"the traffic this statement is about is currently {actual}, which "
+        f"is the device's own configuration doing it -- the policy actually "
+        f"requires {expected}. The device configuration is what disagrees "
+        f"with the requirement, not the requirement itself."
+    )
+
+
+# ------------------------------------------------------------------------------
 # 2. Post-generation validation
 # ------------------------------------------------------------------------------
 
@@ -360,16 +435,17 @@ def _build_prompt(finding: Dict[str, Any]) -> str:
        example's answer almost verbatim for an unrelated finding, rather
        than reasoning about the finding it was actually given.
 
-    2. If _compute_dead_rule_outcome() can determine the real outcome of a
-       dead-ACL-rule finding, or -- if that finds nothing -- if
-       _compute_policy_outcome() can determine which side a policy_compliance
-       finding's evidence actually blames (#145), that computed fact,
+    2. If one of the three deterministic outcome functions can compute the
+       real answer from evidence.detail -- _compute_dead_rule_outcome() for
+       a dead-ACL-rule finding, _compute_policy_outcome() for a
+       policy_compliance finding (#145), or _compute_expected_actual_outcome()
+       for an access_control policy-statement finding -- that computed fact,
        labelled as already-verified. See each function's docstring for why
        it exists and how confident it has to be before it says anything at
-       all. The two never both match: a finding's evidence.detail is either
-       an access_control dead-rule shape or a policy_compliance shape, never
-       both, so trying the second only when the first returns None does not
-       risk masking one with the other.
+       all. The three never more than one matches at once: each check
+       produces its own exact evidence.detail shape, so trying the next one
+       only when an earlier one returns None does not risk masking one with
+       another.
     """
     parts = [
         "Explain ONLY the finding below. Do not reuse any wording from the "
@@ -379,7 +455,11 @@ def _build_prompt(finding: Dict[str, Any]) -> str:
     ]
 
     detail = _evidence_detail(finding)
-    computed_outcome = _compute_dead_rule_outcome(detail) or _compute_policy_outcome(detail)
+    computed_outcome = (
+        _compute_dead_rule_outcome(detail)
+        or _compute_policy_outcome(detail)
+        or _compute_expected_actual_outcome(detail)
+    )
     if computed_outcome is not None:
         # Deliberately NOT a distinctive, quotable label like "IMPORTANT
         # FACT:" -- measured directly that the model would echo a label

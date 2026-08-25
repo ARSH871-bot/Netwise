@@ -557,6 +557,92 @@ three people who review in bursts, and no rule changes that.
 
 ---
 
+## 5e. Verifying a dependency bump CI cannot check
+
+Some bumps cannot be validated by a green tick, and `requirements.txt` says so
+in a comment. **A comment is not a checkable artifact** — that is #138's point,
+and it is the same shape this project has already found unenforced in a
+docstring and a JS comment. So the verification is a checklist you fill in and
+paste into the PR, not a claim you make.
+
+### When this applies
+
+- A **major** version bump of anything whose real behaviour lives outside CI:
+  `pandas` (Batfish answers arrive as DataFrames), `pybatfish` (pinned, must
+  match the container), `fastapi` (the endpoints are only exercised against a
+  real snapshot).
+- Any bump where you cannot say what would break if it were wrong.
+
+A patch or minor floor raise on something CI genuinely exercises does not need
+this. Say so in the PR rather than filling the form in with shrugs.
+
+### The checklist — paste it into the PR and fill it in
+
+```
+Dependency:            <name>  <old> -> <new>
+Verified by:           <who>          Date: <when>
+Environment matches requirements.txt: python -m tools.preflight   -> OK / BROKEN
+
+[ ] Full suite on the NEW version          <count> passed
+[ ] Real Batfish pipeline, not fakes       <fixtures run, statuses>
+[ ] The feature that touches it most       <what, and the result>
+[ ] End to end through the web layer       <upload -> findings -> ask>
+[ ] Results identical to the old version?  yes / no -- if no, what differs
+```
+
+**The third and fourth lines are the ones that matter.** The suite passing on a
+new major mostly proves the tests that do *not* use the dependency still pass —
+`tests/` uses fakes for DataFrames, so on a pandas bump the unit suite is
+nearly silent about the thing being bumped.
+
+### Worked example — pandas `>=2.0` → `>=3.0.5` (#131)
+
+Recorded here because a filled-in example is worth more than a blank form, and
+because this one is a **second verification by a different method** — the bump
+had already been checked in an isolated venv and reported in a
+`requirements.txt` comment; this one used the real container.
+
+**Corrected after review.** This paragraph said *"Two people getting the same
+answer by different routes"*. It was not two people. @patelankeet2 checked and
+both entries are mine — `bd5c0254` (14 August, the `requirements.txt` comment)
+and `14b2ff2` (18 August, this checklist). Two methods, one person.
+
+That distinction is the whole subject of this section, so getting it wrong here
+is worth leaving on the page rather than quietly rewording. **Two methods rule
+out a broken method; two people also rule out a person reading their own result
+back.** Only the first claim is supported, and the second is the one the
+original sentence made.
+
+He approved the PR and flagged this separately rather than blocking on it,
+which is the right call for a framing error in something factually correct —
+and it is still the more valuable half of the review.
+
+```
+Dependency:            pandas  2.3.3 -> 3.0.5
+Verified by:           Arsh            Date: 17 August 2026
+Environment matches requirements.txt: OK (after upgrading; it was BROKEN before)
+
+[x] Full suite on the NEW version          375 passed, ruff clean
+[x] Real Batfish pipeline, not fakes       rtr-us5-insecure  {found 5, error 1}
+                                           rtr-us5-messy     {found 6, error 1}
+                                           routing-missing-route {found 1, error 2}
+                                           unparseable       {error 3}
+[x] The feature that touches it most       change_impact: CH-001 high, CH-002 high
+[x] End to end through the web layer       upload 200 -> {found 5, error 1};
+                                           /api/ask grounded=True
+[x] Results identical to the old version?  yes -- every count and severity
+```
+
+**How this bump was found to need re-checking at all** is the part worth
+keeping. The local environment had pandas 2.3.3 while `requirements.txt`
+declared `>=3.0.5`, so every local run was quietly testing the *old* major
+while CI tested the new one — both green, on the same commit, measuring
+different things. `tools/preflight.py` reported "all importable" because they
+all import perfectly well. That gap is closed by the version check added in
+#162; **before quoting a local number, run `python -m tools.preflight`.**
+
+---
+
 ## 6. This is an agreement, not an enforcement
 
 We cannot turn on branch protection — it needs GitHub Pro or a public repo, and
