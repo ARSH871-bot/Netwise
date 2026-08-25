@@ -237,6 +237,19 @@ away has the wrong impression.
    the construct it cannot handle, and it did that on the first real firewall
    it ever saw.
 
+   **UPDATE, 23 August.** "His export still refuses" above is no longer
+   accurate as a whole-file statement, and is left as the historical record
+   rather than edited. The two interface-modelling cases stopped refusing
+   everything: rules naming an unmodellable interface are now skipped and
+   named individually, and every other interface in the same file converts.
+   Nothing here is guessed at any point -- the unmodellable rules are still
+   refused, one by one, just no longer at the cost of interfaces that were
+   never the problem. Verified live on a synthetic client-shaped file:
+   two good interfaces converted and parsed cleanly against real Batfish
+   with zero problems, alongside a `skipped` list naming the DHCP and VPN
+   interfaces excluded. The NAT decision and #80's field-omission question
+   are unaffected and remain open.
+
 4. **The device-scoping errors are correct, but they are still gaps — and the
    gap is larger than this document originally implied.** Several runs report
    *"N assertions could not be checked against this config"*. That is honest —
