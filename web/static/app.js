@@ -714,8 +714,144 @@ function addSkippedNotes(notes) {
   });
 }
 
+/* ------------------------------------------------------------------------ *
+ * Propose a change (US-13/US-14) -- SHELL ONLY
+ *
+ * WHAT THIS IS, AND WHAT IT IS NOT
+ *     The input, the in-flight lock and the refusal path, built against the
+ *     same discipline as setUpChat(). It does NOT render the response --
+ *     `proposed_change`, `verified` and `warning` are shown to nobody yet,
+ *     deliberately.
+ *
+ *     #183 is still open, and its `warning` logic changed during review
+ *     this week: a proven high-severity opening was being suppressed by an
+ *     unrelated "could not check" in the same diff. Building the rendering
+ *     against a shape that moved that recently would mean rewriting it, and
+ *     the part most likely to mislead a user is exactly the part that moved.
+ *
+ * WHY IT STILL CALLS THE REAL ENDPOINT
+ *     `/api/propose` does not exist on `main` yet (#184, approved, waiting
+ *     on #183). Rather than hard-code a fake, this asks for the real thing
+ *     and falls back ONLY on a 404 -- the one status that means "this
+ *     endpoint is not here yet" rather than "your request was wrong". So
+ *     the day #184 lands, this shell talks to it with no edit at all, and
+ *     the stub becomes unreachable rather than needing to be remembered.
+ * ------------------------------------------------------------------------ */
+
+/**
+ * TEMPORARY -- DELETE WHEN #184 LANDS.
+ *
+ * A stand-in for a response, so the shell's own behaviour can be seen and
+ * tested before the endpoint exists. It deliberately carries NO plausible
+ * proposal: no config line, no severity, no verdict. A stub that looked like
+ * a real answer is exactly the kind of thing that survives into a demo, and
+ * this project has already fixed one instance of text claiming to be
+ * something it was not (#109).
+ *
+ * The caller marks whatever this returns as stubbed, in amber, under a
+ * "NOT A REAL RESULT" byline.
+ */
+function stubbedProposeResponse(request) {
+  return {
+    stubbed: true,
+    answer:
+      `The interface received "${request}" and would have sent it to ` +
+      `/api/propose. That endpoint is not built yet (#183, #184), so ` +
+      `nothing was analysed and no change was proposed. This message ` +
+      `exists to test the input and the in-flight lock, nothing else.`,
+  };
+}
+
+function addProposeMessage(text, who) {
+  const log = document.getElementById("propose-log");
+  const node = el("div", `message ${who}`, text);
+  log.appendChild(node);
+  log.scrollTop = log.scrollHeight;
+  return node;
+}
+
+function setUpProposeChange() {
+  const form = document.getElementById("propose-form");
+  if (!form) return;
+
+  const input = document.getElementById("propose-input");
+  const button = form.querySelector("button");
+
+  addProposeMessage(
+    "Describe one change, e.g. \"block 10.10.10.5 to 10.20.0.5 on " +
+      "tcp/443 on rtr-us5\". Addresses must be written out -- a name like " +
+      "\"YouTube\" is refused rather than guessed at.",
+    "system"
+  );
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const request = input.value.trim();
+    if (!request) return;
+
+    addProposeMessage(request, "user");
+    input.value = "";
+
+    // Locked while in flight, for a stronger version of setUpChat()'s
+    // reason. /api/propose connects to Batfish, loads the snapshot, writes a
+    // scratch copy and runs change_impact TWICE -- slower than /api/ask, so
+    // a second submission mid-flight is likelier, not less.
+    input.disabled = true;
+    button.disabled = true;
+    const pending = addProposeMessage(
+      "Simulating the change against a copy of your config…",
+      "system pending"
+    );
+
+    try {
+      const response = await fetch("/api/propose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request }),
+      });
+
+      pending.remove();
+
+      // 404 means the endpoint is not built yet -- the ONLY status that
+      // earns the stub. Any other failure is a real failure and is shown as
+      // one, so a genuinely broken endpoint can never hide behind the
+      // placeholder.
+      if (response.status === 404) {
+        addProposeMessage(stubbedProposeResponse(request).answer, "system stubbed");
+        return;
+      }
+      if (!response.ok) throw new Error(`server returned ${response.status}`);
+
+      // The response rendering lands with #183. Until then this says so
+      // rather than showing fields it has not been designed to show --
+      // half-rendering a warning is worse than not rendering it.
+      await response.json();
+      addProposeMessage(
+        "The endpoint answered. Displaying the proposed change and its " +
+          "warning is not built yet — see #183.",
+        "system pending"
+      );
+    } catch (error) {
+      // Nothing was simulated, so nothing is known. Same reasoning as the
+      // chat pane's catch: "could not be asked" and "was refused" are the
+      // same thing to the person reading.
+      pending.remove();
+      addProposeMessage(
+        `Could not propose that change: ${error.message}. Nothing was ` +
+          `simulated, so nothing is known either way.`,
+        "system refusal"
+      );
+    } finally {
+      input.disabled = false;
+      button.disabled = false;
+      input.focus();
+    }
+  });
+}
+
 /* ------------------------------------------------------------------------ */
 loadFindings();
 setUpUpload();
 setUpPolicyUpload();
 setUpChat();
+setUpProposeChange();

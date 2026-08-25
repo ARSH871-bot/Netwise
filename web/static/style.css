@@ -694,3 +694,53 @@ body {
 .chat-form button:hover {
   background: var(--ink-soft);
 }
+
+
+/* --- Propose a change (US-13/US-14) ------------------------------------- */
+/*
+   SAME FAMILY AS THE CHAT PANEL, DELIBERATELY.
+       Both take one plain-English sentence, both refuse rather than guess,
+       and both live in the right pane. Reusing `.chat-log` and `.chat-form`
+       rather than cloning them means the two cannot drift apart visually --
+       and if the chat panel's spacing is ever fixed, this is fixed with it.
+
+   THE ONE DIFFERENCE, AND WHY IT IS SMALL.
+       A rule and a heading, not a different colour or a different shape.
+       Asking a question is read-only; proposing a change produces a config
+       line somebody might paste into a real device. That is worth marking as
+       a distinct thing -- but not worth a visual language of its own, which
+       would suggest the two are less related than they are.
+*/
+
+.pane-divider {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 1.25rem 0 1rem;
+}
+
+/* Shorter than the chat log: this shell shows one exchange at a time, and a
+   tall empty box reads as something that failed to load. */
+.propose-log {
+  min-height: 6rem;
+  max-height: 18rem;
+}
+
+/* TEMPORARY -- REMOVE WITH THE STUB (see app.js).
+   A stubbed reply must never be mistakable for a real one. Amber is this
+   project's colour for "this is not a failure, and you still need to know",
+   the same tokens a could-not-check finding wears. */
+.message.system.stubbed {
+  background: var(--blind-fill);
+  color: var(--blind-ink);
+  border: 1px dashed var(--blind);
+}
+
+.message.system.stubbed::before {
+  content: "Not a real result";
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 0.25rem;
+}
