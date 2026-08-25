@@ -39,6 +39,7 @@ from pydantic import BaseModel
 from ai.explain import explain_with_source
 from ai.query import answer_question
 from analysis import findings, pipeline as analysis_pipeline
+from analysis.pfsense_convert import PfSenseConversionError, convert as pfsense_convert
 from analysis.policy import PolicyError, load_policy_file
 from web import mock_findings
 
@@ -54,26 +55,17 @@ from web import mock_findings
 # common when someone has copied a config out of a terminal.
 ALLOWED_EXTENSIONS = {".cfg", ".conf", ".txt"}
 
-# Extensions we RECOGNISE but cannot analyse yet. These get their own message.
+# Extensions we recognise as a PF Sense export and CONVERT before staging.
 #
-# Why this exists: the client's real firewall is PF Sense, which exports XML,
-# and Batfish does not read PF Sense XML natively (see CLAUDE.md section 7).
-# Telling them "that is not a config file we can read" would be wrong and would
-# look like a bug -- it plainly IS a config file. The honest answer is that we
-# recognise it and cannot analyse it YET, which is a known limitation rather
-# than a rejection of their file.
-UNSUPPORTED_EXTENSIONS = {
-    ".xml": (
-        "This looks like a PF Sense export. Netwise cannot analyse PF Sense "
-        "XML yet -- our analysis engine does not read that format natively, "
-        "and converting it is still open work."
-    ),
-    ".pfsense": (
-        "This looks like a PF Sense export. Netwise cannot analyse PF Sense "
-        "XML yet -- our analysis engine does not read that format natively, "
-        "and converting it is still open work."
-    ),
-}
+# Batfish does not read PF Sense XML natively (see CLAUDE.md section 7), so
+# analysis.pfsense_convert.convert() translates it into Cisco IOS text first,
+# which re-enters exactly the same staging path as an uploaded .cfg. This
+# used to be a flat rejection ("converting it is still open work") -- that
+# stopped being true once the converter existed; it was just never wired to
+# the upload path. See CLAUDE.md section 7 for what the converter can and
+# cannot model, and REFUSALS in pfsense_convert.py for exactly why it refuses
+# when it does.
+PFSENSE_EXTENSIONS = {".xml", ".pfsense"}
 
 # 2 MB. A router config is tens of kilobytes; a firewall config with large
 # object groups might reach a few hundred. Two megabytes is generous for a real
@@ -519,22 +511,26 @@ def get_findings() -> List[Dict[str, Any]]:
 
 @app.post("/api/upload")
 async def upload_config(file: UploadFile) -> Dict[str, Any]:
-    """Accept a config file, validating it before we do anything with it.
+    """Accept a config file, validating it before we do anything with it,
+    stage it, and clear whatever was staged (or analysed) before it.
 
     Rejections come back as HTTP 400 with a message written for a person, not
     a stack trace -- "that file is 5.2 MB; the limit is 2 MB" rather than
     "413". The frontend shows the message verbatim.
 
-    NOTE: this validates and reports. It does not yet persist the file or run
-    the analysis -- that is the wire-up story. Two things must happen there,
-    and both are easy to get wrong, so they are written down now:
+    A PF Sense export (.xml, .pfsense) is CONVERTED before staging, via
+    analysis.pfsense_convert.convert() -- see PFSENSE_EXTENSIONS above. Two
+    things this deliberately gets right, both easy to get wrong:
 
-      1. Write the file under a directory WE choose, using a filename WE
-         generate. Never join a client-supplied name onto a path: `filename`
-         below is used for display only, and is reduced to its basename first
-         precisely so it can never walk out of a directory.
-      2. Batfish expects device files one level down, in <snapshot>/configs/.
-         See analysis.pipeline.load_snapshot, which fails loudly about this.
+      1. Write the staged file under a directory WE choose, using a filename
+         WE generate. Never join a client-supplied name onto a path:
+         `display_name` is used for display only, reduced to its basename
+         first, precisely so it can never walk out of a directory. Batfish
+         expects device files one level down, in <snapshot>/configs/ -- see
+         analysis.pipeline.load_snapshot, which fails loudly about this.
+      2. A refused PF Sense conversion must not destroy the previous config.
+         Conversion happens BEFORE the old snapshot is cleared, the same
+         validate-then-stage discipline the policy upload already follows.
     """
     # Path(...).name strips any directory component a client may have sent --
     # "../../etc/passwd" becomes "passwd". We only ever display this string,
@@ -546,24 +542,15 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
 
     extension = Path(display_name).suffix.lower()
     allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
+    is_pfsense = extension in PFSENSE_EXTENSIONS
 
-    # Check the recognised-but-unsupported list FIRST, so a PF Sense export
-    # gets the explanation rather than the generic rejection.
-    if extension in UNSUPPORTED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"'{display_name}': {UNSUPPORTED_EXTENSIONS[extension]} "
-                f"Cisco IOS configs ({allowed}) work today."
-            ),
-        )
-
-    if extension not in ALLOWED_EXTENSIONS:
+    if not is_pfsense and extension not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
             detail=(
                 f"'{display_name}' is not a config file we can read. "
-                f"Netwise accepts {allowed} files."
+                f"Netwise accepts {allowed} files, or a PF Sense config.xml "
+                "export."
             ),
         )
 
@@ -592,21 +579,59 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
             status_code=400, detail=f"'{display_name}' is empty."
         )
 
+    # --- Convert, if this is a PF Sense export ------------------------------
+    #
+    # Deliberately BEFORE clearing the previous config, not after. convert()
+    # can refuse (PfSenseConversionError) -- an ambiguous rule order, a
+    # construct it will not guess about, see REFUSALS in pfsense_convert.py.
+    # A refused upload must leave whatever was staged before it untouched,
+    # the same reasoning the policy upload already follows: validate first,
+    # destroy nothing until the replacement is known-good.
+    #
+    # skipped names every interface pfsense_convert could not model (#78) --
+    # e.g. a DHCP WAN or an undeclared VPN role -- so the response can show
+    # it on screen rather than silently converting less than the user thinks.
+    skipped: List[str] = []
+    device_text: Optional[str] = None
+    if is_pfsense:
+        with tempfile.NamedTemporaryFile(
+            suffix=".xml", delete=False
+        ) as tmp_file:
+            tmp_file.write(bytes(contents))
+            tmp_path = Path(tmp_file.name)
+        try:
+            conversion = pfsense_convert(tmp_path)
+        except PfSenseConversionError as error:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{display_name}' could not be converted: {error}",
+            ) from error
+        finally:
+            tmp_path.unlink(missing_ok=True)
+        device_text = conversion.text
+        skipped = conversion.skipped
+
     # --- Stage the file for analysis ---------------------------------------
     #
     # The previous upload is removed first, so a snapshot only ever contains
     # the config currently being analysed. Leaving an old device file behind
-    # would silently mix two networks into one model.
+    # would silently mix two networks into one model. Reached only once the
+    # upload is known-good -- a PF Sense refusal above never gets here.
     #
-    # The filename is OURS ("device" plus the validated extension), never the
-    # client's. display_name was already reduced to a basename above; this
-    # means the client's string never reaches the filesystem at all.
+    # The filename is OURS ("device" plus the validated extension, or
+    # "device.cfg" for a converted PF Sense export), never the client's.
+    # display_name was already reduced to a basename above; this means the
+    # client's string never reaches the filesystem at all.
     if CONFIGS_DIR.exists():
         shutil.rmtree(CONFIGS_DIR)
     CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
 
-    staged_path = CONFIGS_DIR / f"device{extension}"
-    staged_path.write_bytes(bytes(contents))
+    if is_pfsense:
+        staged_path = CONFIGS_DIR / "device.cfg"
+        staged_path.write_text(device_text)
+    else:
+        staged_path = CONFIGS_DIR / f"device{extension}"
+        staged_path.write_bytes(bytes(contents))
 
     # A NEW NETWORK MUST NOT INHERIT THE OLD NETWORK'S POLICY (#87, #82).
     #     The policy names devices -- `node: rtr-us5` -- so a policy written
@@ -633,27 +658,42 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     # against rather than the one we expect.
     reset_analysis_cache()
 
+    # Uploading stages the file and stops there -- the analysis starts when
+    # the user clicks Scan Now. So this says what has happened and what has
+    # NOT: accepted and staged, nothing checked yet. It previously said
+    # "Loading results now...", which was true when the upload triggered
+    # the analysis itself and would now describe work nobody has started.
+    #
+    # Naming the button matters. "Staged for analysis" alone reads like
+    # something is already underway, which is the impression this whole
+    # flow change exists to remove.
+    if is_pfsense:
+        message = (
+            f"'{display_name}' is a PF Sense export -- converted to Cisco "
+            f"IOS ({size:,} bytes read) and staged. Nothing has been "
+            "analysed yet — click Scan Now to check it."
+        )
+    else:
+        message = (
+            f"'{display_name}' accepted ({size:,} bytes) and staged. "
+            "Nothing has been analysed yet — click Scan Now to check it."
+        )
+
     return {
         "filename": display_name,
         "size_bytes": size,
         "accepted": True,
-        # Uploading stages the file and stops there -- the analysis starts when
-        # the user clicks Scan Now. So this says what has happened and what has
-        # NOT: accepted and staged, nothing checked yet. It previously said
-        # "Loading results now...", which was true when the upload triggered
-        # the analysis itself and would now describe work nobody has started.
-        #
-        # Naming the button matters. "Staged for analysis" alone reads like
-        # something is already underway, which is the impression this whole
-        # flow change exists to remove.
-        "message": (
-            f"'{display_name}' accepted ({size:,} bytes) and staged. "
-            "Nothing has been analysed yet — click Scan Now to check it."
-        ),
+        "message": message,
         # Reported rather than done silently: a user who uploaded a policy and
         # then a config needs to know the policy went with it, not discover it
         # by wondering why their rules stopped appearing.
         "policy_cleared": policy_was_staged,
+        # Every interface pfsense_convert could not model, named with why
+        # (#78) -- [] for a normal upload, or a PF Sense export nothing was
+        # skipped on. Always present, never omitted when empty, matching the
+        # project's own "an absent row is a weaker statement than an
+        # explicit zero" rule for the findings summary tiles.
+        "skipped": skipped,
     }
 
 

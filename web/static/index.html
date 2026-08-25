@@ -31,12 +31,16 @@
         <div class="card upload">
           <h2>Analyse a config</h2>
           <p class="hint">
-            Cisco IOS config files (.cfg, .conf, .txt), up to 2&nbsp;MB.
-            Nothing leaves this machine.
+            Cisco IOS config files (.cfg, .conf, .txt), or a PF Sense
+            config.xml export, up to 2&nbsp;MB. Nothing leaves this machine.
           </p>
 
           <label class="file-picker">
-            <input type="file" id="file-input" accept=".cfg,.conf,.txt" />
+            <input
+              type="file"
+              id="file-input"
+              accept=".cfg,.conf,.txt,.xml,.pfsense"
+            />
             <span>Choose a config file</span>
           </label>
 
