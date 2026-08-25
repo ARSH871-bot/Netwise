@@ -542,3 +542,87 @@ def test_analyse_without_a_policy_leaves_none_active(monkeypatch):
         "no policy was supplied, so the check must see None and use our "
         "built-in rules -- labelled as ours"
     )
+
+
+# ---------------------------------------------------------------------------
+# Concurrency -- @SamikaPerera's finding on #182
+# ---------------------------------------------------------------------------
+
+
+def _one_entry_policy(tag: str):
+    """A policy identifiable by the summary its single entry carries."""
+    return policy.load_policy({
+        "device": tag,
+        "policy_compliance": [{
+            "description": "d", "kind": "must_deny", "filter": "acl_in",
+            "node": tag, "queries": [{"dstIps": "10.0.0.1"}],
+            "violation_severity": "high", "violation_summary": tag,
+        }],
+    })
+
+
+def _tag_of(pol):
+    if pol is None:
+        return None
+    entries = pol.entries_for("policy_compliance")
+    return entries[0]["violation_summary"] if entries else "<empty>"
+
+
+def test_two_concurrent_analyses_do_not_read_each_others_policy(monkeypatch):
+    """Each request's checks must read the policy THAT request installed.
+
+    WHY THIS IS A REAL CASE AND NOT A THEORETICAL ONE
+        `/api/findings` is a SYNC FastAPI endpoint, so it runs in the
+        threadpool and two overlapping requests genuinely execute in
+        parallel. One browser with two tabs, or a double-clicked Scan Now,
+        is enough. Each calls `analyse()`, which installs a policy and
+        clears it in a `finally`.
+
+        @SamikaPerera raised this on #182 and framed it as worth a sentence
+        in a docstring. Measured against the real code, it was worse:
+
+            router-A installed its own policy, its check saw 'router-B'
+            router-B installed its own policy, its check saw None
+
+            2 of 2 concurrent analyses read the WRONG policy
+
+        Both wrong, in the two worst available ways -- one check asserting a
+        DIFFERENT user's rules, the other silently falling back to our
+        built-in examples, which is #87's exact confusion arriving through
+        the mechanism built to fix it.
+
+        The fix is `threading.local()` in `analysis/policy.py`. Reverting it
+        to a plain module-level global makes this test fail.
+    """
+    import threading
+    import time
+
+    seen: Dict[str, Any] = {}
+
+    def slow_analyse(*_args, **_kwargs):
+        # Stand in for a check reading the policy partway through a run,
+        # which is what makes the overlap observable at all.
+        time.sleep(0.30)
+        seen[threading.current_thread().name] = _tag_of(policy.active_policy())
+        return []
+
+    monkeypatch.setattr(pipeline, "_analyse", slow_analyse)
+
+    def run(pol):
+        pipeline.analyse("anywhere", policy=pol)
+
+    threads = [
+        threading.Thread(target=run, args=(_one_entry_policy(tag),), name=tag)
+        for tag in ("router-A", "router-B")
+    ]
+    threads[0].start()
+    time.sleep(0.05)          # guarantee the two runs actually overlap
+    threads[1].start()
+    for thread in threads:
+        thread.join()
+
+    assert seen == {"router-A": "router-A", "router-B": "router-B"}, (
+        f"a concurrent analysis read another request's policy: {seen}. A "
+        f"check asserting the wrong user's rules, or silently falling back "
+        f"to ours, is exactly what #87 exists to prevent"
+    )

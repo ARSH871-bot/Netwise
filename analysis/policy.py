@@ -61,6 +61,7 @@ WHAT THIS MODULE MUST NOT BECOME
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
@@ -474,38 +475,75 @@ def load_policy_file(path: Any) -> Policy:
 #     answer, and the check is obliged to say which policy it used rather than
 #     quietly defaulting. See policy_compliance.run().
 
-#: The policy in force for this process, or None when the user supplied none.
+#: The policy in force for THIS THREAD, or None when the user supplied none.
+#:
 #: None is not "empty" -- an empty policy is a real, valid, deliberate state
 #: (D4) and is a Policy object with empty sections. Conflating the two would
 #: be F-4 in the policy layer: "the user asserted nothing" and "the user
 #: supplied nothing" are different claims.
-_active_policy: Optional[Policy] = None
+#:
+#: PER-THREAD, AND THAT IS A BUG FIX RATHER THAN A STYLE CHOICE (#182).
+#:     This was a plain module-level global. @SamikaPerera raised the risk on
+#:     #182: `/api/findings` is a SYNC FastAPI endpoint, so it runs in the
+#:     threadpool, so two overlapping requests genuinely execute in parallel
+#:     -- one browser with two tabs, or a double-clicked Scan Now, is enough.
+#:     Each calls `analyse()`, which installs a policy and clears it in a
+#:     `finally`.
+#:
+#:     He framed it as worth a sentence in a docstring. Measured, it is worse
+#:     than that. Two concurrent analyses, each with its own policy, a check
+#:     reading `active_policy()` partway through:
+#:
+#:         router-A installed its own policy, its check saw 'router-B'
+#:         router-B installed its own policy, its check saw None
+#:
+#:         2 of 2 concurrent analyses read the WRONG policy
+#:
+#:     Both wrong, in the two worst ways available: one check asserted a
+#:     DIFFERENT user's rules, and the other silently fell back to our
+#:     built-in examples -- which is #87's exact confusion, arriving through
+#:     the mechanism built to fix it.
+#:
+#:     `threading.local()` gives each request its own slot. The contract does
+#:     not change: checks still call `active_policy()` and know nothing about
+#:     where it lives, so option D is untouched and #191's exit condition
+#:     still applies.
+#:
+#:     WHAT THIS STILL ASSUMES: that a check runs on the same thread as the
+#:     `analyse()` call that installed the policy. True today -- no check
+#:     spawns a thread or a process. A check that ever does would read None
+#:     and fall back to our rules, which is the safe direction but silent, so
+#:     that is the assumption to break loudly if it ever changes.
+_state = threading.local()
 
 
 def set_active_policy(policy: Optional[Policy]) -> None:
-    """Install the policy the checks should read, or None to use none.
+    """Install the policy the checks on THIS THREAD should read.
 
     Raises TypeError rather than accepting a raw dict: a caller that has not
     been through `load_policy()` has not been validated, and letting one
     through would put unvalidated user input in front of a check -- the
     failure the whole module exists to prevent.
     """
-    global _active_policy
     if policy is not None and not isinstance(policy, Policy):
         raise TypeError(
             "set_active_policy() takes a Policy from load_policy() or "
             f"load_policy_file(), not {type(policy).__name__}. Passing a raw "
             "mapping would hand a check unvalidated user input."
         )
-    _active_policy = policy
+    _state.active = policy
 
 
 def active_policy() -> Optional[Policy]:
-    """The policy in force, or None if the user supplied none."""
-    return _active_policy
+    """The policy in force on this thread, or None if the user supplied none.
+
+    Returns None on a thread that never had one installed, which is the same
+    answer as "the user supplied no policy" -- correct, because a check on
+    such a thread genuinely has no user rules to read.
+    """
+    return getattr(_state, "active", None)
 
 
 def clear_active_policy() -> None:
-    """Forget the active policy. Called on upload, and between tests."""
-    global _active_policy
-    _active_policy = None
+    """Forget this thread's active policy. Called on upload, and in tests."""
+    _state.active = None
