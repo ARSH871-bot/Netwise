@@ -24,6 +24,7 @@ THE SEAM
 """
 
 import hashlib
+from datetime import datetime, timezone
 import json
 import shutil
 import tempfile
@@ -32,13 +33,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ai.explain import explain_with_source
 from ai.query import answer_question
-from analysis import findings, pipeline as analysis_pipeline
+from analysis import findings, pipeline as analysis_pipeline, report
 from analysis.policy import PolicyError, load_policy_file
 from web import mock_findings
 
@@ -476,6 +478,79 @@ def _attach_explanations(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         except Exception:
             pass
     return attached
+
+
+# --- The report download -----------------------------------------------------
+#
+# WHY IT REUSES get_findings() RATHER THAN CALLING analyse() ITSELF
+#     A report that could disagree with the screen is worse than no report.
+#     Going through the same function means the same cache, the same
+#     explanations, and the same ordering -- so "download" cannot silently
+#     re-run the analysis and produce a different answer from the one the
+#     user is looking at.
+#
+# WHY THE EXPLANATIONS ARE STRIPPED BACK OUT
+#     `explanation` and `explanation_source` are added downstream of F-1
+#     validation for the dashboard's benefit. The report renders F-1 and
+#     nothing else, so it does not inherit a field the contract does not
+#     have. If explanations belong in the report, that is a deliberate
+#     decision to take, not something to acquire by accident.
+#
+#     AND IT IS CURRENTLY UNOBSERVABLE, WHICH IS SAID HERE RATHER THAN
+#     LEFT TO LOOK LIKE A CONTROL. Mutation-tested: removing this strip
+#     changes no output at all.
+#
+#         let the dashboard-only keys into the report   621 passed
+#
+#     Both renderers read NAMED fields -- `_finding_html()` reads six of
+#     them, `render_csv()` writes a fixed column list -- so an extra key
+#     cannot reach either format however it arrives. The strip is cheap
+#     insurance against a future renderer that iterates keys instead, and
+#     `tests/test_report_export.py` asserts the observable property (the
+#     explanation TEXT never appears) so such a renderer would be caught.
+#     It is not a guard that is currently holding anything up.
+REPORT_FORMATS = {
+    "html": ("text/html; charset=utf-8", "html"),
+    "csv": ("text/csv; charset=utf-8", "csv"),
+}
+
+
+@app.get("/api/report")
+def download_report(format: str = "html") -> Response:
+    """The findings, as a file that can leave the screen.
+
+    Serves whatever `/api/findings` would serve right now -- including the
+    mock findings before any upload, because a report of demo data is less
+    confusing than an error, and the report says what it is describing.
+    """
+    if format not in REPORT_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Unknown report format {format!r}. "
+                    f"Choose one of: {', '.join(sorted(REPORT_FORMATS))}."),
+        )
+
+    results = [
+        {k: v for k, v in finding.items() if k not in _DOWNSTREAM_KEYS}
+        for finding in get_findings()
+    ]
+    subject = CONFIGS_DIR.name if _uploaded else "example findings (no upload yet)"
+    if _uploaded:
+        staged = sorted(p.name for p in CONFIGS_DIR.glob("*") if p.is_file())
+        subject = ", ".join(staged) or "an uploaded configuration"
+
+    media_type, extension = REPORT_FORMATS[format]
+    body = (report.render_html(results, source=subject) if format == "html"
+            else report.render_csv(results))
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={
+            "Content-Disposition":
+                f'attachment; filename="netwise-report-{stamp}.{extension}"'
+        },
+    )
 
 
 @app.get("/api/findings")
