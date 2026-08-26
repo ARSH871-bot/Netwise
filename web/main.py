@@ -27,6 +27,7 @@ import hashlib
 import json
 import shutil
 import tempfile
+import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -605,6 +606,21 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
             raise HTTPException(
                 status_code=400,
                 detail=f"'{display_name}' could not be converted: {error}",
+            ) from error
+        except ET.ParseError as error:
+            # convert() calls ET.parse() before it ever reaches its own
+            # refusal logic -- a truncated download or a non-XML file with
+            # an .xml extension fails here, not there. Uncaught, this was a
+            # raw 500 with a traceback instead of a message written for a
+            # person, found by testing against a deliberately malformed
+            # upload rather than only the well-formed refusal fixtures.
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{display_name}' is not readable XML ({error}). If "
+                    "this is a PF Sense export, check it downloaded "
+                    "completely."
+                ),
             ) from error
         finally:
             tmp_path.unlink(missing_ok=True)

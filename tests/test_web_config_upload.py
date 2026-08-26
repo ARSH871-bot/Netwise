@@ -202,6 +202,20 @@ def test_skipped_interfaces_are_surfaced_and_genuinely_excluded():
 # ---------------------------------------------------------------------------
 
 
+def test_malformed_xml_returns_400_not_a_500():
+    """Found by testing a deliberately broken upload rather than only the
+    well-formed refusal fixtures: convert() calls ET.parse() before it ever
+    reaches PfSenseConversionError, so a truncated download or a non-XML
+    file with an .xml extension raised ET.ParseError uncaught -- a raw 500
+    with a traceback instead of a message written for a person."""
+    response = _post_config(b"this is not xml at all", "config.xml", "application/xml")
+
+    assert response.status_code == 400, (
+        f"malformed XML must be a clean 400, not a {response.status_code}"
+    )
+    assert "not readable XML" in response.json()["detail"]
+
+
 def test_a_refused_conversion_returns_400_with_the_real_reason():
     response = _post_config(_NO_RULES_XML, "config.xml", "application/xml")
 
