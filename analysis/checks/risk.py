@@ -168,6 +168,168 @@ def severity_for(finding: Dict[str, Any]) -> str:
     return finding["severity"]
 
 
+# --- Business context -------------------------------------------------------
+#
+# DELIBERATELY NOT AN R-RULE, AND NOT IN _RULES.
+#
+# R-1..R-4 share one property that makes them auditable: every one of them
+# reads ONLY the finding it is handed. No shared state, no lookups. Anyone
+# reviewing a severity can recompute it from the finding alone.
+#
+# Business context breaks that property by construction -- it is a second
+# input, and the same finding scores differently depending on a file the user
+# supplied. Folding it into _RULES would silently cost the whole ruleset a
+# guarantee it currently has, and reviewers of R-2 would have no reason to
+# notice. So it runs as a separate, clearly-named pass AFTER the rules have
+# settled, and this comment is the reason why.
+
+#: The tiers that move a severity. Only one, and that is deliberate.
+#:
+#: With three severities and a one-level cap, there is no room for
+#: `important` to mean something between "critical" and "no change" --
+#: giving it +1 as well would make the two tiers identical, which is worse
+#: than inert, because the user would believe they had expressed a
+#: distinction that does not exist.
+#:
+#: So `important` and `standard` are recorded and do not move a severity
+#: today. They still identify the asset for per-device filtering (#219) and
+#: for the report export (#222). **Whether `important` should escalate is a
+#: question for the team, not a default to slip in here.**
+_ESCALATING_TIERS = frozenset({"critical"})
+
+
+#: _SEVERITY_RANK read backwards, so a rank can be turned into a name.
+_RANK_TO_SEVERITY = {rank: name for name, rank in _SEVERITY_RANK.items()}
+
+
+def _escalate(severity: str) -> str:
+    """One level worse, and never more than one.
+
+    THE CAP IS STRUCTURAL, NOT A GUARD, AND THAT IS THE SECOND ATTEMPT
+        `high` is rank 0, so escalating it looks up rank -1, which is not a
+        rank -- and the lookup falls back to the severity it was given.
+        There is nothing above `high` to invent, and wrapping round to
+        `low` would be the worst possible bug in a list read top-down.
+
+        Written first as an explicit `if rank == 0: return severity` on top
+        of a loop that ALSO fell through to the same answer. A mutation
+        deleting that guard survived, because the cap was enforced twice
+        and neither copy was load-bearing on its own -- so a later reader
+        could delete either one, watch the tests pass, and leave a cap that
+        now rests entirely on the other. One decision point instead.
+
+    An unrecognised severity is returned untouched: a vocabulary this
+    module does not own is not one it should start editing.
+    """
+    rank = _SEVERITY_RANK.get(severity)
+    if rank is None:
+        return severity
+    return _RANK_TO_SEVERITY.get(rank - 1, severity)
+
+
+def _tier_for(device: Any, context: Any) -> Optional[str]:
+    """The tier the user gave this device, or None if they said nothing.
+
+    ONLY `device` ENTRIES MATCH, AND `subnet` ENTRIES ARE NOT SILENTLY IGNORED
+        A finding's `device` is a device NAME -- "rtr-us5" -- and a business
+        context entry may instead name a `subnet`. Deciding whether
+        10.10.10.0/24 IS rtr-us5 needs interface enumeration this project
+        does not have, and it is the same limit `ai/query.py` refuses on and
+        the same limit that keeps CLAUDE.md section 4's "can the guest
+        network reach the finance server" out of scope.
+
+        So a subnet entry matches nothing today. That is a real gap, and the
+        dangerous version of it is the silent one: a user tags their finance
+        VLAN by subnet, sees no change, and concludes their context was
+        applied. `unusable_entries()` below exists so a caller can say so out
+        loud. Nothing here guesses.
+    """
+    if not isinstance(device, str) or not device.strip():
+        return None
+
+    name = device.strip()
+    for entry in getattr(context, "entries", []):
+        if entry.get("device") == name:
+            return entry.get("tier")
+    return None
+
+
+def unusable_entries(context: Any) -> List[str]:
+    """Context entries that cannot affect any finding yet, described plainly.
+
+    Not findings -- business context never invents one, and an entry the
+    user wrote is not a problem with their network. These are notes for the
+    caller to surface, so "nothing changed" can be told apart from "nothing
+    could be applied".
+    """
+    notes = []
+    for index, entry in enumerate(getattr(context, "entries", []), start=1):
+        if "subnet" in entry:
+            label = entry.get("description") or entry["subnet"]
+            notes.append(
+                f"entry {index} ({label}) names a subnet. Netwise matches "
+                f"business context by device name only, so this entry did not "
+                f"affect any finding"
+            )
+    return notes
+
+
+def apply_business_context(
+    results: List[Dict[str, Any]], context: Any
+) -> List[Dict[str, Any]]:
+    """Escalate findings on assets the user told us they care about.
+
+    THE THREE LIMITS, AND WHY EACH ONE IS A LIMIT
+        1. **At most one level.** `medium` -> `high`, `low` -> `medium`, and
+           `low` never jumps to `high`. Criticality says the asset matters,
+           not that the problem is worse than the evidence shows -- the
+           evidence is still what R-1..R-4 read. A tier that could move a
+           finding two levels would let a file the user wrote overrule
+           measured Batfish output, which is the wrong way round.
+
+        2. **Escalation only, never a downgrade.** No tier lowers anything.
+           `standard` does not mean safe, it means the user did not single
+           the asset out, and quietly filing those findings lower would use
+           a shrug as evidence.
+
+        3. **No match means no change, exactly.** A device with no entry
+           keeps precisely the severity the rules gave it. This is the R-2
+           lesson restated: absence of information is not information. A
+           context listing three critical servers says nothing whatsoever
+           about the fourth, and treating "unlisted" as "unimportant" would
+           invent a judgement the user never made.
+
+    Never adds or removes a finding, and never touches one that is not
+    status="found" -- an unrunnable check is a blind spot whatever tier the
+    device carries, and there is no severity worth editing on a blind spot.
+    """
+    # Copies, not the caller's own dicts. `list(results)` here would hand
+    # back the very objects that came in, so this function's aliasing
+    # behaviour would depend on whether a context happened to be supplied --
+    # and a caller that edited a returned finding would corrupt its input
+    # only on the no-context path. Found by a mutation surviving: the two
+    # paths were indistinguishable to the tests precisely because they were
+    # equal by value while differing by identity.
+    if context is None or getattr(context, "is_empty", True):
+        return [dict(finding) for finding in results]
+
+    adjusted = []
+    for finding in results:
+        updated = dict(finding)
+
+        # Same guard as severity_for(), stated again rather than inherited:
+        # this function is callable on its own, and a caller who reached it
+        # directly should not be the reason an error finding gets re-rated.
+        if updated.get("status") == "found":
+            tier = _tier_for(updated.get("device"), context)
+            if tier in _ESCALATING_TIERS:
+                updated["severity"] = _escalate(updated.get("severity", ""))
+
+        adjusted.append(updated)
+
+    return adjusted
+
+
 def _sort_key(finding: Dict[str, Any]) -> tuple:
     """Worst first: errors, then found by severity, then clean results."""
     return (
@@ -176,7 +338,9 @@ def _sort_key(finding: Dict[str, Any]) -> tuple:
     )
 
 
-def refine(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def refine(
+    results: List[Dict[str, Any]], context: Any = None
+) -> List[Dict[str, Any]]:
     """Re-rate and prioritise the combined findings. Returns ALL of them.
 
     Never adds or removes a finding. The list that comes out has exactly the
@@ -186,6 +350,28 @@ def refine(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     Sorting is stable, so findings of equal rank keep the order their checks
     produced them in.
+
+    `context` IS OPTIONAL, AND A PARAMETER RATHER THAN MODULE STATE
+        `POST_PROCESSORS` calls this with one argument, so the default keeps
+        that contract intact and today's behaviour byte-for-byte identical:
+        with no context, not one severity moves.
+
+        It is passed in rather than stashed on the module deliberately. A
+        module-level `set_business_context()` would be the same
+        shape as the `_analysis_cache` concurrency assumption raised on #182
+        and now tracked as #208 -- two requests, one global, and a severity
+        computed from whichever file happened to arrive last. Threading it
+        through the call is duller and cannot do that.
+
+    ORDER: RULES FIRST, CONTEXT SECOND
+        Escalation applies to the severity the ruleset SETTLED ON, not to
+        the check's default. Otherwise R-3 -- which lowers a routing finding
+        to medium -- would fight the escalation depending on which ran
+        first, and the answer would depend on line order rather than on
+        anything anyone decided.
+
+        And both happen before the sort, so the order on screen reflects the
+        severities the user is actually shown.
     """
     rated = []
     for finding in results:
@@ -195,5 +381,7 @@ def refine(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         updated = dict(finding)
         updated["severity"] = severity_for(finding)
         rated.append(updated)
+
+    rated = apply_business_context(rated, context)
 
     return sorted(rated, key=_sort_key)
