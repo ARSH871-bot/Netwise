@@ -298,12 +298,16 @@ def test_expected_actual_outcome_returns_none_for_a_dead_rule_finding():
 
 
 def test_expected_actual_outcome_returns_none_for_a_policy_compliance_finding():
-    """Current evidence.detail wording (#194), not the pre-#194 shape --
-    the two guards must still not cross-match after that PR's rewording."""
-    detail = (
-        "Flow start=10.20.0.5 is permitted but policy requires it to be "
-        "DENIED. Decided by: permit ip any any"
-    )
+    """Against the REAL producer, not a copy of its wording (found in review
+    of #193 by Shubham -- see #194, #145, #192).
+
+    A hardcoded literal here passes for the wrong reason once wording drifts:
+    it stops matching EITHER guard, so the "mutual exclusion" the test claims
+    to prove is no longer being exercised at all, and nothing goes red. Using
+    _real_detail() means a future rewording of policy_compliance._describe()
+    fails this test loudly instead of leaving it green while it tests
+    nothing -- the exact failure mode #145/#169 already found once."""
+    detail = _real_detail("prohibition")
     assert _compute_expected_actual_outcome(detail) is None
     assert _compute_policy_outcome(detail) is not None  # the OTHER guard still matches
 
