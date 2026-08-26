@@ -37,6 +37,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tools import stacked_prs  # noqa: E402
 from tools.stacked_prs import (  # noqa: E402
     EXIT_CLEAN,
     EXIT_STACKED,
@@ -151,32 +152,81 @@ def test_no_open_pull_requests_at_all_is_not_stacked():
 # ---------------------------------------------------------------------------
 
 
-def test_could_not_check_is_not_the_same_exit_code_as_clean():
-    """@patelankeet2's other finding, pinned so it cannot regress.
+#: What `main()` must return for each state `open_pull_requests()` can be in.
+#:
+#: THESE DRIVE main() ITSELF, AND THE FIRST VERSION DID NOT.
+#:     It read:
+#:
+#:         assert EXIT_CLEAN != EXIT_UNKNOWN
+#:         assert EXIT_STACKED != EXIT_UNKNOWN
+#:         assert EXIT_CLEAN != EXIT_STACKED
+#:
+#:     which compares three constants to each other and is true no matter
+#:     what `main()` does. @patelankeet2 found it the same way he found the
+#:     first bug -- by mutating the real code rather than reading the test:
+#:
+#:         if pull_requests is None:      ->   if pull_requests is None and False:
+#:
+#:     `None` is falsy, so that falls straight through to `if not
+#:     pull_requests:` and reports EXIT_CLEAN -- the exact collapse this tool
+#:     was written to prevent, reintroduced one function up, with the suite
+#:     still green:
+#:
+#:         before  555 passed, 6 skipped
+#:         after   555 passed, 6 skipped
+#:
+#:     Same shape as the `x in (None, x)` tautology from #179: a test that
+#:     describes the property in English and pins a fact that cannot fail.
+_STATES = [
+    (None, EXIT_UNKNOWN, "gh missing or failing -- nothing is known"),
+    ([], EXIT_CLEAN, "asked, and there are genuinely no open PRs"),
+    ([pr(1, base=TRUNK, head="a")], EXIT_CLEAN, "all target main"),
+    ([pr(1, base=TRUNK, head="a"), pr(2, base="a", head="b")],
+     EXIT_STACKED, "one is stacked on another open PR"),
+]
 
-    The first version returned `[]` both when `gh` was missing and when there
-    were genuinely no open PRs, printed one message covering both, and exited
-    0 either way. A CI runner without `gh` would have reported "clean"
-    identically to a repository with nothing stacked.
 
-    That is the found/error conflation F-4 exists to prevent, in the tool
-    built to turn a rule into a control -- so the three outcomes must stay
-    three distinct exit codes.
+@pytest.mark.parametrize("returned,expected,description", _STATES)
+def test_main_returns_the_right_exit_code_for_each_state(
+        monkeypatch, capsys, returned, expected, description):
+    """Drive `main()`, not the constants.
+
+    Asking "what states can the input actually be in" gives exactly four, and
+    each one has a different correct answer. The dangerous pair is the first
+    two: `None` and `[]` are both falsy, so any test that does not
+    distinguish them lets the collapse back in.
     """
-    assert EXIT_CLEAN != EXIT_UNKNOWN, (
-        "'I checked and nothing is stacked' and 'I could not check' must "
-        "never share an exit code -- a caller cannot tell them apart"
+    monkeypatch.setattr(stacked_prs, "open_pull_requests", lambda: returned)
+
+    assert stacked_prs.main() == expected, (
+        f"main() returned the wrong exit code for: {description}"
     )
-    assert EXIT_STACKED != EXIT_UNKNOWN
-    assert EXIT_CLEAN != EXIT_STACKED
-    assert EXIT_CLEAN == 0, "0 must mean safe, for the usual shell convention"
 
 
-@pytest.mark.parametrize("code", [EXIT_STACKED, EXIT_UNKNOWN])
-def test_every_non_clean_outcome_is_a_failing_exit_code(code):
-    """Anything that is not 'checked and clean' must fail a gate.
+def test_could_not_check_never_reports_itself_as_clean(monkeypatch, capsys):
+    """The one that matters, stated on its own so it cannot be lost in a list.
 
-    Including "could not check" -- which is the whole point. A merge script
-    that treats 2 as success has reintroduced the bug.
+    A caller cannot tell "I checked and nothing is stacked" from "I could not
+    check" if they share an exit code -- and a merge gate that treats them
+    alike is not a gate.
     """
-    assert code != 0
+    monkeypatch.setattr(stacked_prs, "open_pull_requests", lambda: None)
+
+    code = stacked_prs.main()
+    printed = capsys.readouterr().out
+
+    assert code != EXIT_CLEAN, (
+        "a run that could not ask GitHub anything reported the same exit "
+        "code as a run that checked and found nothing"
+    )
+    assert code == EXIT_UNKNOWN
+    assert "NOT" in printed and "nothing is stacked" in printed, (
+        "the output must say in words that this is not an all-clear, because "
+        "a human reading the terminal never sees the exit code"
+    )
+
+
+def test_zero_still_means_safe():
+    """The shell convention, kept deliberate rather than incidental."""
+    assert EXIT_CLEAN == 0
+    assert EXIT_STACKED != 0 and EXIT_UNKNOWN != 0
