@@ -27,6 +27,7 @@ import hashlib
 import json
 import shutil
 import tempfile
+import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -54,26 +55,28 @@ from web import mock_findings
 # common when someone has copied a config out of a terminal.
 ALLOWED_EXTENSIONS = {".cfg", ".conf", ".txt"}
 
-# Extensions we RECOGNISE but cannot analyse yet. These get their own message.
+# Extensions we accept by CONVERTING them first, rather than by reading them.
 #
-# Why this exists: the client's real firewall is PF Sense, which exports XML,
-# and Batfish does not read PF Sense XML natively (see CLAUDE.md section 7).
-# Telling them "that is not a config file we can read" would be wrong and would
-# look like a bug -- it plainly IS a config file. The honest answer is that we
-# recognise it and cannot analyse it YET, which is a known limitation rather
-# than a rejection of their file.
-UNSUPPORTED_EXTENSIONS = {
-    ".xml": (
-        "This looks like a PF Sense export. Netwise cannot analyse PF Sense "
-        "XML yet -- our analysis engine does not read that format natively, "
-        "and converting it is still open work."
-    ),
-    ".pfsense": (
-        "This looks like a PF Sense export. Netwise cannot analyse PF Sense "
-        "XML yet -- our analysis engine does not read that format natively, "
-        "and converting it is still open work."
-    ),
-}
+# THIS USED TO BE `UNSUPPORTED_EXTENSIONS`, AND THE MESSAGE WAS FALSE.
+#     It told the user "converting it is still open work". That stopped being
+#     true weeks ago: `analysis/pfsense_convert.py` is written, hardened
+#     against config injection and path traversal (#53), against unbound ACLs
+#     and unvalidated addressing (#54), and against ambiguous rule order (#58,
+#     #104) -- and it has been run against the client's own anonymised export.
+#
+#     But nothing in web/ or analysis/pipeline.py imported it. So the client's
+#     actual firewall -- the entire reason the converter exists -- could not be
+#     put into the product at all, and the upload said the work was unfinished
+#     while refusing the file the finished work was for.
+#
+# WHY THE CONVERTED TEXT IS STAGED AND THE XML IS NOT
+#     Batfish reads every file under `configs/`. A PF Sense XML landing there
+#     would be handed to a parser that cannot read it, producing either a
+#     parse error blamed on the user's network or a snapshot that analyses
+#     cleanly while containing a file that is not a config. So the upload
+#     stages ONLY `convert()`'s Cisco IOS output, and the XML never touches
+#     the snapshot directory.
+CONVERTED_EXTENSIONS = {".xml", ".pfsense"}
 
 # 2 MB. A router config is tens of kilobytes; a firewall config with large
 # object groups might reach a few hundred. Two megabytes is generous for a real
@@ -517,6 +520,84 @@ def get_findings() -> List[Dict[str, Any]]:
     return _attach_explanations(results)
 
 
+def _convert_upload(raw: bytes, display_name: str, extension: str):
+    """Convert a PF Sense export to Cisco IOS text. Returns (bytes, skipped, ext).
+
+    WHY A TEMP FILE
+        `convert()` takes a path, because it is also a command-line tool. The
+        temp file lives outside the snapshot directory and is removed
+        immediately, so the XML never sits anywhere Batfish walks.
+
+    WHY A REFUSAL IS A 400 AND NOT A 500
+        The converter refuses constructs it cannot model exactly -- ambiguous
+        rule order, an interface with no address, VPN policy it does not
+        parse. That is the feature, not a failure: it would rather refuse than
+        emit an ACL that parses cleanly and decides traffic differently from
+        the real firewall. So the user gets the converter's own reason, which
+        names the construct, rather than a stack trace or a generic error.
+    """
+    from analysis.pfsense_convert import PfSenseConversionError, convert
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="netwise-pfsense-"))
+    temp_path = temp_dir / f"upload{extension}"
+    try:
+        temp_path.write_bytes(raw)
+        try:
+            result = convert(temp_path)
+        except PfSenseConversionError as error:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{display_name}' could not be converted. {error} "
+                    "Netwise refuses rather than guessing here: a config that "
+                    "parses cleanly and decides traffic differently from your "
+                    "real firewall is worse than no answer."
+                ),
+            ) from error
+        except ET.ParseError as error:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{display_name}' is not readable XML ({error}). If this "
+                    "is a PF Sense export, check it downloaded completely."
+                ),
+            ) from error
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    # UNREACHABLE TODAY, AND DELIBERATELY KEPT. Probed rather than assumed:
+    # every empty-ish export is refused by convert() itself before it can
+    # return, so this branch never fires.
+    #
+    #     no interfaces, no filter        REFUSED by convert()
+    #     interface but no filter rules   REFUSED by convert()
+    #     no <interfaces> section at all  REFUSED by convert()
+    #     only a DHCP interface, no rules REFUSED by convert()
+    #
+    # It stays because the consequence of convert() ever losing that
+    # guarantee is the worst answer this product can give -- an empty
+    # snapshot analyses CLEAN, and a clean result from an empty network is
+    # indistinguishable from a genuine all-clear.
+    #
+    # Mutation-tested and it SURVIVES, which is the correct outcome for a
+    # branch nothing can reach. Said here so nobody later reads the survival
+    # as a coverage gap and "fixes" it by deleting the guard.
+    if not result.text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{display_name}' converted to an empty config -- there was "
+                "nothing in it Netwise can model. Analysing it would report "
+                "an empty network as clean, which would be worse than this "
+                "message."
+            ),
+        )
+
+    # From here on it IS a Cisco IOS config, so it stages and analyses exactly
+    # like one. That is the whole point of the converter: one analysis path.
+    return bytearray(result.text.encode("utf-8")), list(result.skipped), ".cfg"
+
+
 @app.post("/api/upload")
 async def upload_config(file: UploadFile) -> Dict[str, Any]:
     """Accept a config file, validating it before we do anything with it.
@@ -547,18 +628,7 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     extension = Path(display_name).suffix.lower()
     allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
 
-    # Check the recognised-but-unsupported list FIRST, so a PF Sense export
-    # gets the explanation rather than the generic rejection.
-    if extension in UNSUPPORTED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"'{display_name}': {UNSUPPORTED_EXTENSIONS[extension]} "
-                f"Cisco IOS configs ({allowed}) work today."
-            ),
-        )
-
-    if extension not in ALLOWED_EXTENSIONS:
+    if extension not in ALLOWED_EXTENSIONS | CONVERTED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -591,6 +661,18 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
         raise HTTPException(
             status_code=400, detail=f"'{display_name}' is empty."
         )
+
+    # --- Convert, if this is a format Batfish cannot read ------------------
+    #
+    # Done BEFORE anything is staged, so a file that cannot be converted never
+    # reaches the snapshot directory at all. `skipped` is carried back to the
+    # caller: it is the converter's explicit account of what is NOT in the
+    # output and why, and dropping it here would turn "we modelled 3 of your 7
+    # rules" into a silent "we analysed your firewall".
+    skipped: List[str] = []
+    if extension in CONVERTED_EXTENSIONS:
+        contents, skipped, extension = _convert_upload(
+            bytes(contents), display_name, extension)
 
     # --- Stage the file for analysis ---------------------------------------
     #
@@ -654,6 +736,19 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
         # then a config needs to know the policy went with it, not discover it
         # by wondering why their rules stopped appearing.
         "policy_cleared": policy_was_staged,
+        # WHAT WAS LEFT OUT OF THE CONVERSION, AND WHY (#78).
+        #     Empty for a config that needed no conversion. For a PF Sense
+        #     export it names every interface whose rules could not be
+        #     modelled -- a DHCP WAN with no static address to bind an ACL to,
+        #     a VPN interface the rules reference but `<interfaces>` never
+        #     declares.
+        #
+        #     This is the whole reason the converter returns it. Analysing 3
+        #     of somebody's 7 rules and calling it "your firewall" is the
+        #     found/error confusion arriving through the front door, so the
+        #     dashboard shows this list before the user clicks Scan Now.
+        "converted": extension != Path(display_name).suffix.lower(),
+        "skipped": skipped,
     }
 
 

@@ -285,19 +285,57 @@ async function loadFindings() {
 const ALLOWED_EXTENSIONS = [".cfg", ".conf", ".txt"];
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 
-// Recognised but not analysable yet -- mirrors UNSUPPORTED_EXTENSIONS in
-// web/main.py. The client's real firewall is PF Sense, and "that is not a
-// config file we can read" would be both wrong and embarrassing when they try
-// their own export. It plainly is a config file; we just cannot read it yet.
-const UNSUPPORTED_EXTENSIONS = {
-  ".xml": "PF Sense XML",
-  ".pfsense": "PF Sense XML",
-};
+// Accepted by CONVERTING first -- mirrors CONVERTED_EXTENSIONS in web/main.py.
+//
+// This was UNSUPPORTED_EXTENSIONS, and it rejected the client's own firewall
+// format on the way to a server that can now read it. The converter has
+// existed and been hardened for weeks; nothing was wired to it. Rejecting
+// these here would mean the browser refusing a file the backend accepts,
+// which is worse than the original gap because it looks deliberate.
+const CONVERTED_EXTENSIONS = [".xml", ".pfsense"];
 
 function showUploadMessage(text, ok) {
   const box = document.getElementById("upload-message");
   box.textContent = text;
   box.className = `upload-message ${ok ? "ok" : "bad"}`;
+}
+
+/**
+ * Name every rule the PF Sense conversion could not model (#78).
+ *
+ * WHY THIS IS AMBER AND NOT GREEN
+ *   The upload succeeded, so the instinct is to show it as success. But the
+ *   file the user gave us is not the file we are about to analyse -- part of
+ *   their firewall was left out. "We analysed your config" and "we analysed
+ *   the part of your config we can model" are different claims, and this is
+ *   the only place the difference can be shown before results appear.
+ *
+ * Built with textContent, never innerHTML: these strings contain interface
+ * names that came out of a user's file.
+ */
+function showConversionSkips(skipped) {
+  const box = document.getElementById("upload-message");
+
+  const heading = document.createElement("p");
+  heading.textContent =
+    `Converted from PF Sense — but ${skipped.length} rule set(s) were NOT ` +
+    "included, and will not be analysed:";
+
+  const list = document.createElement("ul");
+  list.className = "conversion-skips";
+  skipped.forEach((reason) => {
+    const item = document.createElement("li");
+    item.textContent = reason;
+    list.appendChild(item);
+  });
+
+  const footer = document.createElement("p");
+  footer.textContent =
+    "Netwise refuses rather than guessing here. A rule converted wrongly " +
+    "would look exactly like one converted correctly.";
+
+  box.replaceChildren(heading, list, footer);
+  box.className = "upload-message warn";
 }
 
 /**
@@ -397,24 +435,11 @@ function setUpUpload() {
     const name = file.name;
     const extension = name.slice(name.lastIndexOf(".")).toLowerCase();
 
-    // Recognised-but-unsupported is checked first, so a PF Sense export gets
-    // the explanation rather than the generic rejection.
-    if (extension in UNSUPPORTED_EXTENSIONS) {
-      showUploadMessage(
-        `'${name}' looks like a ${UNSUPPORTED_EXTENSIONS[extension]} export. ` +
-          `Netwise cannot analyse that format yet — our analysis engine does ` +
-          `not read it natively. Cisco IOS configs ` +
-          `(${ALLOWED_EXTENSIONS.join(", ")}) work today.`,
-        false
-      );
-      input.value = "";
-      return;
-    }
-
-    if (!ALLOWED_EXTENSIONS.includes(extension)) {
+    const accepted = ALLOWED_EXTENSIONS.concat(CONVERTED_EXTENSIONS);
+    if (!accepted.includes(extension)) {
       showUploadMessage(
         `'${name}' is not a config file we can read. Netwise accepts ` +
-          `${ALLOWED_EXTENSIONS.join(", ")} files.`,
+          `${accepted.join(", ")} files.`,
         false
       );
       input.value = "";
@@ -473,6 +498,21 @@ function setUpUpload() {
             "warn"
           );
           document.getElementById("policy-input").value = "";
+        }
+
+        // WHAT THE CONVERTER LEFT OUT, SHOWN BEFORE THE SCAN (#78).
+        //     A PF Sense export can contain interfaces we cannot model -- a
+        //     DHCP WAN with no static address to bind an ACL to, or a VPN
+        //     interface the rules name but `<interfaces>` never declares.
+        //     Those rules are skipped, individually and by name.
+        //
+        //     Analysing 3 of somebody's 7 rules and calling it "your
+        //     firewall" is the found/error confusion arriving through the
+        //     front door. So this is shown BEFORE Scan Now is clicked, not
+        //     buried under the results afterwards, and it is shown in the
+        //     same amber a "could not check" finding wears.
+        if (Array.isArray(result.skipped) && result.skipped.length) {
+          showConversionSkips(result.skipped);
         }
 
         scanButton.disabled = false;

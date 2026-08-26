@@ -694,3 +694,21 @@ body {
 .chat-form button:hover {
   background: var(--ink-soft);
 }
+
+/* --- What a PF Sense conversion left out (#78) ---------------------------
+   Shown inside .upload-message.warn, in the same amber a "could not check"
+   finding wears -- and for the same reason. The upload succeeded, but the
+   file we are about to analyse is not the whole file the user gave us, and
+   green would say otherwise. */
+.conversion-skips {
+  margin: 0.5rem 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.conversion-skips li {
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
