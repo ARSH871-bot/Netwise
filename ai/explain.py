@@ -96,6 +96,9 @@ PREREQUISITE
 
 from __future__ import annotations
 
+import os
+import socket
+import time
 import json
 import re
 from typing import Any, Dict, Optional
@@ -543,6 +546,106 @@ def _is_unacceptable(text: str, *, is_error: bool) -> bool:
     return _looks_like_speculation(text)
 
 
+#: Ollama's default port. The client honours OLLAMA_HOST, so the probe does
+#: too -- probing 127.0.0.1 while the client talks to another machine would
+#: skip generation on a working setup, which is the one way this can be worse
+#: than no probe at all.
+OLLAMA_DEFAULT_PORT = 11434
+
+#: How long a reachability answer is trusted, in seconds.
+#:
+#: SHORT ON PURPOSE, AND THE SHORTNESS IS THE SAFETY ARGUMENT.
+#:     Caching "Ollama is down" for the process lifetime would mean somebody
+#:     starting it mid-session never gets a model explanation until they
+#:     restart the app. Five seconds is long enough to collapse one page's
+#:     worth of findings into a single probe, and short enough that a model
+#:     started during the demo is picked up on the next page load.
+#:
+#:     NOTE WHAT IS **NOT** CACHED: the fallback TEXT. `web/main.py` refuses
+#:     to store that on purpose, so that a later-started model produces fresh
+#:     output rather than a stale string. This changes only how long we spend
+#:     discovering the model is absent.
+OLLAMA_PROBE_TTL_SECONDS = 5.0
+
+#: Answer plus the monotonic time it was taken. `None` means never probed.
+_reachability: Dict[str, Any] = {"up": None, "at": 0.0}
+
+
+def _ollama_endpoint() -> "tuple[str, int]":
+    """The (host, port) the ollama client will actually talk to.
+
+    Honours OLLAMA_HOST in the forms the client accepts: `host`,
+    `host:port`, and `http://host:port`.
+    """
+    raw = os.environ.get("OLLAMA_HOST", "").strip()
+    if not raw:
+        return ("127.0.0.1", OLLAMA_DEFAULT_PORT)
+
+    without_scheme = raw.split("://", 1)[-1].rstrip("/")
+    host, _, port = without_scheme.partition(":")
+    try:
+        return (host or "127.0.0.1", int(port) if port else OLLAMA_DEFAULT_PORT)
+    except ValueError:
+        return (host or "127.0.0.1", OLLAMA_DEFAULT_PORT)
+
+
+def reset_reachability_cache() -> None:
+    """Forget the last probe. Exported for tests, and for a caller that knows
+    the world just changed."""
+    _reachability["up"] = None
+    _reachability["at"] = 0.0
+
+
+def _ollama_is_reachable() -> bool:
+    """Is anything listening where the model should be? (#225)
+
+    WHY THIS EXISTS
+        Measured on a machine with no Ollama, five findings on one page:
+
+            call 1: 13.80s | 5 explain calls costing 10.15s | all fallback
+            call 2: 10.13s | 5 explain calls costing 10.12s | all fallback
+            call 3: 10.17s | 5 explain calls costing 10.16s | all fallback
+
+        The analysis cache was working perfectly -- `analyse()` ran once. Every
+        second of that was findings queueing up to discover, separately, that
+        a service is absent. Ten seconds of blank screen reads as broken.
+
+        `analysis/pipeline.connect()` already solves exactly this for Batfish,
+        for exactly this reason, and records the same kind of measurement.
+        This is that idea applied to the other dependency.
+
+    WHY A PORT PROBE AND NOT A REAL REQUEST
+        A probe is allowed to be cheap and approximate because it can only
+        ever SKIP work, never fabricate an answer. An open port is not proof
+        Ollama is healthy -- the model may not be built, which raises
+        `ResponseError` -- so `_try_generate()` still handles every failure it
+        handled before. This short-circuits the negative case only.
+
+    FAILING TOWARDS ATTEMPTING
+        Any unexpected error here returns True, so generation is attempted.
+        A broken probe must never be able to silently downgrade a working
+        installation to deterministic text -- that would trade a slow page
+        for a false byline, which is a far worse bargain.
+    """
+    now = time.monotonic()
+    if (_reachability["up"] is not None
+            and now - _reachability["at"] < OLLAMA_PROBE_TTL_SECONDS):
+        return bool(_reachability["up"])
+
+    host, port = _ollama_endpoint()
+    try:
+        with socket.create_connection((host, port), timeout=0.4):
+            up = True
+    except OSError:
+        up = False
+    except Exception:          # noqa: BLE001 -- see FAILING TOWARDS ATTEMPTING
+        up = True
+
+    _reachability["up"] = up
+    _reachability["at"] = now
+    return up
+
+
 def explain_with_source(finding: Dict[str, Any]) -> "tuple[str, str]":
     """Same computation as explain(), but also says which path produced the
     text: (text, source), source is "model" or "fallback".
@@ -563,7 +666,11 @@ def explain_with_source(finding: Dict[str, Any]) -> "tuple[str, str]":
     """
     is_error = finding.get("status") == "error"
 
-    if _evidence_detail(finding):
+    # `and _ollama_is_reachable()` is the whole of #225. The evidence check
+    # comes FIRST and is unchanged: a finding with no real evidence never
+    # reaches the model regardless, and that ordering is a grounding rule
+    # rather than a performance one.
+    if _evidence_detail(finding) and _ollama_is_reachable():
         for _ in range(2):
             explanation = _try_generate(finding)
             if explanation is None:
