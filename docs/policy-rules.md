@@ -421,6 +421,48 @@ calling `_describe()` rather than a copy of its output.
 
 ---
 
+### A snapshot with uncovered devices is not "all clear" (#228)
+
+The scoping work (#29, #45, #50) answered *"our rules name a device this
+snapshot lacks"* — reported once, as `status="error"`, never as a clean pass.
+Nothing answered the reverse: **devices present that no rule mentions.**
+
+Measured on a fifty-device snapshot containing `rtr-us5`:
+
+```
+PC-000  status="none"   "No issues found by policy compliance"
+        detail: All 5 policy rule(s) hold
+
+devices in the snapshot NOT asserted about:  49 of 50
+```
+
+A green tick, having examined one device in fifty. The two directions gave
+opposite verdicts from the same underlying fact — that a device is uncovered:
+
+| | before |
+|---|---|
+| policy names `rtr-us5`, snapshot has 50 others | `error` — correct |
+| policy names `rtr-us5`, snapshot has it **plus** 49 others | **`none`** |
+
+Adding one covered device flipped "could not check" into "all clear" while the
+other forty-nine stayed exactly as unchecked.
+
+`PC-049` now reports it, and because it makes `results` non-empty the clean
+sentinel cannot fire alongside it — the same trade as a rule with one failed
+arm reporting both (#22/#46): *"we checked and found nothing"* and *"we did not
+look here"* are different claims, and only one of them is being made about
+those devices.
+
+**It fires only when at least one rule actually ran.** With nothing applicable,
+`PC-050` already says the whole story, and printing both rebuilds the per-rule
+noise #45 and #50 removed one level up. That case is pinned by its own test.
+
+`PC-049` sits **below** `ERROR_NUMBER_OFFSET` deliberately: the rule-error band
+is `50 + rule number` and grows with the rule list, so anything above 50 would
+collide the day a sixth rule is added.
+
+---
+
 ### Sentinel IDs — agreed fix
 
 The split above fixes the numbered findings but not the sentinels.
