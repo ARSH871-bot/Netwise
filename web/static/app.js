@@ -715,52 +715,15 @@ function addSkippedNotes(notes) {
 }
 
 /* ------------------------------------------------------------------------ *
- * Propose a change (US-13/US-14) -- SHELL ONLY
+ * Propose a change (US-13/US-14)
  *
- * WHAT THIS IS, AND WHAT IT IS NOT
- *     The input, the in-flight lock and the refusal path, built against the
- *     same discipline as setUpChat(). It does NOT render the response --
- *     `proposed_change`, `verified` and `warning` are shown to nobody yet,
- *     deliberately.
- *
- *     #183 is still open, and its `warning` logic changed during review
- *     this week: a proven high-severity opening was being suppressed by an
- *     unrelated "could not check" in the same diff. Building the rendering
- *     against a shape that moved that recently would mean rewriting it, and
- *     the part most likely to mislead a user is exactly the part that moved.
- *
- * WHY IT STILL CALLS THE REAL ENDPOINT
- *     `/api/propose` does not exist on `main` yet (#184, approved, waiting
- *     on #183). Rather than hard-code a fake, this asks for the real thing
- *     and falls back ONLY on a 404 -- the one status that means "this
- *     endpoint is not here yet" rather than "your request was wrong". So
- *     the day #184 lands, this shell talks to it with no edit at all, and
- *     the stub becomes unreachable rather than needing to be remembered.
+ * Talks to the real POST /api/propose, which landed on `main` with #183 and
+ * #184 on 27 August. This pane built against it as a shell first, calling
+ * the endpoint for real and falling back only on a 404 -- the one status
+ * meaning "not here yet" rather than "your request was wrong". That fallback
+ * is now unreachable and has been deleted rather than left as dead code
+ * nobody dares remove.
  * ------------------------------------------------------------------------ */
-
-/**
- * TEMPORARY -- DELETE WHEN #184 LANDS.
- *
- * A stand-in for a response, so the shell's own behaviour can be seen and
- * tested before the endpoint exists. It deliberately carries NO plausible
- * proposal: no config line, no severity, no verdict. A stub that looked like
- * a real answer is exactly the kind of thing that survives into a demo, and
- * this project has already fixed one instance of text claiming to be
- * something it was not (#109).
- *
- * The caller marks whatever this returns as stubbed, in amber, under a
- * "NOT A REAL RESULT" byline.
- */
-function stubbedProposeResponse(request) {
-  return {
-    stubbed: true,
-    answer:
-      `The interface received "${request}" and would have sent it to ` +
-      `/api/propose. That endpoint is not built yet (#183, #184), so ` +
-      `nothing was analysed and no change was proposed. This message ` +
-      `exists to test the input and the in-flight lock, nothing else.`,
-  };
-}
 
 function addProposeMessage(text, who) {
   const log = document.getElementById("propose-log");
@@ -812,14 +775,6 @@ function setUpProposeChange() {
 
       pending.remove();
 
-      // 404 means the endpoint is not built yet -- the ONLY status that
-      // earns the stub. Any other failure is a real failure and is shown as
-      // one, so a genuinely broken endpoint can never hide behind the
-      // placeholder.
-      if (response.status === 404) {
-        addProposeMessage(stubbedProposeResponse(request).answer, "system stubbed");
-        return;
-      }
       if (!response.ok) throw new Error(`server returned ${response.status}`);
 
       // The response rendering lands with #183. Until then this says so

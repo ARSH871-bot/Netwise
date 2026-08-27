@@ -724,23 +724,3 @@ body {
   min-height: 6rem;
   max-height: 18rem;
 }
-
-/* TEMPORARY -- REMOVE WITH THE STUB (see app.js).
-   A stubbed reply must never be mistakable for a real one. Amber is this
-   project's colour for "this is not a failure, and you still need to know",
-   the same tokens a could-not-check finding wears. */
-.message.system.stubbed {
-  background: var(--blind-fill);
-  color: var(--blind-ink);
-  border: 1px dashed var(--blind);
-}
-
-.message.system.stubbed::before {
-  content: "Not a real result";
-  display: block;
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  margin-bottom: 0.25rem;
-}
