@@ -771,9 +771,73 @@ function addProposeResponse(result) {
     el("div", `message system${refused ? " refusal" : ""}`, result.answer)
   );
 
+  // The generated line itself. Only ever shown when the server actually
+  // produced one -- a refusal carries proposed_change: null, and inventing
+  // a placeholder card for it would be showing a change that does not
+  // exist.
+  if (result.proposed_change) {
+    exchange.appendChild(renderProposedChange(result.proposed_change));
+  }
+
   log.appendChild(exchange);
   log.scrollTop = log.scrollHeight;
   return exchange;
+}
+
+/**
+ * The generated config line, shown as GENERATED and never as APPLIED.
+ *
+ * WHY THE REMINDER IS PERMANENT AND NOT DISMISSIBLE
+ *     CLAUDE.md's non-negotiable constraint: "Netwise GENERATES and
+ *     SIMULATES config changes. It must never push changes to a live
+ *     device." ai/propose.py holds that end structurally -- the candidate
+ *     line is written only into a throwaway copy that is deleted before the
+ *     function returns, and `before_dir` is never written to.
+ *
+ *     What this element defends is the OTHER end: the user's belief. A
+ *     monospace config line in a tool that just analysed their network
+ *     reads as something that happened. The difference between "here is a
+ *     line you could apply" and "here is a line that has been applied" is
+ *     one word, and the consequence of getting it wrong is somebody not
+ *     making a change they think they already made.
+ *
+ *     So the reminder is part of the card rather than a one-off notice at
+ *     the top of the pane: it cannot scroll away from the line it is about,
+ *     and a log with five proposals in it carries five reminders rather
+ *     than one the reader passed twenty minutes ago.
+ *
+ * The line is `el()`-built like everything else -- it is generated text
+ * containing addresses from the user's own request.
+ */
+function renderProposedChange(change) {
+  const card = el("div", "proposed-change");
+
+  card.appendChild(el("div", "proposed-heading", "Proposed change"));
+
+  // Device and filter first: a line without them is not actionable, and
+  // "which box, which ACL" is the first thing anyone asks.
+  const where = el("div", "proposed-where");
+  where.appendChild(el("span", "proposed-device", change.device));
+  where.appendChild(el("span", "proposed-filter", change.filter));
+  card.appendChild(where);
+
+  card.appendChild(el("code", "proposed-line", change.line));
+
+  // Spelled out in words, not only in colour or position -- the same
+  // reasoning as the "this is not a clean result" sentence on a blind
+  // finding card. A style can be overridden, missed, or read past; a
+  // sentence cannot be misread.
+  card.appendChild(
+    el(
+      "div",
+      "proposed-not-applied",
+      "Not applied. Netwise generated this line and simulated it against a " +
+        "throwaway copy of your config — nothing has been written to any " +
+        "device or to the config you uploaded."
+    )
+  );
+
+  return card;
 }
 
 function addProposeMessage(text, who) {

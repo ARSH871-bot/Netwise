@@ -724,3 +724,73 @@ body {
   min-height: 6rem;
   max-height: 18rem;
 }
+
+/* --- The generated config line (US-13) ----------------------------------- *
+   NOT STYLED AS A RESULT, AND THAT IS THE POINT.
+       A findings card reports something true about the network now. This
+       card reports something that does NOT exist yet -- a line Netwise
+       wrote, simulated, and is offering. Giving it the same solid card
+       treatment as a finding would put a proposal and a fact in the same
+       visual class.
+
+       So it reads as a quotation: a left rule and a tinted ground, the
+       vocabulary this stylesheet already uses for evidence rather than for
+       verdicts.
+
+   THE "NOT APPLIED" LINE IS NOT DECORATION.
+       CLAUDE.md's non-negotiable constraint is that Netwise never pushes to
+       a live device. ai/propose.py holds that structurally; this line holds
+       the user's understanding of it. It is deliberately not muted into
+       fine print -- it is the one sentence on this card that must survive a
+       glance. */
+.proposed-change {
+  margin-top: 0.6rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--surface-alt, #f8fafc);
+  border-left: 3px solid var(--line);
+  border-radius: 0 6px 6px 0;
+}
+
+.proposed-heading {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-bottom: 0.4rem;
+}
+
+.proposed-where {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.proposed-device,
+.proposed-filter {
+  font-size: 0.72rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: var(--line);
+  color: var(--ink);
+}
+
+.proposed-line {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  padding: 0.45rem 0.6rem;
+  background: var(--ink);
+  color: #f8fafc;
+  border-radius: 4px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.proposed-not-applied {
+  margin-top: 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink);
+}
