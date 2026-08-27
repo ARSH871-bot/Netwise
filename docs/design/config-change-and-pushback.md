@@ -7,6 +7,15 @@ built.
 **Needed from:** whoever picks up #13/#14 — this is the first task, not
 building.
 
+> **UPDATE, 21 August.** "What I would argue for" below is now built: a first
+> PR implements shape A plus simulate-then-reanalyse (`ai/propose.py`), reusing
+> `analysis/change_impact.analyse_change()` (#30) for the diff rather than
+> building a second comparison mechanism. Precise about what this is and is
+> not: it is the mechanism this document argued should exist regardless of the
+> B-vs-C decision, not that decision being made. "Block YouTube" is still
+> refused, on purpose -- widening past shape A is still open, exactly as
+> argued below.
+
 > Same shape as `query-grounding-problem.md`: not a design, the statement of
 > a problem plus candidate shapes and what each costs. That document is a
 > precondition for this one, not just prior art — see "Why this is harder

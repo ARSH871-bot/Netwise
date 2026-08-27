@@ -148,6 +148,21 @@ ERROR_NUMBER_OFFSET = 50
 # can ever land here.
 SKIPPED_NUMBER = ERROR_NUMBER_OFFSET
 
+# PC-049: the snapshot contains devices NO rule mentions (#228).
+#
+# A DIFFERENT fact from SKIPPED_NUMBER above, and the two can be true at once,
+# so they must not share a number. 50 says "rules were written about devices
+# this snapshot lacks". This says "this snapshot has devices no rule covers" --
+# the reverse direction, and the one that used to produce a GREEN TICK while
+# 49 of 50 devices went unexamined.
+#
+# 49 rather than 51: the rule-error band starts at SKIPPED_NUMBER + 1 and grows
+# with the rule list, so anything above 50 would collide the day a sixth rule
+# is added. Below the offset there is nothing but the rule numbers themselves
+# (1..N), and tests/test_policy_partial_checks.py asserts the three bands stay
+# disjoint, so a future N of 49 fails loudly rather than silently colliding.
+UNCOVERED_NUMBER = 49
+
 # --- The policy being asserted ----------------------------------------------
 #
 # Kept as plain data so the policy can be edited without reading the code below
@@ -488,6 +503,59 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                 ),
                 source="analysis/checks/policy_compliance.py",
                 number=SKIPPED_NUMBER,
+            )
+        )
+
+    # Devices in the snapshot that NO rule says anything about (#228).
+    #
+    # The `absent` block above answers "our rules name devices this snapshot
+    # lacks". This answers the reverse, and nothing used to: a snapshot of 50
+    # devices containing rtr-us5 reported PC-000, status="none", "No issues
+    # found by policy compliance" -- a green tick, having asserted something
+    # about ONE device. Measured, 1 of 50.
+    #
+    # Adding one covered device to a snapshot of uncovered ones must not flip
+    # the verdict from "could not check" to "all clear" while the other 49 stay
+    # exactly as unchecked as they were.
+    #
+    # Reported as an error rather than folded into the all-clear text, for the
+    # same reason a rule with one failed arm reports both (#22/#46): "we
+    # checked and found nothing" and "we did not look here" are different
+    # claims and only one of them is being made about these devices. Because
+    # this makes `results` non-empty, the clean sentinel below cannot fire --
+    # which is the behaviour #228 asks for.
+    # Only when at least one rule actually ran. With `applicable` empty the
+    # PC-050 card above already says the whole story -- "your rules are about a
+    # device that is not here" and "these devices are not covered" are the same
+    # fact from two directions, and printing both is the per-rule noise #45 and
+    # #50 removed, rebuilt one level up. Caught by
+    # test_policy_absent_devices_reported_once_not_once_per_rule, which is
+    # exactly what that test is for.
+    covered = {r["node"] for r in POLICY_RULES}
+    uncovered = sorted(present - covered)
+    if uncovered and applicable:
+        shown = ", ".join(uncovered[:5])
+        if len(uncovered) > 5:
+            shown += f", and {len(uncovered) - 5} more"
+        results.append(
+            findings.error_finding(
+                check=CHECK_NAME,
+                device=uncovered[0] if len(uncovered) == 1 else "unknown",
+                summary=(
+                    f"{len(uncovered)} of {len(present)} device(s) in this "
+                    "config are not covered by any policy rule"
+                ),
+                detail=(
+                    f"{len(applicable)} rule(s) were checked, and only against "
+                    + ", ".join(sorted(covered & present))
+                    + ". No rule says anything about "
+                    + shown
+                    + ". Nothing is claimed about "
+                    + ("it" if len(uncovered) == 1 else "them")
+                    + " either way."
+                ),
+                source="analysis/checks/policy_compliance.py",
+                number=UNCOVERED_NUMBER,
             )
         )
 
