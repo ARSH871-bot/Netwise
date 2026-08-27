@@ -767,9 +767,52 @@ function addProposeResponse(result) {
 
   const refused = result.grounded !== true;
 
+  // THREE INDEPENDENT FACTS, NEVER FOLDED INTO ONE.
+  //
+  //     refused          nothing ran
+  //     warning === true a high-severity OPENING was proved in the diff
+  //     verified !== true some of the impact analysis could not run
+  //
+  // #183 made `verified` and `warning` separate booleans after review found
+  // a proved opening being suppressed by an unrelated error in the same
+  // diff. ANDing them here would re-create that bug in the UI after the
+  // backend was fixed for it -- the same fact, lost one layer later.
+  //
+  // `=== true` and `!== true` both lean the cautious way, matching
+  // `grounded !== true` above: a missing or malformed key must never
+  // silently drop the warning, and must never silently claim verification.
+  const warned = result.warning === true;
+  const unverified = result.verified !== true;
+
+  if (warned) {
+    exchange.appendChild(
+      el(
+        "div",
+        "propose-warning",
+        "This change opens access that is currently blocked. Read the " +
+          "simulated impact below before applying it."
+      )
+    );
+  }
+
   exchange.appendChild(
     el("div", `message system${refused ? " refusal" : ""}`, result.answer)
   );
+
+  // Shown on a grounded response whose impact analysis was incomplete. Not
+  // shown on a refusal: there, nothing ran at all and the answer already
+  // says so, and a second "could not verify" line would imply a partial
+  // result existed.
+  if (!refused && unverified) {
+    exchange.appendChild(
+      el(
+        "div",
+        "propose-unverified",
+        "Some of the impact analysis could not run, so this is not the " +
+          "whole picture. This is not a claim that the change is safe."
+      )
+    );
+  }
 
   // The generated line itself. Only ever shown when the server actually
   // produced one -- a refusal carries proposed_change: null, and inventing

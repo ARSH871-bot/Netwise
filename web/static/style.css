@@ -817,3 +817,60 @@ body {
 .impact .finding {
   margin-bottom: 0.5rem;
 }
+
+/* --- The pushback states (US-14) ----------------------------------------- *
+   THE AMBER "COULD NOT CHECK" FAMILY, NOT .rename-note.
+       This project has already made this exact choice once and got it wrong
+       first. A rename note is soft italic grey, which is right for
+       something we FIXED for the user; using it for an unusable business
+       context entry was found to be the weaker choice, because it filed a
+       live gap under the same heading as a spelling correction.
+
+       A proved opening is stronger still. It is not a heads-up, it is the
+       one thing on the screen the user most needs to read before acting on
+       a line this tool just wrote for them. So it wears --blind, the same
+       tokens a "could not check" finding wears, and it sits ABOVE the
+       answer rather than after it.
+
+   WHY THE WARNING IS FIRST AND THE VERIFICATION NOTE IS LAST
+       They are different claims. "This opens access" is a PROVEN fact from
+       the diff and belongs before the prose. "Some of the analysis could
+       not run" qualifies what follows and belongs after it. #183 keeps them
+       as separate booleans for exactly this reason -- one must never be
+       able to swallow the other -- and rendering them at opposite ends of
+       the exchange makes that structural rather than a matter of wording.
+
+   BORDERED ON ALL SIDES, not just a left rule: this is the one element in
+   the pane that must survive a glance. */
+.propose-warning {
+  margin-top: 0.6rem;
+  padding: 0.6rem 0.8rem;
+  background: var(--blind-fill);
+  color: var(--blind-ink);
+  border: 1px solid var(--blind);
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.propose-warning::before {
+  content: "⚠ Opens access";
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 0.25rem;
+}
+
+/* Quieter than the warning, louder than body text. "We could not see all of
+   it" is a real limit on the answer above, but it is not a proved problem,
+   and giving it equal weight would flatten the difference the backend works
+   to preserve. */
+.propose-unverified {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  border-left: 3px solid var(--blind);
+  color: var(--blind-ink);
+  font-size: 0.8rem;
+}
