@@ -163,6 +163,35 @@ def test_the_warning_appears_before_the_answer(rendered):
 
 
 @needs_node
+@pytest.mark.parametrize("case", ["warning", "warningAndUnverified", "mixedImpact"])
+def test_a_warned_response_scrolls_its_own_start_into_view(rendered, case):
+    """Being FIRST in the DOM is not the same as being visible.
+
+    `.propose-log` is capped at 18rem and scrolls, and the pane used to
+    scroll to the newest content like every other log here. That puts the
+    END of the exchange in view -- the impact list -- while the warning,
+    which is at the top, sits above the fold. On the response that most
+    needs reading, the warning was the one thing off screen.
+
+    The DOM shim has no geometry, so every "the warning comes first"
+    assertion passed while this was true. It was found by rendering the
+    pane in a real browser, and this test exists so it cannot come back.
+    """
+    assert rendered[case]["scrolledTo"] == "start"
+
+
+@needs_node
+@pytest.mark.parametrize("case", ["clean", "narrows", "refused"])
+def test_an_unwarned_response_keeps_the_usual_scroll_to_newest(rendered, case):
+    """The other direction. Hijacking the scroll on every response would be
+    its own bug -- the reader loses their place for no reason."""
+    result = rendered[case]
+
+    assert result["scrolledTo"] is None
+    assert result["logScrolledToBottom"] is True
+
+
+@needs_node
 def test_a_proved_opening_survives_an_unrelated_error_in_the_same_diff(rendered):
     """#183's property, asserted in the UI.
 

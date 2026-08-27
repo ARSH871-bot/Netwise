@@ -60,6 +60,12 @@ function makeElement(tag) {
     removeEventListener() {},
     remove() {},
     focus() {},
+    // Records rather than acts. The shim has no geometry, so the only thing
+    // worth asserting is WHICH element the renderer chose to bring into
+    // view and with what alignment.
+    scrollIntoView(options) {
+      this.scrolledIntoView = options || {};
+    },
     querySelector() {
       return null;
     },
@@ -107,6 +113,8 @@ function flatten(node, out) {
 
 function renderAndDescribe(result) {
   log.replaceChildren();
+  log.scrollTop = 0;
+  log.scrollHeight = 500;
   const exchange = sandbox.addProposeResponse(result);
 
   const nodes = flatten(exchange, []);
@@ -116,6 +124,12 @@ function renderAndDescribe(result) {
   const first = (cls) => (find(cls)[0] ? find(cls)[0].text : null);
 
   return {
+    // Which element the renderer scrolled to, and how. A warned response
+    // must bring its own START into view; anything else leaves the log
+    // scrolled to the newest content as usual.
+    scrolledTo: exchange.scrolledIntoView ? exchange.scrolledIntoView.block : null,
+    logScrolledToBottom: log.scrollTop === log.scrollHeight,
+
     // The exchange's own direct children, IN ORDER. Order is a safety
     // property here: the warning must come before the answer and the
     // verification note after it, so their independence is structural.

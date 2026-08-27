@@ -849,7 +849,28 @@ function addProposeResponse(result) {
   }
 
   log.appendChild(exchange);
-  log.scrollTop = log.scrollHeight;
+
+  // WHERE THE LOG SCROLLS TO IS A SAFETY DECISION HERE, NOT A NICETY.
+  //     `.propose-log` is capped at 18rem and scrolls. Scrolling to the
+  //     newest content -- what every other log in this app does, and what
+  //     this one did -- puts the END of the exchange in view: the impact
+  //     list. The warning is at the TOP of the exchange, so on any response
+  //     long enough to scroll, the one element that must be read first is
+  //     the one element off screen.
+  //
+  //     Found by rendering it in a real browser. The DOM shim has no
+  //     geometry, so every assertion about the warning being "first" passed
+  //     while it was, in practice, out of view.
+  //
+  //     So a warned response scrolls to the START of its exchange and a
+  //     clean one keeps the usual behaviour. Guarded on the method existing
+  //     because the test shim is not a browser.
+  if (warned && typeof exchange.scrollIntoView === "function") {
+    exchange.scrollIntoView({ block: "start" });
+  } else {
+    log.scrollTop = log.scrollHeight;
+  }
+
   return exchange;
 }
 
