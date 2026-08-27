@@ -575,11 +575,9 @@ M-1's justification ends:
 > GitHub already marks a review stale when the branch moves, so the condition
 > is **observable rather than argued**.
 
-That sentence is false for this repository, and the same document says why
-300 lines earlier. Auto-dismissing an approval when new commits arrive is
-`dismiss_stale_reviews` — a **branch protection** setting. §6 states plainly
-that branch protection needs GitHub Pro or a public repo and that we are
-deliberately private. Confirmed against the API:
+That sentence is false for this repository. Auto-dismissing an approval when
+new commits arrive is `dismiss_stale_reviews` — a **branch protection**
+setting — and no protection is configured:
 
 ```
 GET /repos/ARSH871-bot/Netwise/branches/main/protection
@@ -588,6 +586,20 @@ GET /repos/ARSH871-bot/Netwise/branches/main/protection
 
 So M-1 made "current" the load-bearing word and then delegated checking it to a
 mechanism that has never been switched on. **Nothing marks anything stale.**
+
+> **This paragraph originally said the setting was unavailable "because we are
+> deliberately private", citing §6.** The repository is **public**
+> (`private: false`), so every protection setting is available and simply off.
+> The claim that matters — nothing marks anything stale — was verified against
+> the API and stands. The reason given for it was copied from another document
+> instead of checked, in an amendment arguing that a fact repeated from another
+> document is how facts rot. Corrected after @ARSH871-bot found the same stale
+> premise in `CLAUDE.md` §11 (#246). I queried `/branches/main/protection` and
+> not `/repos/...` — one call short of the whole answer.
+>
+> **It changes nothing about the definition below.** Recorded rather than
+> silently edited because M-2 is unratified, and an unratified amendment must
+> not shift meaning while people are deciding whether to sign it.
 
 **Measured, this week, three times:**
 
