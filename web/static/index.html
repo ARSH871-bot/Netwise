@@ -38,12 +38,16 @@
                have not checked. -->
           <p class="hint">
             Config files (.cfg, .conf, .txt), up to 2&nbsp;MB &mdash; Cisco
-            IOS, Cisco NX-OS, Arista EOS and Juniper JunOS.
-            Nothing leaves this machine.
+            IOS, Cisco NX-OS, Arista EOS and Juniper JunOS, or a PF Sense
+            config.xml export. Nothing leaves this machine.
           </p>
 
           <label class="file-picker">
-            <input type="file" id="file-input" accept=".cfg,.conf,.txt" />
+            <input
+              type="file"
+              id="file-input"
+              accept=".cfg,.conf,.txt,.xml,.pfsense"
+            />
             <span>Choose a config file</span>
           </label>
 
