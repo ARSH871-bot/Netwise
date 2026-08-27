@@ -626,3 +626,92 @@ def test_two_concurrent_analyses_do_not_read_each_others_policy(monkeypatch):
         f"check asserting the wrong user's rules, or silently falling back "
         f"to ours, is exactly what #87 exists to prevent"
     )
+
+# ---------------------------------------------------------------------------
+# Where #181 meets #229 -- two correct changes that were wrong together
+# ---------------------------------------------------------------------------
+
+
+def _one_device_policy(device: str):
+    return policy.load_policy({
+        "device": device,
+        "policy_compliance": [{
+            "description": "guest must not reach finance",
+            "kind": "prohibition", "filter": "acl_in", "node": device,
+            "queries": [{"dstIps": "10.0.0.1"}],
+            "violation_severity": "high",
+            "violation_summary": "guest reaches finance",
+        }],
+    })
+
+
+def _run_against(monkeypatch, devices, pol):
+    """Run the real check with a known device set and no Batfish."""
+    monkeypatch.setattr(policy_compliance.snapshot, "device_names",
+                        lambda bf: set(devices))
+    monkeypatch.setattr(policy_compliance, "_search", lambda *a, **k: [])
+    policy.set_active_policy(pol)
+    try:
+        return policy_compliance.run(object())
+    finally:
+        policy.clear_active_policy()
+
+
+def test_the_users_own_rules_decide_what_counts_as_covered(monkeypatch):
+    """#229's uncovered-devices card must read the policy actually in use.
+
+    It computed coverage from POLICY_RULES -- OUR built-in rules -- which was
+    correct when it was written, because a user policy could not reach a check
+    yet. #181 made that reachable, and the two were wrong together while each
+    was right alone. Measured before the fix, with a user policy covering the
+    ONLY device in the snapshot:
+
+        [error] PC-049  1 of 1 device(s) in this config are not
+                        covered by any policy rule
+
+    A user whose policy covers everything they own, told none of it was.
+    """
+    results = _run_against(monkeypatch, ["acme-fw"], _one_device_policy("acme-fw"))
+
+    uncovered = [f for f in results if "not covered" in f["summary"]]
+    assert not uncovered, (
+        f"the user's policy names acme-fw and acme-fw is the only device "
+        f"present, so nothing is uncovered -- got {uncovered}"
+    )
+
+
+def test_the_uncovered_card_still_fires_for_devices_the_user_missed(monkeypatch):
+    """The other end. Without this, 'never report uncovered' would also pass."""
+    results = _run_against(monkeypatch, ["acme-fw", "acme-spare"],
+                           _one_device_policy("acme-fw"))
+
+    uncovered = [f for f in results if "not covered" in f["summary"]]
+    assert len(uncovered) == 1, "acme-spare is genuinely uncovered"
+    assert "acme-spare" in uncovered[0]["evidence"]["detail"]
+
+
+def test_a_policy_about_absent_devices_reports_scoping_not_coverage(monkeypatch):
+    """The two cards are different facts and must not both fire.
+
+    Policy names only `acme-fw`; the snapshot has only `acme-spare`. Nothing
+    the policy asserts can run, so the honest card is PC-050 ("your rules are
+    about a device that is not here"), NOT PC-049 ("these devices are not
+    covered"). Both would be the per-rule noise #45 and #50 removed, rebuilt
+    one level up.
+
+    This test is also why the empty-slot branch I briefly added is gone: with
+    coverage read from the rules actually in use, `covered & present` cannot
+    be empty when this card fires, so the branch guarded a state that cannot
+    occur.
+    """
+    results = _run_against(monkeypatch, ["acme-spare"],
+                           _one_device_policy("acme-fw"))
+
+    assert not [f for f in results if "not covered" in f["summary"]], (
+        "no rule could run at all, so this is a scoping problem, not a "
+        "coverage one -- reporting both says the same thing twice"
+    )
+    assert [f for f in results if f["status"] == "error"], (
+        "and it must still say something -- silence here would be a check "
+        "that ran against nothing and reported nothing"
+    )

@@ -531,7 +531,20 @@ def run(bf: Session) -> List[Dict[str, Any]]:
     # #50 removed, rebuilt one level up. Caught by
     # test_policy_absent_devices_reported_once_not_once_per_rule, which is
     # exactly what that test is for.
-    covered = {r["node"] for r in POLICY_RULES}
+    # WHICH RULES DEFINE "COVERED" (#181 meeting #229)
+    #     This read POLICY_RULES -- our BUILT-IN rules -- which was correct
+    #     when #229 was written, because a user policy could not reach a check
+    #     yet. With one installed it computes coverage from OUR devices while
+    #     the check asserts THEIRS. Measured before the fix, a user policy
+    #     covering the only device in the snapshot:
+    #
+    #         [error] PC-049  1 of 1 device(s) in this config are not
+    #                         covered by any policy rule
+    #
+    #     A user whose policy covers everything they own was told none of it
+    #     was covered. `rules` is whatever rules_in_use() returned, which is
+    #     the same list every other assertion in this function uses.
+    covered = {r["node"] for r in rules}
     uncovered = sorted(present - covered)
     if uncovered and applicable:
         shown = ", ".join(uncovered[:5])
@@ -545,14 +558,26 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                     f"{len(uncovered)} of {len(present)} device(s) in this "
                     "config are not covered by any policy rule"
                 ),
-                detail=(
+                detail=_with_provenance(
+                    # `covered & present` CANNOT be empty here, and that is
+                    # worth stating because I briefly added a branch for it.
+                    # This card only fires when `applicable` is non-empty, and
+                    # `applicable` is the rules whose node IS present -- so at
+                    # least one covered device is present by construction.
+                    #
+                    # It looked reachable only while `covered` came from
+                    # POLICY_RULES and `applicable` came from `rules`: two
+                    # different lists, which is the bug fixed above. A guard
+                    # for a state that cannot occur reads as safety and is
+                    # not, so it is gone rather than left in.
                     f"{len(applicable)} rule(s) were checked, and only against "
                     + ", ".join(sorted(covered & present))
                     + ". No rule says anything about "
                     + shown
                     + ". Nothing is claimed about "
                     + ("it" if len(uncovered) == 1 else "them")
-                    + " either way."
+                    + " either way.",
+                    policy_label,
                 ),
                 source="analysis/checks/policy_compliance.py",
                 number=UNCOVERED_NUMBER,
