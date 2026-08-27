@@ -285,14 +285,12 @@ async function loadFindings() {
 const ALLOWED_EXTENSIONS = [".cfg", ".conf", ".txt"];
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 
-// Recognised but not analysable yet -- mirrors UNSUPPORTED_EXTENSIONS in
-// web/main.py. The client's real firewall is PF Sense, and "that is not a
-// config file we can read" would be both wrong and embarrassing when they try
-// their own export. It plainly is a config file; we just cannot read it yet.
-const UNSUPPORTED_EXTENSIONS = {
-  ".xml": "PF Sense XML",
-  ".pfsense": "PF Sense XML",
-};
+// Recognised as a PF Sense export and converted server-side before staging --
+// mirrors PFSENSE_EXTENSIONS in web/main.py. Accepted here rather than
+// rejected: the client's real firewall is PF Sense, and analysis.pfsense_convert
+// now turns this into Cisco IOS text server-side, the same way it always has
+// for a plain .cfg upload.
+const PFSENSE_EXTENSIONS = [".xml", ".pfsense"];
 
 function showUploadMessage(text, ok) {
   const box = document.getElementById("upload-message");
@@ -397,24 +395,13 @@ function setUpUpload() {
     const name = file.name;
     const extension = name.slice(name.lastIndexOf(".")).toLowerCase();
 
-    // Recognised-but-unsupported is checked first, so a PF Sense export gets
-    // the explanation rather than the generic rejection.
-    if (extension in UNSUPPORTED_EXTENSIONS) {
-      showUploadMessage(
-        `'${name}' looks like a ${UNSUPPORTED_EXTENSIONS[extension]} export. ` +
-          `Netwise cannot analyse that format yet — our analysis engine does ` +
-          `not read it natively. Cisco IOS configs ` +
-          `(${ALLOWED_EXTENSIONS.join(", ")}) work today.`,
-        false
-      );
-      input.value = "";
-      return;
-    }
+    const isPfSense = PFSENSE_EXTENSIONS.includes(extension);
 
-    if (!ALLOWED_EXTENSIONS.includes(extension)) {
+    if (!isPfSense && !ALLOWED_EXTENSIONS.includes(extension)) {
       showUploadMessage(
         `'${name}' is not a config file we can read. Netwise accepts ` +
-          `${ALLOWED_EXTENSIONS.join(", ")} files.`,
+          `${ALLOWED_EXTENSIONS.join(", ")} files, or a PF Sense config.xml ` +
+          `export.`,
         false
       );
       input.value = "";
@@ -473,6 +460,14 @@ function setUpUpload() {
             "warn"
           );
           document.getElementById("policy-input").value = "";
+        }
+
+        // A converted PF Sense export names every interface it could not
+        // model (#78) rather than converting it silently short. Shown the
+        // same way a policy loader's rename notes are: under the message,
+        // never merged into the success sentence above it.
+        if (result.skipped && result.skipped.length > 0) {
+          addSkippedNotes(result.skipped);
         }
 
         scanButton.disabled = false;
@@ -696,6 +691,24 @@ function addRenameNotes(notes) {
     // another sentence of the success message. textContent, never innerHTML:
     // these strings quote the user's own file back at them, which is
     // untrusted input arriving by a path that looks like our own text.
+    const line = el("span", "rename-note", note);
+    box.appendChild(line);
+  });
+}
+
+/**
+ * Show which interfaces a converted PF Sense export could not model (#78),
+ * under the upload message. Same idiom as addRenameNotes() above -- its own
+ * element per note, textContent only, reusing the same "heads-up, not a
+ * second success sentence" styling rather than inventing a new one.
+ *
+ * Called only for a PF Sense upload with a non-empty `skipped` list --
+ * see setUpUpload() below. A normal .cfg/.conf/.txt upload always returns
+ * skipped: [], so there is nothing to show and this is never called for it.
+ */
+function addSkippedNotes(notes) {
+  const box = document.getElementById("upload-message");
+  notes.forEach((note) => {
     const line = el("span", "rename-note", note);
     box.appendChild(line);
   });

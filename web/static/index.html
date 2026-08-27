@@ -30,13 +30,24 @@
         <!-- ---- Upload ---- -->
         <div class="card upload">
           <h2>Analyse a config</h2>
+          <!-- The vendor list is what we have FIXTURES for, not what the
+               engine might manage. Each one named here has a committed
+               fixture carrying a deliberate fault, and a test asserting we
+               still find it -- see tests/test_vendor_fixtures.py. Adding a
+               name here without adding that evidence would be a claim we
+               have not checked. -->
           <p class="hint">
-            Cisco IOS config files (.cfg, .conf, .txt), up to 2&nbsp;MB.
-            Nothing leaves this machine.
+            Config files (.cfg, .conf, .txt), up to 2&nbsp;MB &mdash; Cisco
+            IOS, Cisco NX-OS, Arista EOS and Juniper JunOS, or a PF Sense
+            config.xml export. Nothing leaves this machine.
           </p>
 
           <label class="file-picker">
-            <input type="file" id="file-input" accept=".cfg,.conf,.txt" />
+            <input
+              type="file"
+              id="file-input"
+              accept=".cfg,.conf,.txt,.xml,.pfsense"
+            />
             <span>Choose a config file</span>
           </label>
 
@@ -72,8 +83,25 @@
         <!-- ---- Coverage summary ----
              Three counts, never merged. "Could not check" is shown even when
              it is zero, because an explicit zero is a stronger statement than
-             an absent row. -->
-        <h2 id="results-heading">Findings</h2>
+             an absent row.
+
+             THE HEADING USED TO BE THE SINGLE WORD "Findings", AND THE CLIENT
+             TOLD US IT MISLEADS (meeting, 24 August 2026). He was right, and
+             the reason is worth keeping: F-4 is enforced carefully in colour,
+             in layout and in section order -- and then one noun above all
+             three tiles undid it, by naming a "could not check" a finding.
+             Two of these three counts are findings. The third is the absence
+             of one, which is the distinction the whole contract exists to
+             protect. The line below states it in words rather than relying on
+             the reader to infer it from three tile colours. -->
+        <h2 id="results-heading">Scan results</h2>
+        <p class="hint" id="results-explainer">
+          Three separate counts, not one total.
+          <strong>Problems found</strong> and <strong>checked, nothing
+          found</strong> are both results — the check ran either way.
+          <strong>Could not check</strong> is not a pass: those checks did not
+          run, so nothing is known about what they cover.
+        </p>
         <div id="summary" class="summary" aria-live="polite"></div>
 
         <!-- ---- The findings themselves, grouped by status ---- -->
