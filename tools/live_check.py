@@ -204,13 +204,39 @@ def check_explanation_layer() -> Result:
     which is preflight's question, not this one. What is asserted is the
     CONTRACT: a non-empty string, a source of "model" or "fallback", no
     exception either way.
+
+    THE PRECONDITION IS NOT THE THING UNDER TEST -- found live, by Arsh,
+    reviewing this PR.
+        The old version wrapped `pipeline.analyse()`, finding a "found"
+        result, and `explain_with_source()` in one try, so a stopped
+        Batfish container reported as "explain_with_source() raised,
+        which #52 exists to prevent" -- explain_with_source() was never
+        even called. `analyse()` failed to produce a found finding, and
+        the message blamed the wrong layer for it. Reproduced live before
+        fixing: with Batfish down, this used to say `StopIteration`, which
+        is `next()` finding no found finding, not the AI layer failing.
+        Splitting the precondition from the assertion is the same fix
+        `check_batfish_connection()` already exists to make unnecessary
+        for every OTHER check in this file -- this one just hadn't gotten
+        it applied to its own body.
     """
+    from analysis import pipeline
+
+    results = pipeline.analyse(str(INSECURE))
+    found = next((f for f in results if f["status"] == "found"), None)
+    if found is None:
+        return (
+            "AI explanation layer",
+            FAIL,
+            "could not obtain a found finding to explain -- the pipeline "
+            "returned only " + ", ".join(sorted({f["status"] for f in results}))
+            + ". This says nothing about the AI layer, which was never "
+            "reached.",
+        )
+
     try:
         from ai.explain import explain_with_source
-        from analysis import pipeline
 
-        results = pipeline.analyse(str(INSECURE))
-        found = next(f for f in results if f["status"] == "found")
         text, source = explain_with_source(found)
     except Exception as error:  # noqa: BLE001
         return (
@@ -237,13 +263,33 @@ def check_query_layer() -> Result:
     """Layer 4: the AI query layer answers a real question and refuses a
     nonsense one -- both halves, since a layer that always refuses would
     pass a check that only tried the refusal case, and one that always
-    answers would pass a check that only tried the real question."""
-    try:
-        from analysis.pipeline import connect, load_snapshot
-        from ai.query import answer_question
+    answers would pass a check that only tried the real question.
 
+    THE PRECONDITION IS NOT THE THING UNDER TEST -- the same shape Arsh
+    found in check_explanation_layer() above, flagged as unverified here
+    and reproduced live before fixing. With Batfish down, `connect()`
+    raised, and the message said "answer_question() raised, which it
+    must not" -- answer_question() was never called. connect() and
+    load_snapshot() are the precondition; only the two answer_question()
+    calls are the thing this check is actually about.
+    """
+    from analysis.pipeline import connect, load_snapshot
+
+    try:
         bf = connect("localhost")
         load_snapshot(bf, SECURE, "netwise", "live-check")
+    except Exception as error:  # noqa: BLE001
+        return (
+            "AI query layer",
+            FAIL,
+            f"could not connect or load the snapshot -- this says "
+            f"nothing about the query layer, which was never reached: "
+            f"{type(error).__name__}: {str(error)[:150]}",
+        )
+
+    try:
+        from ai.query import answer_question
+
         answerable = answer_question(
             "can rtr-us5 reach 10.20.0.5 on tcp/443", bf
         )

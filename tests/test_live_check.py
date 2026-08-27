@@ -225,6 +225,28 @@ def test_explanation_layer_fails_without_raising_when_explain_raises():
     assert "#52" in detail
 
 
+def test_explanation_layer_blames_the_pipeline_not_explain_when_no_finding_is_found():
+    """Found live by Arsh reviewing this PR, reproduced before fixing: with
+    Batfish down, analyse() returns only status="error" findings, next()
+    with no default raised StopIteration inside the same try block as
+    explain_with_source(), and the message said "explain_with_source()
+    raised, which #52 exists to prevent" -- explain_with_source() was
+    never called. The precondition failing must never be attributed to
+    the thing under test."""
+    error_only = _findings({"error": ["RT-050"]})
+    with patch("analysis.pipeline.analyse", return_value=error_only), \
+         patch("ai.explain.explain_with_source") as mock_explain:
+        label, status, detail = live_check.check_explanation_layer()
+
+    assert status == live_check.FAIL
+    assert "#52" not in detail, (
+        f"must not claim an explain_with_source() failure when it was "
+        f"never called: {detail!r}"
+    )
+    assert "found" in detail.lower() or "pipeline" in detail.lower()
+    mock_explain.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "bad_result",
     [("", "model"), ("text", "something-else"), (None, "fallback")],
@@ -305,3 +327,28 @@ def test_query_layer_fails_without_raising_when_answer_question_errors():
 
     assert status == live_check.FAIL
     assert "down" in detail
+
+
+def test_query_layer_blames_the_connection_not_answer_question_when_connect_fails():
+    """Same shape as check_explanation_layer()'s bug, flagged as unverified
+    by Arsh's review and confirmed live: connect() raising was reported as
+    "answer_question() raised, which it must not", and answer_question()
+    was never called."""
+    with patch("analysis.pipeline.connect", side_effect=ConnectionError("down")), \
+         patch("ai.query.answer_question") as mock_answer:
+        label, status, detail = live_check.check_query_layer()
+
+    assert status == live_check.FAIL
+    assert "never reached" in detail or "connect" in detail.lower()
+    mock_answer.assert_not_called()
+
+
+def test_query_layer_blames_the_snapshot_not_answer_question_when_load_fails():
+    with patch("analysis.pipeline.connect", return_value="fake"), \
+         patch("analysis.pipeline.load_snapshot", side_effect=FileNotFoundError("no snapshot")), \
+         patch("ai.query.answer_question") as mock_answer:
+        label, status, detail = live_check.check_query_layer()
+
+    assert status == live_check.FAIL
+    assert "never reached" in detail or "snapshot" in detail.lower()
+    mock_answer.assert_not_called()
