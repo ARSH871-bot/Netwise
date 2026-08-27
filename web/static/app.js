@@ -318,6 +318,23 @@ function showPolicyMessage(text, tone) {
 }
 
 /**
+ * Show the business-context pane's message, in the same three tones.
+ *
+ * Deliberately a sibling of showPolicyMessage() rather than a generalised
+ * helper taking an element id. The two panes are the same shape today and
+ * there is a real chance they stop being -- this one has a fourth state the
+ * policy pane does not (accepted WITH entries that could not be used), and
+ * folding them together now would make that difference harder to see, not
+ * easier.
+ */
+function showBusinessContextMessage(text, tone) {
+  const box = document.getElementById("business-context-message");
+  box.replaceChildren();
+  box.textContent = text;
+  box.className = `upload-message ${tone}`;
+}
+
+/**
  * Clear the results, and say why nothing is on screen.
  *
  * ONE FUNCTION, BOTH UPLOADS, AND THAT IS THE POINT (#82, #87).
@@ -468,6 +485,22 @@ function setUpUpload() {
         // never merged into the success sentence above it.
         if (result.skipped && result.skipped.length > 0) {
           addSkippedNotes(result.skipped);
+        }
+
+        // Same for the business context, and if anything the silence would
+        // be worse here. A cleared policy makes checks report "could not
+        // check"; a cleared context makes a severity quietly drop back one
+        // level, with nothing on screen to say why. A user watching a high
+        // finding become medium after uploading a config deserves the
+        // sentence rather than the puzzle.
+        if (result.business_context_cleared) {
+          showBusinessContextMessage(
+            "The staged business context was cleared, because it named " +
+              "devices on the previous config. Upload it again if it " +
+              "applies to this one.",
+            "warn"
+          );
+          document.getElementById("business-context-input").value = "";
         }
 
         scanButton.disabled = false;
@@ -1053,9 +1086,133 @@ function setUpProposeChange() {
   });
 }
 
+/**
+ * The business-context picker (#87, risk side).
+ *
+ * WHAT MAKES THIS ONE DIFFERENT FROM THE POLICY PICKER
+ *     A policy upload has two outcomes: accepted, or rejected. This one has
+ *     THREE, and the third is the whole reason the feature needed a UI at
+ *     all:
+ *
+ *         accepted, and every entry can be used
+ *         accepted, and SOME ENTRIES CANNOT BE USED
+ *         rejected
+ *
+ *     The middle case is a 200 with `accepted: true`. Rendered as a plain
+ *     green success message it would be indistinguishable from the first --
+ *     and a user who tagged their finance VLAN by subnet, read "accepted",
+ *     and saw no severity move would reasonably conclude their context had
+ *     been applied. That is precisely the silent failure `unusable_entries()`
+ *     exists to prevent, and it would be re-created here, one layer up, by
+ *     showing green.
+ *
+ *     So an accepted context with unusable entries is AMBER, not green, and
+ *     each unusable entry is named. Amber is what a "could not check"
+ *     finding already wears, for the identical reason: nothing failed, and
+ *     you still need to know.
+ *
+ * WHY IT CLEARS THE FINDINGS
+ *     Whatever is on screen was scored WITHOUT this context. Same staleness
+ *     as a new policy, same call -- see clearStaleResults().
+ */
+function setUpBusinessContextUpload() {
+  const input = document.getElementById("business-context-input");
+  if (!input) return;
+
+  input.addEventListener("change", async () => {
+    const file = input.files[0];
+    if (!file) return;
+
+    const name = file.name;
+    const extension = name.slice(name.lastIndexOf(".")).toLowerCase();
+
+    // A courtesy check only. The server decides, and its answer is the one
+    // that counts -- the same division of labour as the other two pickers.
+    if (extension !== ".json") {
+      showBusinessContextMessage(
+        `'${name}' is not a business context file. A business context ` +
+          `is .json.`,
+        "bad"
+      );
+      input.value = "";
+      return;
+    }
+
+    const body = new FormData();
+    body.append("file", file);
+    try {
+      const response = await fetch("/api/business-context", {
+        method: "POST",
+        body,
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        // The server's own words. BusinessContextError names the entry and
+        // suggests a correction for a miscased tier; rewording it here would
+        // lose the part that makes it actionable.
+        showBusinessContextMessage(result.detail, "bad");
+        input.value = "";
+        return;
+      }
+
+      // The tone is decided by whether anything was unusable, NOT by the
+      // status code. Both are 200. See this function's docstring.
+      const unusable = result.unusable || [];
+      showBusinessContextMessage(result.message, unusable.length ? "warn" : "ok");
+      if (unusable.length) {
+        addUnusableNotes(unusable);
+      }
+
+      clearStaleResults(
+        "Business context staged. Previous findings cleared — they were " +
+          "scored without it. Click Scan Now to check again."
+      );
+    } catch (error) {
+      showBusinessContextMessage(
+        `Could not upload that business context: ${error.message}. ` +
+          `Nothing was staged.`,
+        "bad"
+      );
+      input.value = "";
+    }
+  });
+}
+
+/**
+ * Name the entries that were accepted but cannot affect any finding.
+ *
+ * A HEADING FIRST, THEN THE ENTRIES
+ *     The server's notes each explain one entry. Without a line saying what
+ *     they collectively mean, three of them read as three separate oddities
+ *     rather than as "part of your file did nothing".
+ *
+ * textContent, never innerHTML -- these strings quote the user's own file
+ * back at them, which is untrusted input arriving through a path that looks
+ * like our own text. Same rule as addRenameNotes(), and the same reason.
+ */
+function addUnusableNotes(notes) {
+  const box = document.getElementById("business-context-message");
+
+  box.appendChild(
+    el(
+      "span",
+      "unusable-heading",
+      notes.length === 1
+        ? "1 entry was accepted but did not apply to anything:"
+        : `${notes.length} entries were accepted but did not apply to anything:`
+    )
+  );
+
+  notes.forEach((note) => {
+    box.appendChild(el("span", "unusable-note", note));
+  });
+}
+
 /* ------------------------------------------------------------------------ */
 loadFindings();
 setUpUpload();
 setUpPolicyUpload();
+setUpBusinessContextUpload();
 setUpChat();
 setUpProposeChange();

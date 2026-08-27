@@ -71,6 +71,27 @@
           </p>
           <p id="policy-message" class="upload-message" role="status"></p>
 
+          <!-- ---- Business context (optional) ---- #87, risk side
+               A third picker rather than a second use of the policy one, for
+               the policy picker's own reason: it goes somewhere else, is
+               validated by a different loader, and fails differently.
+
+               Unlike the policy, this one IS applied -- so the hint says what
+               it will actually do rather than what it is waiting for. A
+               control that overstates itself is the failure #109 fixed; one
+               that understates itself sends the user looking for a switch
+               that is already on. -->
+          <label class="file-picker policy-picker">
+            <input type="file" id="business-context-input" accept=".json" />
+            <span>Choose a business context file (optional)</span>
+          </label>
+          <p class="hint">
+            A JSON list of the assets that matter to you (#87). Findings on a
+            device you tag <code>critical</code> are raised one severity
+            level &mdash; never more, and never lowered.
+          </p>
+          <p id="business-context-message" class="upload-message" role="status"></p>
+
           <!-- Runs the analysis. Disabled until a file has actually been
                accepted by the SERVER, not merely chosen in the picker -- there
                is nothing staged to scan until then, and an enabled button that

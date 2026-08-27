@@ -190,6 +190,39 @@ body {
   color: var(--ink-soft);
 }
 
+/* --- Business context: entries that were accepted but did nothing --------
+   #87, risk side.
+
+   LOUDER THAN A RENAME NOTE, DELIBERATELY.
+       A rename note reports something we FIXED for the user -- they wrote an
+       old key, we accepted it and corrected it, and the note exists so they
+       learn the new name. Nothing was lost.
+
+       An unusable entry is the opposite: it was accepted and it does
+       NOTHING. The user believes they tagged an asset, and no severity will
+       ever move because of it. Styling that the same soft italic grey would
+       file a live gap under the same heading as a spelling correction.
+
+       So it carries the amber the message itself already switched to -- the
+       same tokens a "could not check" finding wears, for the same reason:
+       nothing failed, and you still need to know. */
+.unusable-heading {
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--blind-ink);
+}
+
+.unusable-note {
+  display: block;
+  margin-top: 0.25rem;
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--blind);
+  font-size: 0.8rem;
+  color: var(--blind-ink);
+}
+
 /* The action that actually runs the analysis. Styled as the primary control
    in this panel, because it is now the only way to start one.
 
