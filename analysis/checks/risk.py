@@ -338,6 +338,16 @@ def _sort_key(finding: Dict[str, Any]) -> tuple:
     )
 
 
+def sort_findings(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Order findings worst-first. Stable, so equal ranks keep their order.
+
+    Public because a caller that escalates severities AFTER `refine()` has
+    run has to re-order, and re-implementing this ordering elsewhere is how
+    two parts of the product start disagreeing about what "worst" means.
+    """
+    return sorted(results, key=_sort_key)
+
+
 def refine(
     results: List[Dict[str, Any]], context: Any = None
 ) -> List[Dict[str, Any]]:
@@ -384,4 +394,4 @@ def refine(
 
     rated = apply_business_context(rated, context)
 
-    return sorted(rated, key=_sort_key)
+    return sort_findings(rated)
