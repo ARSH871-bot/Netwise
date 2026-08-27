@@ -65,6 +65,38 @@ snapshots/
 *.xlsx
 *.pptx
 
+# --- The two exceptions, forced in on purpose (#247) -------------------------
+#
+# WHY THESE TWO AND NOTHING ELSE
+#     The rule above is right for OUTPUTS. We build the Final Project Report,
+#     the Evidence Portfolio and the Week 5 deck from scripts, so a copy in git
+#     would be a second source of truth that goes stale the first time anyone
+#     rebuilds. Those stay ignored.
+#
+#     These two are INPUTS. They were supplied to us, we do not generate them,
+#     and nothing can regenerate them. `build_pptx_a.py` opens the .pptx and
+#     FILLS it, deliberately, so the deck inherits the university's theme and
+#     master rather than being recreated approximately.
+#
+# WHY THIS IS NOT THEORETICAL
+#     On 27 August the deck build failed outright:
+#
+#         pptx.exc.PackageNotFoundError:
+#             Package not found at 'docs\Progress Report Template.pptx'
+#
+#     `git log --all -- "docs/*.pptx"` -> never committed, on any branch. The
+#     only copy left was in a Downloads folder, dated 10 August. One deletion
+#     from a deliverable nobody on the team could rebuild.
+#
+#     A missing OUTPUT regenerates. A missing INPUT does not, and the script
+#     that regenerates the output is useless without it. That asymmetry is the
+#     whole reason these two lines exist.
+#
+#     A deliberate sweep afterwards -- every path any script reads, checked
+#     against `git ls-files` -- found exactly these two and nothing else.
+!docs/Progress Report Template.pptx
+!docs/Final Report Template - Studio 5.docx
+
 # --- Secrets ---------------------------------------------------------------
 .env
 .env.*
