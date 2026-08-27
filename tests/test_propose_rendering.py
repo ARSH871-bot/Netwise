@@ -207,6 +207,47 @@ def test_a_refusal_carries_no_unverified_note(rendered):
 
 
 @needs_node
+@pytest.mark.parametrize("case", ["groundedJunkFlags", "groundedJunkWarningOnly"])
+def test_a_malformed_flag_on_a_grounded_response_is_neither_warned_nor_ignored(
+    rendered, case
+):
+    """The combination no test covered until a mutation survived.
+
+    Both malformed cases above also had a malformed `grounded`, so they
+    rendered as refusals and never reached the warning logic at all -- which
+    meant mutations to BOTH flag defaults were invisible.
+
+    With `grounded` exactly true and a flag that is not a boolean, neither
+    obvious lean is right. Silence implicitly claims "this does not open
+    access", which is F-4 in a boolean: "could not determine" is not
+    "determined to be fine". Warning on anything non-false fires on every
+    malformed response, and a warning that always appears is one the reader
+    learns to skip.
+
+    So it is reported as what it is: a result that could not be fully
+    verified.
+    """
+    result = rendered[case]
+
+    assert result["warningPresent"] == 0, "a junk flag must not cry wolf"
+    assert result["unverifiedPresent"] == 1, (
+        "and must not be read as a clean result either"
+    )
+
+
+@needs_node
+def test_a_junk_warning_alone_still_reports_the_result_as_unverified(rendered):
+    """`verified` is exactly true here and only `warning` is junk.
+
+    Without the flags-usable term this renders as a fully verified result
+    while having no idea whether the change opens access -- the more
+    dangerous of the two, and the one that distinguishes the guard from a
+    simple `verified !== true`.
+    """
+    assert rendered["groundedJunkWarningOnly"]["unverifiedPresent"] == 1
+
+
+@needs_node
 def test_a_fully_verified_result_carries_no_unverified_note(rendered):
     assert rendered["clean"]["unverifiedPresent"] == 0
     assert rendered["warning"]["unverifiedPresent"] == 0

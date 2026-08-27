@@ -318,6 +318,34 @@ const JUNK_KEYS = {
   answer: "Generated: ...",
 };
 
+// grounded EXACTLY true, but the two flags malformed. The combination no
+// test covered until a mutation survived: both `warning` and `verified`
+// mutations were invisible because every malformed case also had a
+// malformed `grounded` and rendered as a refusal before reaching them.
+const GROUNDED_JUNK_FLAGS = {
+  request_understood: "On rtr-us5, add to 'acl_in' (at the top): deny tcp ...",
+  proposed_change: CHANGE,
+  impact: [],
+  verified: "yes",
+  warning: "no",
+  grounded: true,
+  answer: "Generated: ...",
+};
+
+// verified EXACTLY true, only `warning` malformed. Distinguishes "the
+// verified flag was junk" from "the warning flag was junk": without the
+// flags-usable term, this case would report a fully verified result while
+// having no idea whether the change opens access.
+const GROUNDED_JUNK_WARNING_ONLY = {
+  request_understood: "On rtr-us5, add to 'acl_in' (at the top): deny tcp ...",
+  proposed_change: CHANGE,
+  impact: [],
+  verified: true,
+  warning: "no",
+  grounded: true,
+  answer: "Generated: ...",
+};
+
 // A device name containing markup, arriving by a path that looks like ours.
 const SCRIPTED = {
   request_understood: "On <img src=x onerror=alert(1)>, add to 'acl_in': deny ...",
@@ -344,6 +372,8 @@ const out = {
   mixedImpact: renderAndDescribe(MIXED_IMPACT),
   missingKeys: renderAndDescribe(MISSING_KEYS),
   junkKeys: renderAndDescribe(JUNK_KEYS),
+  groundedJunkFlags: renderAndDescribe(GROUNDED_JUNK_FLAGS),
+  groundedJunkWarningOnly: renderAndDescribe(GROUNDED_JUNK_WARNING_ONLY),
   scripted: renderAndDescribe(SCRIPTED),
 };
 

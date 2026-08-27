@@ -782,7 +782,26 @@ function addProposeResponse(result) {
   // `grounded !== true` above: a missing or malformed key must never
   // silently drop the warning, and must never silently claim verification.
   const warned = result.warning === true;
-  const unverified = result.verified !== true;
+
+  // A NON-BOOLEAN `warning` IS NOT A "NO".
+  //     `=== true` alone would render a malformed flag as silence, and
+  //     silence in this pane implicitly claims "this change does not open
+  //     access". That is F-4 in a boolean: "we could not determine" is not
+  //     "we determined it is fine".
+  //
+  //     Leaning the other way (`!== false`) is no better -- it fires the
+  //     warning on every malformed response, and a warning that appears
+  //     regardless is one the reader learns to skip, which costs exactly
+  //     the case it exists for.
+  //
+  //     So a malformed flag is neither warned nor ignored: it feeds the
+  //     "could not fully verify" note below, which is the honest reading of
+  //     a response we cannot interpret. A mutation surviving is what
+  //     exposed this -- both directions passed, because every malformed
+  //     case tested also had a malformed `grounded` and never reached here.
+  const flagsAreUsable =
+    typeof result.warning === "boolean" && typeof result.verified === "boolean";
+  const unverified = result.verified !== true || !flagsAreUsable;
 
   if (warned) {
     exchange.appendChild(
