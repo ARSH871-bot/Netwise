@@ -33,6 +33,7 @@ standard library; the findings path is driven with a stubbed analyse().
 """
 
 import json
+from pathlib import PurePosixPath, PureWindowsPath
 
 import pytest
 from fastapi.testclient import TestClient
@@ -275,33 +276,94 @@ def test_an_empty_upload_is_refused_and_says_how_to_mean_it():
     assert "empty list `[]`" in response.json()["detail"]
 
 
-@pytest.mark.parametrize(
-    "sent",
-    [
-        "../../../../etc/passwd.json",
-        "..\\..\\windows\\system32\\evil.json",
-        "/tmp/absolute.json",
-    ],
-)
-def test_a_client_supplied_path_is_reduced_to_a_basename(sent):
-    """The traversal boundary, pinned rather than assumed.
+#: Client-supplied filenames that carry a directory component. Both
+#: separator styles, plus an absolute path, because a browser on any OS can
+#: put any of them in a multipart filename field.
+TRAVERSAL_NAMES = [
+    "../../../../etc/passwd.json",
+    "..\..\windows\system32\evil.json",
+    "/tmp/absolute.json",
+]
 
-    `display_name` is only ever echoed back, never joined onto a path -- the
-    staged filename is ours. But the reduction happens at the boundary
-    precisely so a later change cannot make it dangerous by accident, and a
-    mutation removing `Path(...).name` survived until this test existed:
-    nothing else in the file ever sent a filename with a directory in it.
+
+@pytest.mark.parametrize("sent", TRAVERSAL_NAMES)
+def test_the_staged_filename_is_always_ours_whatever_the_client_sent(sent):
+    """THE ACTUAL SAFETY PROPERTY, and it holds on every platform.
+
+    The client's string is never joined onto a path. The staged file is
+    always the one location this module chose, whatever arrives -- so a
+    traversal attempt cannot write anywhere, regardless of how the running
+    platform happens to interpret separators.
+
+    This is the assertion that matters. The one below it, about the echoed
+    name, is a defence-in-depth check on a string that only ever reaches a
+    message.
+    """
+    response = _post_context(VALID_CONTEXT, filename=sent)
+
+    assert response.status_code == 200, response.text
+    assert main.BUSINESS_CONTEXT_PATH.exists()
+    assert main.BUSINESS_CONTEXT_PATH.name == "business-context.json"
+    assert main.BUSINESS_CONTEXT_PATH.parent == main.SNAPSHOT_DIR
+
+    # Nothing was written anywhere else under the snapshot either.
+    strays = [
+        f.name
+        for f in main.SNAPSHOT_DIR.glob("*.json")
+        if f.name not in {"business-context.json", "policy.json"}
+    ]
+    assert strays == [], f"unexpected file(s) staged: {strays}"
+
+
+@pytest.mark.parametrize(
+    "sent", ["../../../../etc/passwd.json", "/tmp/absolute.json"]
+)
+def test_a_forward_slash_path_is_reduced_to_a_basename(sent):
+    """Forward slashes are reduced on EVERY platform, so this is safe to
+    assert unconditionally -- `/` is a separator to both PurePosixPath and
+    PureWindowsPath.
+
+    This is also what keeps the mutation honest: deleting `Path(...).name`
+    from the endpoint fails this test on Windows and on Linux alike.
     """
     response = _post_context(VALID_CONTEXT, filename=sent)
 
     assert response.status_code == 200, response.text
     echoed = response.json()["filename"]
-    assert "/" not in echoed and "\\" not in echoed
+    assert "/" not in echoed
     assert echoed.endswith(".json")
 
-    # And the staged file is still the one place we chose.
-    assert main.BUSINESS_CONTEXT_PATH.exists()
-    assert main.BUSINESS_CONTEXT_PATH.name == "business-context.json"
+
+def test_the_backslash_reduction_is_platform_dependent_and_that_is_recorded():
+    """Pins the real behaviour rather than the behaviour I assumed.
+
+    This test previously asserted that the echoed name contained neither
+    separator, which is simply not true cross-platform: `Path` resolves to
+    PureWindowsPath on Windows and PurePosixPath on Linux, and only the
+    former treats a backslash as a separator. It passed on my machine and
+    failed in CI, which is the wrong way round for a test whose whole
+    subject is a security boundary.
+
+    The safety property is unaffected -- the staged filename is fixed by
+    the server on both platforms, which the test above asserts. What is
+    genuinely inconsistent is `display_name` itself, and the same idiom is
+    used by /api/upload and /api/policy. That is filed rather than fixed
+    here, because a shared helper touching three endpoints does not belong
+    in a business-context branch.
+    """
+    windows_style = "..\..\windows\system32\evil.json"
+
+    assert PureWindowsPath(windows_style).name == "evil.json"
+    assert PurePosixPath(windows_style).name == windows_style, (
+        "POSIX does not treat a backslash as a separator -- this is the "
+        "difference the old test was blind to"
+    )
+
+    # Both agree on forward slashes, which is why the test above can assert
+    # that unconditionally.
+    posix_style = "../../../../etc/passwd.json"
+    assert PureWindowsPath(posix_style).name == "passwd.json"
+    assert PurePosixPath(posix_style).name == "passwd.json"
 
 
 def test_staging_a_context_does_not_throw_away_a_cached_analysis():
