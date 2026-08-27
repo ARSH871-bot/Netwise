@@ -565,6 +565,90 @@ and it is the same shape this project has already found unenforced in a
 docstring and a JS comment. So the verification is a checklist you fill in and
 paste into the PR, not a claim you make.
 
+
+### M-2 — define "current", because M-1 delegated it to a feature we do not have
+
+**M-1 is mine, and this corrects it.**
+
+M-1's justification ends:
+
+> GitHub already marks a review stale when the branch moves, so the condition
+> is **observable rather than argued**.
+
+That sentence is false for this repository, and the same document says why
+300 lines earlier. Auto-dismissing an approval when new commits arrive is
+`dismiss_stale_reviews` — a **branch protection** setting. §6 states plainly
+that branch protection needs GitHub Pro or a public repo and that we are
+deliberately private. Confirmed against the API:
+
+```
+GET /repos/ARSH871-bot/Netwise/branches/main/protection
+-> "Not Found"
+```
+
+So M-1 made "current" the load-bearing word and then delegated checking it to a
+mechanism that has never been switched on. **Nothing marks anything stale.**
+
+**Measured, this week, three times:**
+
+```
+#211   approved commit 1; a fix landed after it. The approval stayed green
+       over a commit nobody had read. Found by comparing dates by hand.
+
+#213   a push landed 53 seconds after an approval. GitHub recorded the review
+       against the NEW head, so it did not even look stale -- the author
+       stopped and asked rather than trusting it.
+
+#181   4 commits pushed after a changes-requested   0 reviews, NO request
+#183   3 commits pushed after a changes-requested   0 reviews, NO request
+       Both sat six days. Chased with thirteen comments between them, into
+       threads nobody was notified to reload.
+```
+
+#241 fixes the second half — the author re-requests the review. This fixes the
+first half: what the reviewer owes when they get it back.
+
+**"Current" means:**
+
+1. **New work pushed since the approval** — the approval is void. Re-review it.
+2. **A merge-only push** — re-reading the diff is not required, because there
+   is no new work to read. **Confirming the merged result still passes is.**
+3. **The reviewer establishes which of the two it is**, by looking, rather than
+   accepting the author's description of their own push.
+
+**Why (2) is not "merges are exempt".** A clean merge changes behaviour. From
+this week, reviewing #181:
+
+```
+merged with main   0 conflicts
+result             7 failed, 548 passed
+```
+
+`#186` landed a policy fixture omitting `queries`; `#181` made that key
+required. Neither PR touched the other's lines, so there was nothing for git to
+conflict on — and the merged result was broken. An exemption reading *"only a
+merge, nothing you read changed"* waves exactly that through. Nothing anyone
+read had changed there either.
+
+**What this costs:** about two minutes, and it replaces re-reading a diff that
+is genuinely identical with running the suite on the combination — which is
+both cheaper and the check that would have caught #181.
+
+**What it does not fix:** still not enforceable, still §6. And it does not help
+a reviewer notice a PR came back — that is #241's half, and the two only work
+together.
+
+| Member | Why it touches them | Agreed |
+|---|---|---|
+| **Shubham** | M-1 is his; this corrects his own justification, and two of the three measurements above are approvals of his that went stale unnoticed | ✅ |
+| **Arsh** | Wrote #241's re-request rule, which this is the reciprocal of; stopped on #213 rather than trusting a fresh-looking approval | ⬜ |
+| **Ankeet** | Reviews under it, and #211 is the case where a stale tick sat over his branch | ⬜ |
+| **Samika** | Bound equally; owns the dashboard PRs most often reviewed then fixed | ⬜ |
+
+> **NOT RATIFIED.** One of four. Do not treat the wording above as agreed
+> because this merged — that is exactly the A-2 mistake M-1's own record spends
+> two paragraphs on, and it would be the fifth instance of the family.
+
 ### When this applies
 
 - A **major** version bump of anything whose real behaviour lives outside CI:
