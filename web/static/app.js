@@ -725,6 +725,57 @@ function addSkippedNotes(notes) {
  * nobody dares remove.
  * ------------------------------------------------------------------------ */
 
+/**
+ * Render one /api/propose response.
+ *
+ * THE SHAPE, from ai/propose.py:
+ *
+ *     { request_understood: string | null,
+ *       proposed_change:   {device, filter, line} | null,
+ *       impact:            F-1 findings,
+ *       verified:          bool,
+ *       warning:           bool,
+ *       grounded:          bool,
+ *       answer:            string }
+ *
+ * TWO RULES INHERITED FROM addResponse(), FOR THE SAME REASONS
+ *
+ *   1. The translated request is always shown back, above everything else.
+ *      ai/propose.py matches against a closed template and calls no model
+ *      in either direction; that narrow scope is only SAFE, rather than
+ *      merely limited, because the person who asked can read what was
+ *      actually generated and say "that is not what I meant". Here it
+ *      matters MORE than in the chat pane: a mistranslated question
+ *      produces a wrong answer, while a mistranslated request produces a
+ *      config line somebody might paste into a device.
+ *
+ *   2. A refusal never looks like a lesser success.
+ *      `grounded !== true`, not `=== false`, so a missing or malformed key
+ *      lands on the side that claims LESS -- the same cautious default the
+ *      chat pane and the explanation byline both use.
+ */
+function addProposeResponse(result) {
+  const log = document.getElementById("propose-log");
+  const exchange = el("div", "exchange");
+
+  // Shown whenever the server understood the request at all. On a refusal
+  // this is null, because there is no generated line to show -- the answer
+  // then carries the reason on its own.
+  if (result.request_understood) {
+    exchange.appendChild(el("div", "understood", result.request_understood));
+  }
+
+  const refused = result.grounded !== true;
+
+  exchange.appendChild(
+    el("div", `message system${refused ? " refusal" : ""}`, result.answer)
+  );
+
+  log.appendChild(exchange);
+  log.scrollTop = log.scrollHeight;
+  return exchange;
+}
+
 function addProposeMessage(text, who) {
   const log = document.getElementById("propose-log");
   const node = el("div", `message ${who}`, text);
@@ -777,15 +828,7 @@ function setUpProposeChange() {
 
       if (!response.ok) throw new Error(`server returned ${response.status}`);
 
-      // The response rendering lands with #183. Until then this says so
-      // rather than showing fields it has not been designed to show --
-      // half-rendering a warning is worse than not rendering it.
-      await response.json();
-      addProposeMessage(
-        "The endpoint answered. Displaying the proposed change and its " +
-          "warning is not built yet — see #183.",
-        "system pending"
-      );
+      addProposeResponse(await response.json());
     } catch (error) {
       // Nothing was simulated, so nothing is known. Same reasoning as the
       // chat pane's catch: "could not be asked" and "was refused" are the
