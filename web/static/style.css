@@ -389,6 +389,19 @@ body {
   color: var(--ink-soft);
 }
 
+/* --- Provenance: jumping here from an explanation (#236) -----------------
+   :target fires when the URL fragment matches this element's id, which is
+   exactly what happens after following a .evidence-link. A brief, neutral
+   ring, not the --ai violet: this block is Batfish's own words, and giving
+   it the "a model wrote this" colour on arrival would contradict the whole
+   point of .ai-explanation's colour rule two comments below. Wayfinding, not
+   authorship. */
+.evidence:target {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px var(--ink);
+  scroll-margin-top: 1rem;
+}
+
 /* --- Severity variants: status="found" ONLY ------------------------------ */
 .finding.high {
   border-left-color: var(--high);
@@ -570,6 +583,38 @@ body {
   margin: 0.55rem 0 0;
   font-style: italic;
   font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
+/* --- The provenance link (#236) -------------------------------------------
+   Sits inside .ai-explanation, model or fallback alike -- the acceptance
+   criterion is that BOTH show where they came from, not just the model one.
+   A plain <a href="#evidence-N">, styled as a link rather than a button,
+   because it is one: normal browser affordances (open in new tab, copy
+   link) work with no JavaScript, and app.js never attaches a click handler
+   to it. */
+.evidence-link {
+  display: block;
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ai-ink);
+}
+
+.ai-explanation.fallback .evidence-link {
+  color: var(--ink-soft);
+  text-decoration-color: var(--line);
+}
+
+/* --- status="found", but no explanation exists (#236) ---------------------
+   Not .blind-warning: that class means "this check did not run", which is
+   not what happened here -- the check ran and found a real problem. This is
+   a narrower, quieter claim: the explanation attempt did not leave prose
+   behind, so the evidence directly above is what the reader has. */
+.no-explanation {
+  margin: 0.55rem 0 0;
+  font-size: 0.8rem;
+  font-style: italic;
   color: var(--ink-soft);
 }
 
