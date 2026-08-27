@@ -97,7 +97,7 @@ def test_a_model_explanation_links_to_its_own_evidence(rendered):
 def test_a_fallback_explanation_links_to_its_own_evidence_too(rendered):
     """Acceptance criterion: 'a fallback explanation shows provenance too'."""
     nodes = rendered["modelAndFallback"]
-    evidence_id = _evidence_id_for(nodes, "acl_in line 10 denies 10.10.10.0/24")
+    evidence_id = _evidence_id_for(nodes, "acl_in line 22 denies 10.20.30.0/24")
 
     fallback_blocks = _by_class(nodes, "ai-explanation fallback")
     assert len(fallback_blocks) == 1
@@ -105,9 +105,9 @@ def test_a_fallback_explanation_links_to_its_own_evidence_too(rendered):
     links = _by_class(nodes, "evidence-link")
     assert len(links) == 2, "the fallback explanation must get a link too"
     # The fixture only has two findings, so the second link is the fallback
-    # one; confirmed structurally below rather than assumed.
+    # one; checked against its own evidence id, not just any evidence id.
     fallback_link = links[1]
-    assert fallback_link["href"].startswith("#evidence-")
+    assert fallback_link["href"] == f"#{evidence_id}"
 
 
 @needs_node

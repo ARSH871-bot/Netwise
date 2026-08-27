@@ -122,7 +122,8 @@ const FALLBACK_EXPLAINED = {
   ...BASE,
   id: "AC-002",
   summary: "A second, unrelated finding",
-  explanation: "An internal subnet is blocked. acl_in line 10 denies 10.10.10.0/24.",
+  evidence: { detail: "acl_in line 22 denies 10.20.30.0/24", source: "rtr-us5:acl_in" },
+  explanation: "A different internal subnet is blocked. acl_in line 22 denies 10.20.30.0/24.",
   explanation_source: "fallback",
 };
 
