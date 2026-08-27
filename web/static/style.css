@@ -794,3 +794,26 @@ body {
   font-weight: 600;
   color: var(--ink);
 }
+
+/* --- The simulated impact list (US-14) ----------------------------------- *
+   No card styling of its own, deliberately. The cards inside are built by
+   renderFinding(), so they ARE dashboard finding cards and must look like
+   them -- an amber "could not check" here means exactly what it means
+   there. All this rule does is group them under a heading and indent them
+   enough to read as belonging to the proposal above. */
+.impact {
+  margin-top: 0.6rem;
+}
+
+.impact-heading {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-bottom: 0.4rem;
+}
+
+.impact .finding {
+  margin-bottom: 0.5rem;
+}

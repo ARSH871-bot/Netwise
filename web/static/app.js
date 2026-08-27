@@ -779,6 +779,13 @@ function addProposeResponse(result) {
     exchange.appendChild(renderProposedChange(result.proposed_change));
   }
 
+  // What the simulation actually found. Empty on a refusal, and empty on a
+  // change with no detected effect -- both correctly render nothing here,
+  // because the answer text already says which of the two it was.
+  if (result.impact && result.impact.length) {
+    exchange.appendChild(renderImpact(result.impact));
+  }
+
   log.appendChild(exchange);
   log.scrollTop = log.scrollHeight;
   return exchange;
@@ -838,6 +845,58 @@ function renderProposedChange(change) {
   );
 
   return card;
+}
+
+/**
+ * The simulated impact, rendered with the EXISTING finding-card renderer.
+ *
+ * WHY renderFinding() AND NOT A SECOND CARD BUILDER
+ *     These are ordinary F-1 findings. `analysis/change_impact.py` produced
+ *     them, the pipeline validated them, and /api/propose attaches the same
+ *     plain-English explanation /api/findings attaches. Building a second
+ *     renderer for them would mean two places that decide what an amber
+ *     "could not check" card looks like -- and the moment those two drift,
+ *     one of them is showing a blind spot as something else.
+ *
+ *     That is not hypothetical for this pane specifically. A propose
+ *     response can carry a PROVEN high-severity opening beside a check that
+ *     could not run (#183: `verified` and `warning` are separate booleans
+ *     precisely so one cannot swallow the other). Both of those have to
+ *     render correctly, and renderFinding() is the code that already knows
+ *     how -- including the "this is not a clean result" sentence on a blind
+ *     card, which a hand-rolled version here would almost certainly omit.
+ *
+ * ORDERING MATCHES THE DASHBOARD, AND FOR THE DASHBOARD'S REASON
+ *     Errors first, then found worst-first, then clean. A check that did
+ *     not run is the thing most likely to mislead someone reading quickly,
+ *     so it goes where it cannot be missed. Sorting the impact list by
+ *     severity alone would bury a "could not verify" under three
+ *     medium-severity diffs.
+ */
+function renderImpact(impact) {
+  const box = el("div", "impact");
+
+  box.appendChild(
+    el(
+      "div",
+      "impact-heading",
+      "Simulated impact — what changed when this line was applied to a copy"
+    )
+  );
+
+  const blind = impact.filter((f) => f.status === "error");
+  const problems = impact
+    .filter((f) => f.status === "found")
+    .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+  const clean = impact.filter((f) => f.status === "none");
+
+  // Exactly the variant/icon/badge triples renderFindings() uses, so an
+  // impact card and a dashboard card of the same status are the same card.
+  blind.forEach((f) => box.appendChild(renderFinding(f, "blind", "⚠", "could not check")));
+  problems.forEach((f) => box.appendChild(renderFinding(f, f.severity, "●", f.severity)));
+  clean.forEach((f) => box.appendChild(renderFinding(f, "clean", "✓", "checked")));
+
+  return box;
 }
 
 function addProposeMessage(text, who) {
