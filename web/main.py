@@ -38,6 +38,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ai.explain import explain_with_source
+from ai.propose import propose_change
 from ai.query import answer_question
 from analysis import findings, pipeline as analysis_pipeline
 from analysis.pfsense_convert import PfSenseConversionError, convert as pfsense_convert
@@ -920,6 +921,58 @@ def ask_question(request: AskRequest) -> Dict[str, Any]:
         }
 
     return answer_question(request.question, bf)
+
+
+class ProposeRequest(BaseModel):
+    request: str
+
+
+@app.post("/api/propose")
+def propose_change_endpoint(body: ProposeRequest) -> Dict[str, Any]:
+    """Propose one config change from plain English, and simulate its
+    impact before returning it (US-13, US-14).
+
+    Always returns ai.propose.propose_change()'s shape (request_understood,
+    proposed_change, impact, verified, warning, grounded, answer), whether
+    the request was understood or refused. Never a 500 for an operational
+    failure -- no upload yet, an unreachable Batfish, or a request that
+    does not resolve are all refusals in the same shape, the same
+    convention /api/ask and /api/findings already hold.
+
+    propose_change() connects and loads the snapshot fresh itself, the same
+    "no caching" choice /api/ask already makes for answer_question() -- this
+    endpoint does no connecting of its own, unlike /api/ask, because
+    propose_change() also needs to read the raw config text to generate and
+    apply a candidate line, which answer_question() never does.
+
+    NEVER APPLIED TO A LIVE DEVICE, and never to the uploaded snapshot
+    itself. propose_change() only ever writes to a throwaway copy -- see its
+    own module docstring and CLAUDE.md's non-negotiable constraint 4. This
+    endpoint adds no write path of its own.
+
+    `impact`'s status="found" findings get the same plain-English
+    explanation /api/findings already attaches to a found finding (US-19),
+    reusing _attach_explanations() rather than a second mechanism -- a
+    warning naming the exact ACL lines that changed is more useful read in
+    plain English than as a raw Batfish diff.
+    """
+    if not _uploaded:
+        return {
+            "request_understood": None,
+            "proposed_change": None,
+            "impact": [],
+            "verified": False,
+            "warning": False,
+            "grounded": False,
+            "answer": (
+                "Upload a config first, there is nothing to propose a "
+                "change against yet."
+            ),
+        }
+
+    result = propose_change(body.request, SNAPSHOT_DIR)
+    result["impact"] = _attach_explanations(result["impact"])
+    return result
 
 
 class NoCacheStatic(StaticFiles):

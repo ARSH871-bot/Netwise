@@ -376,3 +376,90 @@ def test_routing_scoping_card_id_cannot_collide_with_a_statement(monkeypatch):
 
     assert card["id"] == f"RT-{routing.SKIPPED_NUMBER:03d}"
     assert routing.SKIPPED_NUMBER not in {r["number"] for r in routing.ROUTES}
+
+
+# ---------------------------------------------------------------------------
+# #228 -- a snapshot with devices no rule covers must not report a green tick.
+#
+# The tests above answer "our rules name a device this snapshot lacks". These
+# answer the reverse, which nothing checked: devices PRESENT that no rule says
+# anything about. Measured before the fix, on a 50-device snapshot containing
+# rtr-us5:
+#
+#     PC-000  status="none"  "No issues found by policy compliance"
+#     devices actually asserted about: 1 of 50
+#
+# Adding one covered device to a snapshot of uncovered ones flipped the verdict
+# from "could not check" to "all clear" while the other 49 stayed exactly as
+# unchecked. That is the found/none confusion F-4 exists to prevent, arriving
+# through coverage rather than through a failed query.
+# ---------------------------------------------------------------------------
+
+
+def test_a_partly_covered_snapshot_never_reports_all_clear(monkeypatch):
+    """THE #228 REGRESSION. One covered device among fifty is not "all clear"."""
+    present = {"rtr-us5"} | {"rtr-dev%03d" % i for i in range(49)}
+    results = _run_policy_with_devices(monkeypatch, present)
+
+    assert not any(f["status"] == "none" for f in results), (
+        "a snapshot where 49 of 50 devices were never examined must not "
+        f"produce a clean sentinel; got {[(f['id'], f['status']) for f in results]}"
+    )
+    assert any(f["status"] == "error" for f in results)
+
+
+def test_the_uncovered_card_says_how_many_and_which(monkeypatch):
+    """"Some devices were skipped" is not actionable. Name the count and names."""
+    present = {"rtr-us5", "rtr-edge", "rtr-dmz"}
+    results = _run_policy_with_devices(monkeypatch, present)
+
+    card = next(f for f in results if f["id"] == "PC-049")
+    assert "2 of 3" in card["summary"], card["summary"]
+    detail = card["evidence"]["detail"]
+    # what WAS checked, so the reader can see the scope rather than infer it
+    assert "rtr-us5" in detail
+    # and what was not
+    assert "rtr-edge" in detail and "rtr-dmz" in detail
+    assert "Nothing is claimed about" in detail
+
+
+def test_a_fully_covered_snapshot_still_reports_all_clear(monkeypatch):
+    """The fix must not make the clean sentinel unreachable.
+
+    If every device present is one the rules name, "all clear" is the honest
+    answer and must still be given. A guard that never lets a green tick
+    through is as useless as one that always does.
+    """
+    results = _run_policy_with_devices(monkeypatch, {"rtr-us5"})
+
+    assert [f["id"] for f in results] == ["PC-000"]
+    assert results[0]["status"] == "none"
+
+
+def test_nothing_applicable_reports_once_not_twice(monkeypatch):
+    """With NO rule running, PC-050 already says it -- PC-049 must stay quiet.
+
+    "Your rules are about a device that is not here" and "these devices are not
+    covered" are the same fact from two directions. Printing both rebuilds the
+    per-rule noise #45 and #50 removed, one level up.
+    """
+    results = _run_policy_with_devices(monkeypatch, {"rtr-hq", "rtr-branch"})
+
+    assert [f["id"] for f in results] == ["PC-050"]
+
+
+def test_the_uncovered_id_cannot_collide_with_any_other_band():
+    """PC-049 must stay clear of the rule band and the rule-error band.
+
+    The error band is SKIPPED_NUMBER + rule number, so it grows with the rule
+    list. 49 sits below the offset; this fails loudly if a 49th rule is ever
+    added rather than silently emitting a duplicate id.
+    """
+    numbers = [r["number"] for r in policy_compliance.POLICY_RULES]
+    offset = policy_compliance.ERROR_NUMBER_OFFSET
+    uncovered = policy_compliance.UNCOVERED_NUMBER
+
+    assert uncovered not in numbers, "collides with a rule's violation id"
+    assert uncovered not in {n + offset for n in numbers}, "collides with a rule error id"
+    assert uncovered != policy_compliance.SKIPPED_NUMBER
+    assert uncovered != 0, "must not collide with the clean sentinel"

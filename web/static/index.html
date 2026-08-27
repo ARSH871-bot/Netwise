@@ -30,9 +30,16 @@
         <!-- ---- Upload ---- -->
         <div class="card upload">
           <h2>Analyse a config</h2>
+          <!-- The vendor list is what we have FIXTURES for, not what the
+               engine might manage. Each one named here has a committed
+               fixture carrying a deliberate fault, and a test asserting we
+               still find it -- see tests/test_vendor_fixtures.py. Adding a
+               name here without adding that evidence would be a claim we
+               have not checked. -->
           <p class="hint">
-            Cisco IOS config files (.cfg, .conf, .txt), or a PF Sense
-            config.xml export, up to 2&nbsp;MB. Nothing leaves this machine.
+            Config files (.cfg, .conf, .txt), up to 2&nbsp;MB &mdash; Cisco
+            IOS, Cisco NX-OS, Arista EOS and Juniper JunOS, or a PF Sense
+            config.xml export. Nothing leaves this machine.
           </p>
 
           <label class="file-picker">

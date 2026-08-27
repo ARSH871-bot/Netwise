@@ -37,6 +37,20 @@ from ai.explain import (
     explain_with_source,
 )
 
+# ---------------------------------------------------------------------------
+# Every test in this file stubs the generator, so in its world the model IS
+# reachable -- #225 added a port probe before generation, and without this
+# the probe would answer for the real machine (no Ollama) and short-circuit
+# the very path these tests exist to exercise.
+#
+# The probe is orthogonal to what is tested here: this file is about what
+# happens GIVEN that we called the model and got something back. Its own
+# behaviour is tested in tests/test_ollama_probe.py.
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _model_is_reachable(monkeypatch):
+    monkeypatch.setattr(explain_module, "_ollama_is_reachable", lambda: True)
+
 # --- _looks_like_a_result_claim ----------------------------------------------
 
 
