@@ -67,24 +67,40 @@ particular device denies a particular flow, and so on.
 
 You **can** now supply your own policy: there is a documented format
 ([`docs/design/user-policy-format.md`](docs/design/user-policy-format.md)), a
-validating loader (`analysis/policy.py`, #173), and an upload endpoint with a
-file picker (`POST /api/policy`, #186). **It is validated and staged, and it is
-not yet applied to the analysis** — that wiring is #181, still open. So a policy
-you upload today is checked for correctness and then not used.
+validating loader (`analysis/policy.py`, #173), an upload endpoint with a file
+picker (`POST /api/policy`, #186), and **since #181 merged on 28 August one
+check actually reads it** — `policy_compliance` asserts your rules instead of
+our built-in examples, and every finding says which of the two it used.
 
-Until that lands, every assertion the analysis actually runs is still ours.
-Measured, on one config with only the device name changed:
+**This paragraph previously said a policy was "validated and staged, and not
+yet applied … checked for correctness and then not used."** That stopped being
+true when #181 landed. Recorded rather than quietly overwritten, because a
+README that understates what shipped sends people to the command line for
+something the dashboard already does.
+
+Measured on one config with only the device name changed, all three columns
+from `tools/stranger_config.py`:
 
 ```
-our device name      6 findings   access-control + policy-compliance
-a stranger's name    3 findings   access-control only
+fixture                         ours        stranger    + their policy
+                               f/n/e      our policy             f/n/e
+TOTAL                   12 /  3 /  7     3 /  0 / 15       8 /  1 / 22
 ```
 
-So on a network that is not ours, Netwise reports **dead ACL rules** and
-**references to structures that do not exist** — both genuinely useful, and
-both a long way short of the description at the top of this file. Everything
-else says, honestly, "could not check". Tracked as
-[#87](https://github.com/ARSH871-bot/Netwise/issues/87); it is the single
+**Policy-driven detections on a network that is not ours: 3 → 8.** Read the
+FOUND column: the error column rises in column three because our synthetic
+rules all name the filter `acl_in`, which the routing fixtures do not have, so
+those rules correctly report "could not check" rather than being skipped. The
+tool says so itself when you run it.
+
+**The gap is narrowed, not closed**, and the honest statement of what remains
+is that two of the three checks still ignore you: `access_control` and
+`routing` assert our fixtures' device names whatever you upload. So on a
+network that is not ours and with no policy of your own, Netwise still reports
+only **dead ACL rules** and **references to structures that do not exist** —
+both genuinely useful, both a long way short of the description at the top of
+this file. Everything else says, honestly, "could not check". Tracked as
+[#87](https://github.com/ARSH871-bot/Netwise/issues/87); it remains the single
 largest gap in the product.
 
 **Two further limits worth knowing before you try it:**
@@ -129,8 +145,25 @@ Sprint records live in [`docs/`](docs/): [Sprint
   test suite run without it. What you lose is stated rather than hidden:
   **without Ollama the dashboard shows deterministic fallback text**, labelled
   *"Plain-English summary"* instead of *"AI explanation"*, so nothing on screen
-  claims a model wrote something a model did not. `tools/preflight.py` reports
-  the same thing before you start.
+  claims a model wrote something a model did not.
+
+  **`tools/preflight.py` does NOT report the same thing, and this paragraph
+  used to say it did** (#234). Its Ollama check opens port 11434 and stops
+  there — it never asks whether `netwise-warden` was built. Measured on 28
+  August by deleting the model from a working setup:
+
+  ```
+  service down                  preflight: [MISSING]   explanations: fallback
+  service up, model absent      preflight: [  OK   ]   explanations: fallback
+                                "READY -- everything, including the optional pieces"
+  service up, model built       preflight: [  OK   ]   explanations: model
+  ```
+
+  The middle row is the problem: a green tick, and a summary line claiming
+  every optional piece works, on a machine that cannot produce one
+  model-written explanation. Until #234 is fixed, check the dashboard itself —
+  a violet *"AI explanation"* byline means a model wrote it, grey
+  *"Plain-English summary"* means it did not.
 
 ## Getting started
 

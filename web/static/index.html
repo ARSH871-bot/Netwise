@@ -57,9 +57,22 @@
           <!-- ---- Policy (optional) ---- #87
                Its own picker, not a second accepted extension on the config
                one: a policy goes somewhere else, is validated differently,
-               and fails differently. The hint says it is optional AND that it
-               is not yet applied, because a control that looks like it is
-               working is worse than one that says what it is waiting for. -->
+               and fails differently.
+
+               THIS COMMENT USED TO SAY THE HINT ANNOUNCES THE POLICY IS "NOT
+               YET APPLIED". The hint stopped saying that when #181 landed and
+               a user policy started reaching a check; the comment describing
+               the hint did not. Corrected 28 August, and left visible because
+               it is the smallest instance of this project's recurring fault --
+               one fact in two places, one copy updated -- and because the
+               stale copy was the one carrying the REASON for the wording,
+               which is the copy a future editor would have trusted.
+
+               What the hint must keep saying is WHICH checks read it. Not all
+               of them do: `access_control` and `routing` still assert our
+               built-in rules regardless. A control implying "your policy now
+               governs everything" would be the same overclaim pointing the
+               other way. -->
           <label class="file-picker policy-picker">
             <input type="file" id="policy-input" accept=".json" />
             <span>Choose a policy file (optional)</span>
