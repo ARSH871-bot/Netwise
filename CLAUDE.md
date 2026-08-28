@@ -582,13 +582,35 @@ TOTAL                   12 /  3 /  7     3 /  0 / 15       8 /  1 / 22
 ```
 
 The last figure read **20** here until 28 August, when re-running the tool
-gave **22**. What is established: `tools/stranger_config.py` is byte-identical
-since `57ce13d`, its `FIXTURES` list is the same five, and checking out
-`57ce13d` and running it there still prints 20 — so the tool did not change
-and the inputs did not change. Some check merged since then emits two more
-`could not check` findings on the stranger's-policy run. **Which one is not
-established**, and it is deliberately not guessed at here; the FOUND column,
-which is what answers #87, is unchanged at 3 → 8.
+gave **22**. Chased to the finding rather than left as a discrepancy.
+
+**It is `PC-049`, from @shubhamkataria2005's #229.** The extra two are one per
+*routing* fixture; the three `rtr-us5` fixtures are unchanged:
+
+```
+                       57ce13d      now
+routing-secure          7 err       8 err     + PC-049
+routing-missing-route   7 err       8 err     + PC-049
+rtr-us5-*               unchanged
+```
+
+```
+PC-049  policy_compliance  stranger-rtr-hq
+        1 of 2 device(s) in this config are not covered by any policy rule
+```
+
+The mechanism is the card doing exactly its job. Both routing fixtures carry
+**two** devices and the synthetic stranger policy names **one**, so one device
+is uncovered and #229's card says so. The `rtr-us5` fixtures are single-device
+and fully covered, so it never fires there.
+
+**And the number was stale the day it was written, not since.** `57ce13d` — the
+commit that wrote 20 — is dated **21 August**. `db90c19`, which added PC-049,
+landed on `main` via #229 on **27 August**, and #181 merged `main` into itself
+before landing on the **28th**. So by the time this figure reached `main` it
+was already 22; it was measured on a branch six days before the thing that
+changed it existed. The FOUND column, which is what answers #87, is unchanged
+at 3 → 8 throughout.
 
 **A number copied into a document is a measurement with an expiry date nobody
 wrote down.** Run `python -m tools.stranger_config` rather than trusting this
