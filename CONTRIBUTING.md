@@ -557,6 +557,188 @@ three people who review in bursts, and no rule changes that.
 
 ---
 
+## 5e. Verifying a dependency bump CI cannot check
+
+Some bumps cannot be validated by a green tick, and `requirements.txt` says so
+in a comment. **A comment is not a checkable artifact** — that is #138's point,
+and it is the same shape this project has already found unenforced in a
+docstring and a JS comment. So the verification is a checklist you fill in and
+paste into the PR, not a claim you make.
+
+
+### M-2 — define "current", because M-1 delegated it to a feature we do not have
+
+**M-1 is mine, and this corrects it.**
+
+M-1's justification ends:
+
+> GitHub already marks a review stale when the branch moves, so the condition
+> is **observable rather than argued**.
+
+That sentence is false for this repository. Auto-dismissing an approval when
+new commits arrive is `dismiss_stale_reviews` — a **branch protection**
+setting — and no protection is configured:
+
+```
+GET /repos/ARSH871-bot/Netwise/branches/main/protection
+-> "Not Found"
+```
+
+So M-1 made "current" the load-bearing word and then delegated checking it to a
+mechanism that has never been switched on. **Nothing marks anything stale.**
+
+> **This paragraph originally said the setting was unavailable "because we are
+> deliberately private", citing §6.** The repository is **public**
+> (`private: false`), so every protection setting is available and simply off.
+> The claim that matters — nothing marks anything stale — was verified against
+> the API and stands. The reason given for it was copied from another document
+> instead of checked, in an amendment arguing that a fact repeated from another
+> document is how facts rot. Corrected after @ARSH871-bot found the same stale
+> premise in `CLAUDE.md` §11 (#246). I queried `/branches/main/protection` and
+> not `/repos/...` — one call short of the whole answer.
+>
+> **It changes nothing about the definition below.** Recorded rather than
+> silently edited because M-2 is unratified, and an unratified amendment must
+> not shift meaning while people are deciding whether to sign it.
+
+**Measured, this week, three times:**
+
+```
+#211   approved commit 1; a fix landed after it. The approval stayed green
+       over a commit nobody had read. Found by comparing dates by hand.
+
+#213   a push landed 53 seconds after an approval. GitHub recorded the review
+       against the NEW head, so it did not even look stale -- the author
+       stopped and asked rather than trusting it.
+
+#181   4 commits pushed after a changes-requested   0 reviews, NO request
+#183   3 commits pushed after a changes-requested   0 reviews, NO request
+       Both sat six days. Chased with thirteen comments between them, into
+       threads nobody was notified to reload.
+```
+
+#241 fixes the second half — the author re-requests the review. This fixes the
+first half: what the reviewer owes when they get it back.
+
+**"Current" means:**
+
+1. **New work pushed since the approval** — the approval is void. Re-review it.
+2. **A merge-only push** — re-reading the diff is not required, because there
+   is no new work to read. **Confirming the merged result still passes is.**
+3. **The reviewer establishes which of the two it is**, by looking, rather than
+   accepting the author's description of their own push.
+
+**Why (2) is not "merges are exempt".** A clean merge changes behaviour. From
+this week, reviewing #181:
+
+```
+merged with main   0 conflicts
+result             7 failed, 548 passed
+```
+
+`#186` landed a policy fixture omitting `queries`; `#181` made that key
+required. Neither PR touched the other's lines, so there was nothing for git to
+conflict on — and the merged result was broken. An exemption reading *"only a
+merge, nothing you read changed"* waves exactly that through. Nothing anyone
+read had changed there either.
+
+**What this costs:** about two minutes, and it replaces re-reading a diff that
+is genuinely identical with running the suite on the combination — which is
+both cheaper and the check that would have caught #181.
+
+**What it does not fix:** still not enforceable, still §6. And it does not help
+a reviewer notice a PR came back — that is #241's half, and the two only work
+together.
+
+| Member | Why it touches them | Agreed |
+|---|---|---|
+| **Shubham** | M-1 is his; this corrects his own justification, and two of the three measurements above are approvals of his that went stale unnoticed | ✅ |
+| **Arsh** | Wrote #241's re-request rule, which this is the reciprocal of; stopped on #213 rather than trusting a fresh-looking approval | ⬜ |
+| **Ankeet** | Reviews under it, and #211 is the case where a stale tick sat over his branch | ⬜ |
+| **Samika** | Bound equally; owns the dashboard PRs most often reviewed then fixed | ⬜ |
+
+> **NOT RATIFIED.** One of four. Do not treat the wording above as agreed
+> because this merged — that is exactly the A-2 mistake M-1's own record spends
+> two paragraphs on, and it would be the fifth instance of the family.
+
+### When this applies
+
+- A **major** version bump of anything whose real behaviour lives outside CI:
+  `pandas` (Batfish answers arrive as DataFrames), `pybatfish` (pinned, must
+  match the container), `fastapi` (the endpoints are only exercised against a
+  real snapshot).
+- Any bump where you cannot say what would break if it were wrong.
+
+A patch or minor floor raise on something CI genuinely exercises does not need
+this. Say so in the PR rather than filling the form in with shrugs.
+
+### The checklist — paste it into the PR and fill it in
+
+```
+Dependency:            <name>  <old> -> <new>
+Verified by:           <who>          Date: <when>
+Environment matches requirements.txt: python -m tools.preflight   -> OK / BROKEN
+
+[ ] Full suite on the NEW version          <count> passed
+[ ] Real Batfish pipeline, not fakes       <fixtures run, statuses>
+[ ] The feature that touches it most       <what, and the result>
+[ ] End to end through the web layer       <upload -> findings -> ask>
+[ ] Results identical to the old version?  yes / no -- if no, what differs
+```
+
+**The third and fourth lines are the ones that matter.** The suite passing on a
+new major mostly proves the tests that do *not* use the dependency still pass —
+`tests/` uses fakes for DataFrames, so on a pandas bump the unit suite is
+nearly silent about the thing being bumped.
+
+### Worked example — pandas `>=2.0` → `>=3.0.5` (#131)
+
+Recorded here because a filled-in example is worth more than a blank form, and
+because this one is a **second verification by a different method** — the bump
+had already been checked in an isolated venv and reported in a
+`requirements.txt` comment; this one used the real container.
+
+**Corrected after review.** This paragraph said *"Two people getting the same
+answer by different routes"*. It was not two people. @patelankeet2 checked and
+both entries are mine — `bd5c0254` (14 August, the `requirements.txt` comment)
+and `14b2ff2` (18 August, this checklist). Two methods, one person.
+
+That distinction is the whole subject of this section, so getting it wrong here
+is worth leaving on the page rather than quietly rewording. **Two methods rule
+out a broken method; two people also rule out a person reading their own result
+back.** Only the first claim is supported, and the second is the one the
+original sentence made.
+
+He approved the PR and flagged this separately rather than blocking on it,
+which is the right call for a framing error in something factually correct —
+and it is still the more valuable half of the review.
+
+```
+Dependency:            pandas  2.3.3 -> 3.0.5
+Verified by:           Arsh            Date: 17 August 2026
+Environment matches requirements.txt: OK (after upgrading; it was BROKEN before)
+
+[x] Full suite on the NEW version          375 passed, ruff clean
+[x] Real Batfish pipeline, not fakes       rtr-us5-insecure  {found 5, error 1}
+                                           rtr-us5-messy     {found 6, error 1}
+                                           routing-missing-route {found 1, error 2}
+                                           unparseable       {error 3}
+[x] The feature that touches it most       change_impact: CH-001 high, CH-002 high
+[x] End to end through the web layer       upload 200 -> {found 5, error 1};
+                                           /api/ask grounded=True
+[x] Results identical to the old version?  yes -- every count and severity
+```
+
+**How this bump was found to need re-checking at all** is the part worth
+keeping. The local environment had pandas 2.3.3 while `requirements.txt`
+declared `>=3.0.5`, so every local run was quietly testing the *old* major
+while CI tested the new one — both green, on the same commit, measuring
+different things. `tools/preflight.py` reported "all importable" because they
+all import perfectly well. That gap is closed by the version check added in
+#162; **before quoting a local number, run `python -m tools.preflight`.**
+
+---
+
 ## 6. This is an agreement, not an enforcement
 
 We cannot turn on branch protection — it needs GitHub Pro or a public repo, and

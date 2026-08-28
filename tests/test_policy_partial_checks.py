@@ -62,6 +62,14 @@ def two_arm_rule(monkeypatch):
     here would take the "nothing applies to this config" path and prove nothing
     about arm isolation. Device scoping has its own tests in
     tests/test_device_scoping.py.
+
+    `violation_severity`, not `severity` (#87). The check read `severity` until
+    the policy loader was wired in; a loaded entry never has that key, because
+    #159 D1 settled on one vocabulary and `analysis/policy.py` normalises to
+    it. Handing a loaded policy to the old check raised KeyError on exactly
+    this key -- measured, and the reason the rename had to happen before the
+    wiring. This fixture failing on the rename is the rename being
+    load-bearing rather than cosmetic.
     """
     monkeypatch.setattr(policy_compliance.snapshot, "device_names",
                         lambda bf: {"rtr-us5"})

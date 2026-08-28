@@ -63,6 +63,31 @@ def _post_config(text=b"hostname rtr-us5\n", filename="device.cfg"):
     )
 
 
+# COMPLETED IN #181, AND THE REASON IS WORTH READING.
+#
+#     This fixture was named VALID_POLICY and was not a valid policy. It
+#     loaded cleanly, and then died the moment anything read it. Measured on
+#     `main`, feeding the loaded entry to the check it is written for:
+#
+#         loader accepted: ['description', 'filter', 'kind', 'node',
+#                           'violation_severity']
+#         run() RAISED KeyError: 'queries'
+#
+#     `queries` is the traffic space a rule asserts about -- without it there
+#     is nothing to ask Batfish. `violation_summary` is the finding's summary
+#     and `number` becomes its id. The check dereferences all three.
+#
+#     So the upload tests demonstrated an unusable policy as an acceptable
+#     one, in the feature whose entire job is accepting a user's policy file.
+#     A user copying this shape would have been told "accepted and staged"
+#     and then seen the check fail -- or, for the three keys that are only
+#     read when a violation is found, seen "all clear" every run until the
+#     day it caught something.
+#
+#     #181 makes the loader require what the check dereferences, which is
+#     what turned this fixture red. The fixture is completed rather than the
+#     validation relaxed: these tests are about the UPLOAD path, and they
+#     test it just as well with a policy that would actually work.
 VALID_POLICY = {
     "device": "rtr-us5",
     "policy_compliance": [
@@ -71,6 +96,13 @@ VALID_POLICY = {
             "filter": "acl_in",
             "kind": "prohibition",
             "violation_severity": "high",
+            "violation_summary": "The internal network can reach the internet",
+            "queries": [
+                {
+                    "srcIps": "10.10.10.0/24",
+                    "dstIps": "0.0.0.0/0 \\ (218.8.104.58, 10.20.0.5)",
+                }
+            ],
         }
     ],
 }
@@ -155,6 +187,11 @@ def test_a_legacy_key_is_corrected_and_reported():
     would write it -- but REPORTED, because accepting silently is how one
     vocabulary splits back into the dialects D1 removed.
     """
+    # `queries` and `violation_summary` completed in #181, same reason as
+    # VALID_POLICY above: the loader now requires what the check
+    # dereferences. What this test is ABOUT is untouched -- `severity` is
+    # still the legacy spelling, and the assertions below still pin that it
+    # is corrected AND reported rather than swallowed.
     legacy = {
         "device": "rtr-us5",
         "policy_compliance": [
@@ -163,6 +200,8 @@ def test_a_legacy_key_is_corrected_and_reported():
                 "filter": "acl_in",
                 "kind": "prohibition",
                 "severity": "high",
+                "violation_summary": "The internal network can reach the internet",
+                "queries": [{"srcIps": "10.10.10.0/24", "dstIps": "0.0.0.0/0"}],
             }
         ],
     }

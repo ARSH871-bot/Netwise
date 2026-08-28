@@ -694,3 +694,183 @@ body {
 .chat-form button:hover {
   background: var(--ink-soft);
 }
+
+
+/* --- Propose a change (US-13/US-14) ------------------------------------- */
+/*
+   SAME FAMILY AS THE CHAT PANEL, DELIBERATELY.
+       Both take one plain-English sentence, both refuse rather than guess,
+       and both live in the right pane. Reusing `.chat-log` and `.chat-form`
+       rather than cloning them means the two cannot drift apart visually --
+       and if the chat panel's spacing is ever fixed, this is fixed with it.
+
+   THE ONE DIFFERENCE, AND WHY IT IS SMALL.
+       A rule and a heading, not a different colour or a different shape.
+       Asking a question is read-only; proposing a change produces a config
+       line somebody might paste into a real device. That is worth marking as
+       a distinct thing -- but not worth a visual language of its own, which
+       would suggest the two are less related than they are.
+*/
+
+.pane-divider {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 1.25rem 0 1rem;
+}
+
+/* Shorter than the chat log: this shell shows one exchange at a time, and a
+   tall empty box reads as something that failed to load. */
+.propose-log {
+  min-height: 6rem;
+  max-height: 18rem;
+}
+
+/* --- The generated config line (US-13) ----------------------------------- *
+   NOT STYLED AS A RESULT, AND THAT IS THE POINT.
+       A findings card reports something true about the network now. This
+       card reports something that does NOT exist yet -- a line Netwise
+       wrote, simulated, and is offering. Giving it the same solid card
+       treatment as a finding would put a proposal and a fact in the same
+       visual class.
+
+       So it reads as a quotation: a left rule and a tinted ground, the
+       vocabulary this stylesheet already uses for evidence rather than for
+       verdicts.
+
+   THE "NOT APPLIED" LINE IS NOT DECORATION.
+       CLAUDE.md's non-negotiable constraint is that Netwise never pushes to
+       a live device. ai/propose.py holds that structurally; this line holds
+       the user's understanding of it. It is deliberately not muted into
+       fine print -- it is the one sentence on this card that must survive a
+       glance. */
+.proposed-change {
+  margin-top: 0.6rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--surface-alt, #f8fafc);
+  border-left: 3px solid var(--line);
+  border-radius: 0 6px 6px 0;
+}
+
+.proposed-heading {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-bottom: 0.4rem;
+}
+
+.proposed-where {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.proposed-device,
+.proposed-filter {
+  font-size: 0.72rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: var(--line);
+  color: var(--ink);
+}
+
+.proposed-line {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  padding: 0.45rem 0.6rem;
+  background: var(--ink);
+  color: #f8fafc;
+  border-radius: 4px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.proposed-not-applied {
+  margin-top: 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* --- The simulated impact list (US-14) ----------------------------------- *
+   No card styling of its own, deliberately. The cards inside are built by
+   renderFinding(), so they ARE dashboard finding cards and must look like
+   them -- an amber "could not check" here means exactly what it means
+   there. All this rule does is group them under a heading and indent them
+   enough to read as belonging to the proposal above. */
+.impact {
+  margin-top: 0.6rem;
+}
+
+.impact-heading {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-bottom: 0.4rem;
+}
+
+.impact .finding {
+  margin-bottom: 0.5rem;
+}
+
+/* --- The pushback states (US-14) ----------------------------------------- *
+   THE AMBER "COULD NOT CHECK" FAMILY, NOT .rename-note.
+       This project has already made this exact choice once and got it wrong
+       first. A rename note is soft italic grey, which is right for
+       something we FIXED for the user; using it for an unusable business
+       context entry was found to be the weaker choice, because it filed a
+       live gap under the same heading as a spelling correction.
+
+       A proved opening is stronger still. It is not a heads-up, it is the
+       one thing on the screen the user most needs to read before acting on
+       a line this tool just wrote for them. So it wears --blind, the same
+       tokens a "could not check" finding wears, and it sits ABOVE the
+       answer rather than after it.
+
+   WHY THE WARNING IS FIRST AND THE VERIFICATION NOTE IS LAST
+       They are different claims. "This opens access" is a PROVEN fact from
+       the diff and belongs before the prose. "Some of the analysis could
+       not run" qualifies what follows and belongs after it. #183 keeps them
+       as separate booleans for exactly this reason -- one must never be
+       able to swallow the other -- and rendering them at opposite ends of
+       the exchange makes that structural rather than a matter of wording.
+
+   BORDERED ON ALL SIDES, not just a left rule: this is the one element in
+   the pane that must survive a glance. */
+.propose-warning {
+  margin-top: 0.6rem;
+  padding: 0.6rem 0.8rem;
+  background: var(--blind-fill);
+  color: var(--blind-ink);
+  border: 1px solid var(--blind);
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.propose-warning::before {
+  content: "⚠ Opens access";
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 0.25rem;
+}
+
+/* Quieter than the warning, louder than body text. "We could not see all of
+   it" is a real limit on the answer above, but it is not a proved problem,
+   and giving it equal weight would flatten the difference the backend works
+   to preserve. */
+.propose-unverified {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  border-left: 3px solid var(--blind);
+  color: var(--blind-ink);
+  font-size: 0.8rem;
+}

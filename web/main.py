@@ -24,21 +24,26 @@ THE SEAM
 """
 
 import hashlib
+from datetime import datetime, timezone
 import json
 import shutil
 import tempfile
+import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ai.explain import explain_with_source
+from ai.propose import propose_change
 from ai.query import answer_question
-from analysis import findings, pipeline as analysis_pipeline
+from analysis import findings, pipeline as analysis_pipeline, report
+from analysis.pfsense_convert import PfSenseConversionError, convert as pfsense_convert
 from analysis.policy import PolicyError, load_policy_file
 from web import mock_findings
 
@@ -54,26 +59,17 @@ from web import mock_findings
 # common when someone has copied a config out of a terminal.
 ALLOWED_EXTENSIONS = {".cfg", ".conf", ".txt"}
 
-# Extensions we RECOGNISE but cannot analyse yet. These get their own message.
+# Extensions we recognise as a PF Sense export and CONVERT before staging.
 #
-# Why this exists: the client's real firewall is PF Sense, which exports XML,
-# and Batfish does not read PF Sense XML natively (see CLAUDE.md section 7).
-# Telling them "that is not a config file we can read" would be wrong and would
-# look like a bug -- it plainly IS a config file. The honest answer is that we
-# recognise it and cannot analyse it YET, which is a known limitation rather
-# than a rejection of their file.
-UNSUPPORTED_EXTENSIONS = {
-    ".xml": (
-        "This looks like a PF Sense export. Netwise cannot analyse PF Sense "
-        "XML yet -- our analysis engine does not read that format natively, "
-        "and converting it is still open work."
-    ),
-    ".pfsense": (
-        "This looks like a PF Sense export. Netwise cannot analyse PF Sense "
-        "XML yet -- our analysis engine does not read that format natively, "
-        "and converting it is still open work."
-    ),
-}
+# Batfish does not read PF Sense XML natively (see CLAUDE.md section 7), so
+# analysis.pfsense_convert.convert() translates it into Cisco IOS text first,
+# which re-enters exactly the same staging path as an uploaded .cfg. This
+# used to be a flat rejection ("converting it is still open work") -- that
+# stopped being true once the converter existed; it was just never wired to
+# the upload path. See CLAUDE.md section 7 for what the converter can and
+# cannot model, and REFUSALS in pfsense_convert.py for exactly why it refuses
+# when it does.
+PFSENSE_EXTENSIONS = {".xml", ".pfsense"}
 
 # 2 MB. A router config is tens of kilobytes; a firewall config with large
 # object groups might reach a few hundred. Two megabytes is generous for a real
@@ -337,6 +333,57 @@ def _snapshot_fingerprint(configs_dir: Path) -> Optional[str]:
         return None
 
 
+def _staged_policy():
+    """The validated policy the user uploaded, or None if there is not one.
+
+    Returns None rather than raising when the staged file will not load.
+    That cannot normally happen -- `/api/policy` validates BEFORE staging,
+    so a file only reaches POLICY_PATH after `load_policy_file()` returns --
+    but a file edited on disk between upload and scan would otherwise take
+    down an endpoint that has nothing to do with it.
+
+    Falling back to None means "analyse against our built-in example rules",
+    which is exactly what the run would have done before a policy existed,
+    and `policy_compliance` says which of the two it used in every finding's
+    evidence. So the degraded path is still self-describing rather than
+    silently pretending the user's rules were applied.
+    """
+    if not POLICY_PATH.exists():
+        return None
+    try:
+        return load_policy_file(POLICY_PATH)
+    except (PolicyError, OSError):
+        return None
+
+
+def _analysis_key() -> Optional[str]:
+    """One cache key covering BOTH inputs the analysis depends on.
+
+    The config fingerprint alone is not enough once a policy can change the
+    result -- see the block comment in `get_findings()`. A policy that is
+    absent, present, or edited must each produce a different key.
+    """
+    config_part = _snapshot_fingerprint(CONFIGS_DIR)
+    if config_part is None:
+        # The config half could not be fingerprinted, so the cache is already
+        # disabled for this request. Do not invent half a key.
+        return None
+    digest = hashlib.sha256()
+    digest.update(config_part.encode())
+    # A domain separator. Deliberately NOT covered by a test: `config_part`
+    # is always a 64-character hex digest, so the boundary is already
+    # unambiguous and removing this line changes no key. Mutation-tested and
+    # it survives, which is the correct outcome for defensive clarity rather
+    # than a gap -- recorded here so nobody later mistakes it for one.
+    digest.update(b"\0policy\0")
+    try:
+        digest.update(POLICY_PATH.read_bytes() if POLICY_PATH.exists()
+                      else b"<no policy>")
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
 def _analysis_is_worth_caching(results: List[Dict[str, Any]]) -> bool:
     """Did any check actually produce a result?
 
@@ -478,6 +525,79 @@ def _attach_explanations(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return attached
 
 
+# --- The report download -----------------------------------------------------
+#
+# WHY IT REUSES get_findings() RATHER THAN CALLING analyse() ITSELF
+#     A report that could disagree with the screen is worse than no report.
+#     Going through the same function means the same cache, the same
+#     explanations, and the same ordering -- so "download" cannot silently
+#     re-run the analysis and produce a different answer from the one the
+#     user is looking at.
+#
+# WHY THE EXPLANATIONS ARE STRIPPED BACK OUT
+#     `explanation` and `explanation_source` are added downstream of F-1
+#     validation for the dashboard's benefit. The report renders F-1 and
+#     nothing else, so it does not inherit a field the contract does not
+#     have. If explanations belong in the report, that is a deliberate
+#     decision to take, not something to acquire by accident.
+#
+#     AND IT IS CURRENTLY UNOBSERVABLE, WHICH IS SAID HERE RATHER THAN
+#     LEFT TO LOOK LIKE A CONTROL. Mutation-tested: removing this strip
+#     changes no output at all.
+#
+#         let the dashboard-only keys into the report   621 passed
+#
+#     Both renderers read NAMED fields -- `_finding_html()` reads six of
+#     them, `render_csv()` writes a fixed column list -- so an extra key
+#     cannot reach either format however it arrives. The strip is cheap
+#     insurance against a future renderer that iterates keys instead, and
+#     `tests/test_report_export.py` asserts the observable property (the
+#     explanation TEXT never appears) so such a renderer would be caught.
+#     It is not a guard that is currently holding anything up.
+REPORT_FORMATS = {
+    "html": ("text/html; charset=utf-8", "html"),
+    "csv": ("text/csv; charset=utf-8", "csv"),
+}
+
+
+@app.get("/api/report")
+def download_report(format: str = "html") -> Response:
+    """The findings, as a file that can leave the screen.
+
+    Serves whatever `/api/findings` would serve right now -- including the
+    mock findings before any upload, because a report of demo data is less
+    confusing than an error, and the report says what it is describing.
+    """
+    if format not in REPORT_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Unknown report format {format!r}. "
+                    f"Choose one of: {', '.join(sorted(REPORT_FORMATS))}."),
+        )
+
+    results = [
+        {k: v for k, v in finding.items() if k not in _DOWNSTREAM_KEYS}
+        for finding in get_findings()
+    ]
+    subject = CONFIGS_DIR.name if _uploaded else "example findings (no upload yet)"
+    if _uploaded:
+        staged = sorted(p.name for p in CONFIGS_DIR.glob("*") if p.is_file())
+        subject = ", ".join(staged) or "an uploaded configuration"
+
+    media_type, extension = REPORT_FORMATS[format]
+    body = (report.render_html(results, source=subject) if format == "html"
+            else report.render_csv(results))
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={
+            "Content-Disposition":
+                f'attachment; filename="netwise-report-{stamp}.{extension}"'
+        },
+    )
+
+
 @app.get("/api/findings")
 def get_findings() -> List[Dict[str, Any]]:
     """Return the current findings, in the F-1 format, plus a plain-English
@@ -503,11 +623,26 @@ def get_findings() -> List[Dict[str, Any]]:
     # work on every page load. The key is the staged config's CONTENT, so a
     # new upload is a new key and no stale result can be served; an analysis
     # that could not run is never stored. See the block comment above.
-    key = _snapshot_fingerprint(CONFIGS_DIR)
+    #
+    # THE KEY COVERS THE POLICY TOO, AND IT MUST (#181).
+    #     POLICY_PATH lives beside `configs/`, not inside it, so
+    #     `_snapshot_fingerprint(CONFIGS_DIR)` cannot see it. Wiring the
+    #     policy into analyse() without also widening the key produces a
+    #     feature that silently does nothing:
+    #
+    #         upload config, Scan   -> analysed, cached under K
+    #         upload policy, Scan   -> same K, so the PRE-POLICY result is
+    #                                  served and the policy appears inert
+    #
+    #     That is worse than not shipping it. The user gets a green
+    #     "policy accepted" message and findings computed without it.
+    key = _analysis_key()
     results = _cached_analysis(key)
     if results is None:
         results = analysis_pipeline.analyse(
-            SNAPSHOT_DIR, snapshot_name=SNAPSHOT_NAME
+            SNAPSHOT_DIR,
+            snapshot_name=SNAPSHOT_NAME,
+            policy=_staged_policy(),
         )
         _remember_analysis(key, results)
 
@@ -519,22 +654,26 @@ def get_findings() -> List[Dict[str, Any]]:
 
 @app.post("/api/upload")
 async def upload_config(file: UploadFile) -> Dict[str, Any]:
-    """Accept a config file, validating it before we do anything with it.
+    """Accept a config file, validating it before we do anything with it,
+    stage it, and clear whatever was staged (or analysed) before it.
 
     Rejections come back as HTTP 400 with a message written for a person, not
     a stack trace -- "that file is 5.2 MB; the limit is 2 MB" rather than
     "413". The frontend shows the message verbatim.
 
-    NOTE: this validates and reports. It does not yet persist the file or run
-    the analysis -- that is the wire-up story. Two things must happen there,
-    and both are easy to get wrong, so they are written down now:
+    A PF Sense export (.xml, .pfsense) is CONVERTED before staging, via
+    analysis.pfsense_convert.convert() -- see PFSENSE_EXTENSIONS above. Two
+    things this deliberately gets right, both easy to get wrong:
 
-      1. Write the file under a directory WE choose, using a filename WE
-         generate. Never join a client-supplied name onto a path: `filename`
-         below is used for display only, and is reduced to its basename first
-         precisely so it can never walk out of a directory.
-      2. Batfish expects device files one level down, in <snapshot>/configs/.
-         See analysis.pipeline.load_snapshot, which fails loudly about this.
+      1. Write the staged file under a directory WE choose, using a filename
+         WE generate. Never join a client-supplied name onto a path:
+         `display_name` is used for display only, reduced to its basename
+         first, precisely so it can never walk out of a directory. Batfish
+         expects device files one level down, in <snapshot>/configs/ -- see
+         analysis.pipeline.load_snapshot, which fails loudly about this.
+      2. A refused PF Sense conversion must not destroy the previous config.
+         Conversion happens BEFORE the old snapshot is cleared, the same
+         validate-then-stage discipline the policy upload already follows.
     """
     # Path(...).name strips any directory component a client may have sent --
     # "../../etc/passwd" becomes "passwd". We only ever display this string,
@@ -546,24 +685,15 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
 
     extension = Path(display_name).suffix.lower()
     allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
+    is_pfsense = extension in PFSENSE_EXTENSIONS
 
-    # Check the recognised-but-unsupported list FIRST, so a PF Sense export
-    # gets the explanation rather than the generic rejection.
-    if extension in UNSUPPORTED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"'{display_name}': {UNSUPPORTED_EXTENSIONS[extension]} "
-                f"Cisco IOS configs ({allowed}) work today."
-            ),
-        )
-
-    if extension not in ALLOWED_EXTENSIONS:
+    if not is_pfsense and extension not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
             detail=(
                 f"'{display_name}' is not a config file we can read. "
-                f"Netwise accepts {allowed} files."
+                f"Netwise accepts {allowed} files, or a PF Sense config.xml "
+                "export."
             ),
         )
 
@@ -592,21 +722,74 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
             status_code=400, detail=f"'{display_name}' is empty."
         )
 
+    # --- Convert, if this is a PF Sense export ------------------------------
+    #
+    # Deliberately BEFORE clearing the previous config, not after. convert()
+    # can refuse (PfSenseConversionError) -- an ambiguous rule order, a
+    # construct it will not guess about, see REFUSALS in pfsense_convert.py.
+    # A refused upload must leave whatever was staged before it untouched,
+    # the same reasoning the policy upload already follows: validate first,
+    # destroy nothing until the replacement is known-good.
+    #
+    # skipped names every interface pfsense_convert could not model (#78) --
+    # e.g. a DHCP WAN or an undeclared VPN role -- so the response can show
+    # it on screen rather than silently converting less than the user thinks.
+    skipped: List[str] = []
+    device_text: Optional[str] = None
+    if is_pfsense:
+        with tempfile.NamedTemporaryFile(
+            suffix=".xml", delete=False
+        ) as tmp_file:
+            tmp_file.write(bytes(contents))
+            tmp_path = Path(tmp_file.name)
+        try:
+            conversion = pfsense_convert(tmp_path)
+        except PfSenseConversionError as error:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{display_name}' could not be converted: {error}",
+            ) from error
+        except ET.ParseError as error:
+            # convert() calls ET.parse() before it ever reaches its own
+            # refusal logic -- a truncated download or a non-XML file with
+            # an .xml extension fails here, not there. Uncaught, this was a
+            # raw 500 with a traceback instead of a message written for a
+            # person, found by testing against a deliberately malformed
+            # upload rather than only the well-formed refusal fixtures.
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{display_name}' is not readable XML ({error}). If "
+                    "this is a PF Sense export, check it downloaded "
+                    "completely."
+                ),
+            ) from error
+        finally:
+            tmp_path.unlink(missing_ok=True)
+        device_text = conversion.text
+        skipped = conversion.skipped
+
     # --- Stage the file for analysis ---------------------------------------
     #
     # The previous upload is removed first, so a snapshot only ever contains
     # the config currently being analysed. Leaving an old device file behind
-    # would silently mix two networks into one model.
+    # would silently mix two networks into one model. Reached only once the
+    # upload is known-good -- a PF Sense refusal above never gets here.
     #
-    # The filename is OURS ("device" plus the validated extension), never the
-    # client's. display_name was already reduced to a basename above; this
-    # means the client's string never reaches the filesystem at all.
+    # The filename is OURS ("device" plus the validated extension, or
+    # "device.cfg" for a converted PF Sense export), never the client's.
+    # display_name was already reduced to a basename above; this means the
+    # client's string never reaches the filesystem at all.
     if CONFIGS_DIR.exists():
         shutil.rmtree(CONFIGS_DIR)
     CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
 
-    staged_path = CONFIGS_DIR / f"device{extension}"
-    staged_path.write_bytes(bytes(contents))
+    if is_pfsense:
+        staged_path = CONFIGS_DIR / "device.cfg"
+        staged_path.write_text(device_text)
+    else:
+        staged_path = CONFIGS_DIR / f"device{extension}"
+        staged_path.write_bytes(bytes(contents))
 
     # A NEW NETWORK MUST NOT INHERIT THE OLD NETWORK'S POLICY (#87, #82).
     #     The policy names devices -- `node: rtr-us5` -- so a policy written
@@ -633,27 +816,42 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     # against rather than the one we expect.
     reset_analysis_cache()
 
+    # Uploading stages the file and stops there -- the analysis starts when
+    # the user clicks Scan Now. So this says what has happened and what has
+    # NOT: accepted and staged, nothing checked yet. It previously said
+    # "Loading results now...", which was true when the upload triggered
+    # the analysis itself and would now describe work nobody has started.
+    #
+    # Naming the button matters. "Staged for analysis" alone reads like
+    # something is already underway, which is the impression this whole
+    # flow change exists to remove.
+    if is_pfsense:
+        message = (
+            f"'{display_name}' is a PF Sense export -- converted to Cisco "
+            f"IOS ({size:,} bytes read) and staged. Nothing has been "
+            "analysed yet — click Scan Now to check it."
+        )
+    else:
+        message = (
+            f"'{display_name}' accepted ({size:,} bytes) and staged. "
+            "Nothing has been analysed yet — click Scan Now to check it."
+        )
+
     return {
         "filename": display_name,
         "size_bytes": size,
         "accepted": True,
-        # Uploading stages the file and stops there -- the analysis starts when
-        # the user clicks Scan Now. So this says what has happened and what has
-        # NOT: accepted and staged, nothing checked yet. It previously said
-        # "Loading results now...", which was true when the upload triggered
-        # the analysis itself and would now describe work nobody has started.
-        #
-        # Naming the button matters. "Staged for analysis" alone reads like
-        # something is already underway, which is the impression this whole
-        # flow change exists to remove.
-        "message": (
-            f"'{display_name}' accepted ({size:,} bytes) and staged. "
-            "Nothing has been analysed yet — click Scan Now to check it."
-        ),
+        "message": message,
         # Reported rather than done silently: a user who uploaded a policy and
         # then a config needs to know the policy went with it, not discover it
         # by wondering why their rules stopped appearing.
         "policy_cleared": policy_was_staged,
+        # Every interface pfsense_convert could not model, named with why
+        # (#78) -- [] for a normal upload, or a PF Sense export nothing was
+        # skipped on. Always present, never omitted when empty, matching the
+        # project's own "an absent row is a weaker statement than an
+        # explicit zero" rule for the findings summary tiles.
+        "skipped": skipped,
     }
 
 
@@ -667,20 +865,25 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
 #     `.json` would let a policy be staged into `configs/` as a device file,
 #     which is the one place it must never land.
 #
-# WHAT THIS ENDPOINT DELIBERATELY DOES NOT DO -- SEE #181 AND #182
-#     It stages a validated policy. It does NOT install it, because the
-#     mechanism for a policy reaching a check is still being decided:
+# WHAT THIS ENDPOINT DOES WITH THE POLICY -- #181, AND #182 GATES THE MERGE
+#     It stages a validated policy, and `/api/findings` now passes it to
+#     `analyse()`. That was deliberately NOT done for most of this PR's life,
+#     and the reason is worth keeping:
 #
-#         #181  a PR that installs the policy in module-level state, so the
-#               ADOPTED `run(bf)` signature never changes
-#         #182  an open decision request asking the team to choose between
-#               three other options for that same question
+#         #181  this PR -- installs the policy in module-level state, so the
+#               ADOPTED `run(bf)` signature never changes (option D)
+#         #182  the decision request asking the team to choose between that
+#               and three alternatives
 #
-#     `analysis.policy.set_active_policy()` exists only on #181's branch, not
-#     on `main`. Calling it from here would pick the winner of an open team
-#     decision from inside a feature branch -- the exact thing #182 was raised
-#     to prevent. So the wiring is one call, added when that settles, and the
-#     message on screen says plainly that nothing is applied yet.
+#     Calling `set_active_policy()` from here picks the winner of that
+#     decision. It is written now because option D has three of four recorded
+#     positions and this PR already implements it -- the web call is the same
+#     decision one layer out, not a second one. It must NOT merge before #182
+#     is recorded, which is a review gate rather than anything the code can
+#     enforce.
+#
+#     Until it does merge, the dashboard hint tells the user the policy is
+#     staged and not applied, because on `main` that is still true.
 #
 # THE SAFETY PROPERTY, WHICH IS WHY VALIDATION HAPPENS BEFORE STAGING
 #     A rejected policy must never reach POLICY_PATH. If it did, a user who
@@ -864,6 +1067,58 @@ def ask_question(request: AskRequest) -> Dict[str, Any]:
         }
 
     return answer_question(request.question, bf)
+
+
+class ProposeRequest(BaseModel):
+    request: str
+
+
+@app.post("/api/propose")
+def propose_change_endpoint(body: ProposeRequest) -> Dict[str, Any]:
+    """Propose one config change from plain English, and simulate its
+    impact before returning it (US-13, US-14).
+
+    Always returns ai.propose.propose_change()'s shape (request_understood,
+    proposed_change, impact, verified, warning, grounded, answer), whether
+    the request was understood or refused. Never a 500 for an operational
+    failure -- no upload yet, an unreachable Batfish, or a request that
+    does not resolve are all refusals in the same shape, the same
+    convention /api/ask and /api/findings already hold.
+
+    propose_change() connects and loads the snapshot fresh itself, the same
+    "no caching" choice /api/ask already makes for answer_question() -- this
+    endpoint does no connecting of its own, unlike /api/ask, because
+    propose_change() also needs to read the raw config text to generate and
+    apply a candidate line, which answer_question() never does.
+
+    NEVER APPLIED TO A LIVE DEVICE, and never to the uploaded snapshot
+    itself. propose_change() only ever writes to a throwaway copy -- see its
+    own module docstring and CLAUDE.md's non-negotiable constraint 4. This
+    endpoint adds no write path of its own.
+
+    `impact`'s status="found" findings get the same plain-English
+    explanation /api/findings already attaches to a found finding (US-19),
+    reusing _attach_explanations() rather than a second mechanism -- a
+    warning naming the exact ACL lines that changed is more useful read in
+    plain English than as a raw Batfish diff.
+    """
+    if not _uploaded:
+        return {
+            "request_understood": None,
+            "proposed_change": None,
+            "impact": [],
+            "verified": False,
+            "warning": False,
+            "grounded": False,
+            "answer": (
+                "Upload a config first, there is nothing to propose a "
+                "change against yet."
+            ),
+        }
+
+    result = propose_change(body.request, SNAPSHOT_DIR)
+    result["impact"] = _attach_explanations(result["impact"])
+    return result
 
 
 class NoCacheStatic(StaticFiles):

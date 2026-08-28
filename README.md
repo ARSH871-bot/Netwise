@@ -63,9 +63,17 @@ larger claim than it is.
 
 **The security policy is currently ours, not yours.** Two of the three analyses
 check assertions written against this project's own test fixtures — that a
-particular device denies a particular flow, and so on. There is **no way to
-supply your own policy**: no file format, no loader, no interface. Measured, on
-one config with only the device name changed:
+particular device denies a particular flow, and so on.
+
+You **can** now supply your own policy: there is a documented format
+([`docs/design/user-policy-format.md`](docs/design/user-policy-format.md)), a
+validating loader (`analysis/policy.py`, #173), and an upload endpoint with a
+file picker (`POST /api/policy`, #186). **It is validated and staged, and it is
+not yet applied to the analysis** — that wiring is #181, still open. So a policy
+you upload today is checked for correctness and then not used.
+
+Until that lands, every assertion the analysis actually runs is still ours.
+Measured, on one config with only the device name changed:
 
 ```
 our device name      6 findings   access-control + policy-compliance

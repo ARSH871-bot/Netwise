@@ -44,11 +44,12 @@ import json
 import socket
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pybatfish.client.session import Session
 
 from analysis import findings
+from analysis import policy as policy_module
 from analysis.checks import access_control, policy_compliance, risk, routing
 
 # --- The check registry -----------------------------------------------------
@@ -147,33 +148,85 @@ def load_snapshot(
     bf.init_snapshot(str(config_dir), name=snapshot_name, overwrite=True)
 
 
-def find_parse_problems(bf: Session) -> List[str]:
-    """Return a description of every file Batfish did not fully understand.
+#: The one non-PASSED status where Batfish still built a usable model.
+#:
+#: PARTIALLY_UNRECOGNIZED means it read the file, understood most of it, and
+#: produced a node -- there are simply lines it did not recognise. Every other
+#: non-PASSED status means we have nothing worth analysing.
+PARTIAL_PARSE_STATUS = "PARTIALLY_UNRECOGNIZED"
 
-    Empty list means every file parsed cleanly.
+#: The id number for the "results may be incomplete" finding.
+#:
+#: 900 rather than the default sentinel 0, because this finding is emitted by
+#: the PIPELINE while wearing a check's name, and the check's own sentinels
+#: (0 for a clean run, 50 for scoping) are already spoken for. Colliding with
+#: one would produce two findings sharing an id -- which the duplicate-id
+#: guard would catch, loudly, but only after the fact.
+PARTIAL_PARSE_NUMBER = 900
 
-    Why this is strict: a line Batfish never parsed is a rule we will never
-    analyse. If we ran the checks anyway, a user could see a clean result for a
-    config we only partly read -- which is exactly the lie F-4 exists to
-    prevent.
 
-    TEAM DECISION PENDING: right now ANY status other than PASSED stops the
-    analysis, including PARTIALLY_UNRECOGNIZED. That is the safe choice while
-    we are on small test configs. Real-world configs often have a few
-    unrecognised lines, and refusing to analyse them at all may prove too
-    strict. When we hit that, the fix is to let the checks run but attach a
-    loud "results may be incomplete" finding -- NOT to quietly ignore it.
+def classify_parse_status(bf: Session) -> "Tuple[List[str], List[str]]":
+    """Split parse problems into (fatal, partial). #217.
+
+    WHY THIS IS NOT ONE LIST ANY MORE
+        `find_parse_problems()` treated every non-PASSED status as fatal,
+        including `PARTIALLY_UNRECOGNIZED`, and its own docstring named that
+        as a decision waiting to be revisited. This is that revision.
+
+        Measured on a hand-written Cisco ASA -- a firewall, the device class
+        this product is most about:
+
+            cisco_asa.cfg    PARTIALLY_UNRECOGNIZED   ['fw-asa']
+
+        Batfish built the node. It read the interfaces and the access-list. A
+        few lines it did not recognise, and we threw the whole analysis away
+        and told the user we could check nothing -- about a file we could
+        largely read.
+
+    WHY THIS IS NOT "IGNORE IT", WHICH IS THE OTHER WRONG ANSWER
+        A line Batfish never parsed is a rule we will never analyse, so a
+        clean result on a partly-read config is exactly the lie F-4 exists to
+        prevent. The answer the old docstring already prescribed is the one
+        taken here: **run the checks AND attach a loud "results may be
+        incomplete" finding**, at `status="error"`, naming the files.
+
+        The user gets the analysis and the caveat. Neither alone is honest.
+
+    Returns (fatal, partial). Either may be empty; both may be non-empty when
+    one file is unreadable and another is partly readable.
     """
     frame = bf.q.fileParseStatus().answer().frame()
 
     if frame.empty:
-        return ["Batfish found no configuration files to read"]
+        return (["Batfish found no configuration files to read"], [])
 
-    problems = []
+    fatal: List[str] = []
+    partial: List[str] = []
     for _, row in frame.iterrows():
-        if row["Status"] != "PASSED":
-            problems.append(f"{row['File_Name']} ({row['Status']})")
-    return problems
+        status = row["Status"]
+        if status == "PASSED":
+            continue
+        entry = f"{row['File_Name']} ({status})"
+        (partial if status == PARTIAL_PARSE_STATUS else fatal).append(entry)
+    return (fatal, partial)
+
+
+def find_parse_problems(bf: Session) -> List[str]:
+    """Every file Batfish did not fully understand, fatal or partial.
+
+    DELIBERATELY UNCHANGED IN BEHAVIOUR (#217).
+        `analysis/change_impact.py` calls this and refuses on any non-PASSED
+        status. That is still the right answer THERE: change impact compares
+        two snapshots and reports what moved between them, so an unrecognised
+        line on one side and not the other would show up as a change in the
+        network rather than a change in what we could read.
+
+        So the relaxation in #217 applies to `analyse()` only, and this stays
+        strict. Splitting the two was the point -- not loosening one function
+        for every caller.
+    """
+    fatal, partial = classify_parse_status(bf)
+    return fatal + partial
 
 
 def run_check(bf: Session, name: str) -> List[Dict[str, Any]]:
@@ -220,6 +273,51 @@ def analyse(
     host: str = "localhost",
     network_name: str = "netwise",
     snapshot_name: str = "current",
+    policy: Optional["policy_module.Policy"] = None,
+) -> List[Dict[str, Any]]:
+    """Analyse a config folder, optionally against the user's own policy (#87).
+
+    `policy` is a validated `Policy` from `analysis.policy.load_policy()` or
+    `load_policy_file()`. When given, policy-driven checks assert the USER's
+    rules instead of Netwise's built-in example ones, and say so in every
+    finding's evidence. When omitted, behaviour is exactly as before.
+
+    Everything else about this function is unchanged; see `_analyse()` below,
+    which is the original body. This wrapper exists only to install the policy
+    and to guarantee it is cleared afterwards.
+    """
+    if policy is not None and not isinstance(policy, policy_module.Policy):
+        raise TypeError(
+            "analyse(policy=...) takes a Policy from load_policy() or "
+            f"load_policy_file(), not {type(policy).__name__}. Passing a raw "
+            "mapping would hand a check unvalidated user input."
+        )
+
+    # CLEARED IN A finally, AND THAT IS THE POINT.
+    #     analyse() is called repeatedly in one process -- every /api/findings
+    #     hit, every test. A policy that outlived its call would silently
+    #     apply to the NEXT analysis of a different config: the #82 failure
+    #     with a policy in place of a snapshot. A check raising must not be
+    #     able to leave one installed either.
+    policy_module.set_active_policy(policy)
+    try:
+        return _analyse(
+            config_dir,
+            check_names=check_names,
+            host=host,
+            network_name=network_name,
+            snapshot_name=snapshot_name,
+        )
+    finally:
+        policy_module.clear_active_policy()
+
+
+def _analyse(
+    config_dir: str | Path,
+    check_names: Optional[Sequence[str]] = None,
+    host: str = "localhost",
+    network_name: str = "netwise",
+    snapshot_name: str = "current",
 ) -> List[Dict[str, Any]]:
     """Analyse a config folder and return findings in the F-1 format.
 
@@ -246,6 +344,16 @@ def analyse(
             reading it would otherwise know only one of the two ways this
             function can raise -- noted by Shubham on #76.
     """
+    # WHY THE POLICY IS INSTALLED BY THE CALLER ABOVE AND NOT PASSED IN HERE
+    #     A check's signature is fixed by F-3 at `run(bf) -> list[dict]`, and
+    #     `docs/design/pipeline-feature-shapes.md` was ADOPTED by all four
+    #     signatures -- so a policy cannot travel as an argument without a
+    #     contract change the whole team has to agree to. Installing it in
+    #     `analyse()` keeps that contract untouched.
+    #
+    #     The alternative, each check loading a file itself, would put policy
+    #     PARSING and therefore policy ERRORS inside three checks with three
+    #     different failure behaviours. One place, one error path.
     config_dir = Path(config_dir)
     names = list(check_names) if check_names is not None else list(CHECKS)
 
@@ -316,7 +424,7 @@ def analyse(
 
     # --- Confirm Batfish understood it --------------------------------------
     try:
-        problems = find_parse_problems(bf)
+        fatal, partial = classify_parse_status(bf)
     except Exception as error:
         return _every_check_failed(
             names,
@@ -325,13 +433,13 @@ def analyse(
             source=str(config_dir),
         )
 
-    if problems:
+    if fatal:
         return _every_check_failed(
             names,
             summary="Analysis could not run: the config did not fully parse",
             detail=(
-                "Batfish could not fully read: "
-                + "; ".join(problems)
+                "Batfish could not read: "
+                + "; ".join(fatal)
                 + ". Any rule it did not parse is a rule we cannot analyse."
             ),
             source=str(config_dir),
@@ -341,6 +449,40 @@ def analyse(
     results: List[Dict[str, Any]] = []
     for name in names:
         results.extend(run_check(bf, name))
+
+    # --- A PARTLY-READ CONFIG GETS ITS ANALYSIS **AND** ITS CAVEAT (#217) ----
+    #
+    #     Every finding above is about the part Batfish DID understand, and is
+    #     exactly as sound as any other finding. What nobody can know is
+    #     whether the lines it skipped contained something that matters.
+    #
+    #     So this is status="error", not a warning and not a note. It is a
+    #     genuine "we could not check" claim about a real part of the user's
+    #     config, and it belongs in the same amber section as every other one
+    #     -- which the dashboard renders FIRST, above the results.
+    #
+    #     Emitted after the checks rather than before so it cannot be mistaken
+    #     for a reason the checks did not run. They did run.
+    if partial:
+        results.append(
+            findings.error_finding(
+                check=names[0] if names else "access_control",
+                summary=(
+                    "Results may be incomplete: part of the config could not "
+                    "be read"
+                ),
+                detail=(
+                    "Batfish understood most of, but not all of: "
+                    + "; ".join(partial)
+                    + ". The findings above are about the part it did read, "
+                    "and are as reliable as any other. Nothing is claimed "
+                    "about the lines it skipped -- if a rule you expected to "
+                    "see is missing, this is the first thing to check."
+                ),
+                source=str(config_dir),
+                number=PARTIAL_PARSE_NUMBER,
+            )
+        )
 
     # --- Then let the post-processors refine the combined list ---------------
     results = run_post_processors(results)
@@ -674,12 +816,44 @@ def _print_summary(results: List[Dict[str, Any]]) -> None:
 def main() -> None:
     if len(sys.argv) < 2:
         sys.exit(
-            "usage: python -m analysis.pipeline <config-folder> [check ...]\n"
-            "example: python -m analysis.pipeline tests/fixtures/rtr-us5-secure"
+            "usage: python -m analysis.pipeline <config-folder> "
+            "[--policy <file.json>] [check ...]\n"
+            "example: python -m analysis.pipeline tests/fixtures/rtr-us5-secure\n"
+            "example: python -m analysis.pipeline my-configs/ --policy my-policy.json"
         )
-    config_dir = sys.argv[1]
-    requested = sys.argv[2:] or None
-    _print_summary(analyse(config_dir, check_names=requested))
+    argv = sys.argv[1:]
+
+    # --policy is parsed by hand rather than with argparse, to keep this
+    # consistent with the positional style the rest of the command already
+    # uses and documented in CONTRIBUTING section 4.
+    user_policy = None
+    if "--policy" in argv:
+        index = argv.index("--policy")
+        if index + 1 >= len(argv):
+            sys.exit("--policy needs a file path")
+        path = argv[index + 1]
+        del argv[index:index + 2]
+        try:
+            user_policy = policy_module.load_policy_file(path)
+        except policy_module.PolicyError as error:
+            # A policy the user got wrong is reported as a message, not a
+            # traceback, and analysis does NOT proceed. Running with our
+            # built-in rules after their file failed to load would silently
+            # check assertions they did not make -- which is the #87
+            # confusion arriving through the error path.
+            sys.exit(f"Policy not loaded, so nothing was analysed.\n  {error}")
+        # Both channels, not just renames. `assigned` reports values we
+        # supplied because the user did not -- currently the rule numbers
+        # that become finding ids. This module forbids SILENT defaults, and
+        # printing only half of what we changed would be exactly that.
+        for note in list(user_policy.renamed) + list(user_policy.assigned):
+            print(f"note: {note}")
+
+    config_dir = argv[0]
+    requested = argv[1:] or None
+    _print_summary(
+        analyse(config_dir, check_names=requested, policy=user_policy)
+    )
 
 
 if __name__ == "__main__":

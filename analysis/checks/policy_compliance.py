@@ -116,12 +116,12 @@ PARTIAL CHECKS -- why a rule reports a violation AND an error (issue #22)
     is reported as proved, and what could not be reached is reported separately.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from pybatfish.client.session import Session
 from pybatfish.datamodel.flow import HeaderConstraints
 
-from analysis import findings, snapshot
+from analysis import findings, policy, snapshot
 
 # The name this check is registered under, and the value in every "check" field.
 CHECK_NAME = "policy_compliance"
@@ -147,6 +147,21 @@ ERROR_NUMBER_OFFSET = 50
 # "the whole check could not apply". Rules are numbered from 1, so nothing else
 # can ever land here.
 SKIPPED_NUMBER = ERROR_NUMBER_OFFSET
+
+# PC-049: the snapshot contains devices NO rule mentions (#228).
+#
+# A DIFFERENT fact from SKIPPED_NUMBER above, and the two can be true at once,
+# so they must not share a number. 50 says "rules were written about devices
+# this snapshot lacks". This says "this snapshot has devices no rule covers" --
+# the reverse direction, and the one that used to produce a GREEN TICK while
+# 49 of 50 devices went unexamined.
+#
+# 49 rather than 51: the rule-error band starts at SKIPPED_NUMBER + 1 and grows
+# with the rule list, so anything above 50 would collide the day a sixth rule
+# is added. Below the offset there is nothing but the rule numbers themselves
+# (1..N), and tests/test_policy_partial_checks.py asserts the three bands stay
+# disjoint, so a future N of 49 fails loudly rather than silently colliding.
+UNCOVERED_NUMBER = 49
 
 # --- The policy being asserted ----------------------------------------------
 #
@@ -330,13 +345,104 @@ def _describe(rule: Dict[str, Any], hits: List[Any]) -> str:
     return detail
 
 
+def _with_provenance(detail: str, policy_label: str) -> str:
+    """Append which policy these rules came from.
+
+    WHY EVERY FINDING CARRIES THIS (#87)
+        A finding produced from the USER's policy and one produced from our
+        built-in example look identical on screen. That is the whole of #87
+        in one sentence: the user believes their rules are enforced when
+        ours are. Making the origin part of the evidence means it survives
+        into the dashboard and into the AI explanation, because both read
+        `evidence.detail`.
+
+    WHY IT IS APPENDED RATHER THAN PREPENDED
+        `ai/explain.py::_compute_policy_outcome` (#145) matches
+        `_describe()`'s wording with a deliberately narrow regex ending at
+        "Decided by:". Appending leaves that match intact; prepending would
+        too, but appending also keeps the Batfish quote first, which is the
+        part the reader needs and the part the model must not paraphrase.
+        Verified against all five policy findings across every fixture
+        rather than reasoned about.
+    """
+    return f"{detail} [Rules checked: {policy_label}.]"
+
+
+#: Where the rules being checked came from. Attached to the evidence of every
+#: finding this check produces, because a finding from the USER's policy and
+#: one from our built-in example look identical on screen otherwise -- and a
+#: user believing their rules are enforced when ours are is the whole of #87.
+BUILTIN_POLICY_LABEL = (
+    "Netwise's built-in example policy (analysis/checks/policy_compliance.py) "
+    "-- no policy file was supplied"
+)
+USER_POLICY_LABEL = "the policy file you supplied"
+
+
+def rules_in_use() -> Tuple[List[Dict[str, Any]], str, bool]:
+    """The rules this run should check, where they came from, and whether
+    the user supplied them.
+
+    WHY THIS EXISTS (#87)
+        `analysis/policy.py` was written, validated, tested and merged in
+        #173 -- and read by nothing. Measured before this change: no module
+        under analysis/checks/, analysis/pipeline.py, web/ or ai/ imported
+        it. This is the function that connects it, for one check, as a
+        vertical slice.
+
+    THE THREE STATES, WHICH ARE NOT TWO
+        no policy supplied      -> our built-in rules, LABELLED as ours
+        policy with entries     -> the user's rules
+        policy with NO entries  -> the user's (empty) policy, NOT ours
+
+        The third is the one worth getting right. An empty policy is a valid,
+        deliberate state (D4) and means "I assert nothing", which is a
+        different claim from "I did not give you a policy". Falling back to
+        our rules there would enforce assertions the user explicitly chose
+        not to make, and label them as theirs by omission.
+
+        So the fallback is keyed on `active_policy() is None`, never on
+        whether the entry list is empty.
+    """
+    active = policy.active_policy()
+    if active is None:
+        return POLICY_RULES, BUILTIN_POLICY_LABEL, False
+    return active.entries_for(CHECK_NAME), USER_POLICY_LABEL, True
+
+
 def run(bf: Session) -> List[Dict[str, Any]]:
     """Check every policy rule and return F-1 findings.
 
     The pipeline has already connected to Batfish and loaded the snapshot, so
     this function only asks questions and shapes the answers.
+
+    Since #87's vertical slice, the RULES may come from a policy file the user
+    supplied rather than from POLICY_RULES below -- see rules_in_use(). Every
+    finding says which, in its evidence.
     """
     results: List[Dict[str, Any]] = []
+    rules, policy_label, user_supplied = rules_in_use()
+
+    # An empty policy is valid and must be LOUD (D4, @shubhamkataria2005 on
+    # #159). Returning [] here would be read by the pipeline as the check
+    # being broken -- it emits `PC-000 status=error "the policy compliance
+    # check returned no findings"`, which is the wrong status AND the wrong
+    # message for a check that ran perfectly and had nothing to assert.
+    if user_supplied and not rules:
+        return [
+            findings.no_issues_finding(
+                check=CHECK_NAME,
+                device="n/a",
+                summary="No policy compliance rules to check",
+                detail=(
+                    "Your policy file has no policy_compliance entries, so "
+                    "nothing was asserted about this configuration and nothing "
+                    "was checked. This is not a problem with the config -- it "
+                    "means no rules were written for this check."
+                ),
+                source=policy_label,
+            )
+        ]
 
     # Which rules can this snapshot actually answer?
     #
@@ -359,21 +465,22 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                 check=CHECK_NAME,
                 device="unknown",
                 summary=(
-                    f"{len(POLICY_RULES)} policy rule(s) could not be checked "
+                    f"{len(rules)} policy rule(s) could not be checked "
                     "against this config"
                 ),
-                detail=(
+                detail=_with_provenance(
                     "The devices present in this snapshot could not be "
                     "determined, so we cannot tell whether these rules apply to "
-                    "it. Nothing is claimed about them either way."
+                    "it. Nothing is claimed about them either way.",
+                    policy_label,
                 ),
                 source="analysis/checks/policy_compliance.py",
                 number=SKIPPED_NUMBER,
             )
         ]
 
-    applicable = [r for r in POLICY_RULES if r["node"] in present]
-    absent = sorted({r["node"] for r in POLICY_RULES if r["node"] not in present})
+    applicable = [r for r in rules if r["node"] in present]
+    absent = sorted({r["node"] for r in rules if r["node"] not in present})
     if absent:
         results.append(
             findings.error_finding(
@@ -382,19 +489,98 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                 # so naming what is missing is an observation, not a guess.
                 device=absent[0] if len(absent) == 1 else "unknown",
                 summary=(
-                    f"{len(POLICY_RULES) - len(applicable)} policy rule(s) could "
+                    f"{len(rules) - len(applicable)} policy rule(s) could "
                     "not be checked against this config"
                 ),
-                detail=(
+                detail=_with_provenance(
                     "They are written about "
                     + ", ".join(absent)
                     + ", which "
                     + ("is" if len(absent) == 1 else "are")
                     + " not in this snapshot. Nothing is claimed about them "
-                    "either way."
+                    "either way.",
+                    policy_label,
                 ),
                 source="analysis/checks/policy_compliance.py",
                 number=SKIPPED_NUMBER,
+            )
+        )
+
+    # Devices in the snapshot that NO rule says anything about (#228).
+    #
+    # The `absent` block above answers "our rules name devices this snapshot
+    # lacks". This answers the reverse, and nothing used to: a snapshot of 50
+    # devices containing rtr-us5 reported PC-000, status="none", "No issues
+    # found by policy compliance" -- a green tick, having asserted something
+    # about ONE device. Measured, 1 of 50.
+    #
+    # Adding one covered device to a snapshot of uncovered ones must not flip
+    # the verdict from "could not check" to "all clear" while the other 49 stay
+    # exactly as unchecked as they were.
+    #
+    # Reported as an error rather than folded into the all-clear text, for the
+    # same reason a rule with one failed arm reports both (#22/#46): "we
+    # checked and found nothing" and "we did not look here" are different
+    # claims and only one of them is being made about these devices. Because
+    # this makes `results` non-empty, the clean sentinel below cannot fire --
+    # which is the behaviour #228 asks for.
+    # Only when at least one rule actually ran. With `applicable` empty the
+    # PC-050 card above already says the whole story -- "your rules are about a
+    # device that is not here" and "these devices are not covered" are the same
+    # fact from two directions, and printing both is the per-rule noise #45 and
+    # #50 removed, rebuilt one level up. Caught by
+    # test_policy_absent_devices_reported_once_not_once_per_rule, which is
+    # exactly what that test is for.
+    # WHICH RULES DEFINE "COVERED" (#181 meeting #229)
+    #     This read POLICY_RULES -- our BUILT-IN rules -- which was correct
+    #     when #229 was written, because a user policy could not reach a check
+    #     yet. With one installed it computes coverage from OUR devices while
+    #     the check asserts THEIRS. Measured before the fix, a user policy
+    #     covering the only device in the snapshot:
+    #
+    #         [error] PC-049  1 of 1 device(s) in this config are not
+    #                         covered by any policy rule
+    #
+    #     A user whose policy covers everything they own was told none of it
+    #     was covered. `rules` is whatever rules_in_use() returned, which is
+    #     the same list every other assertion in this function uses.
+    covered = {r["node"] for r in rules}
+    uncovered = sorted(present - covered)
+    if uncovered and applicable:
+        shown = ", ".join(uncovered[:5])
+        if len(uncovered) > 5:
+            shown += f", and {len(uncovered) - 5} more"
+        results.append(
+            findings.error_finding(
+                check=CHECK_NAME,
+                device=uncovered[0] if len(uncovered) == 1 else "unknown",
+                summary=(
+                    f"{len(uncovered)} of {len(present)} device(s) in this "
+                    "config are not covered by any policy rule"
+                ),
+                detail=_with_provenance(
+                    # `covered & present` CANNOT be empty here, and that is
+                    # worth stating because I briefly added a branch for it.
+                    # This card only fires when `applicable` is non-empty, and
+                    # `applicable` is the rules whose node IS present -- so at
+                    # least one covered device is present by construction.
+                    #
+                    # It looked reachable only while `covered` came from
+                    # POLICY_RULES and `applicable` came from `rules`: two
+                    # different lists, which is the bug fixed above. A guard
+                    # for a state that cannot occur reads as safety and is
+                    # not, so it is gone rather than left in.
+                    f"{len(applicable)} rule(s) were checked, and only against "
+                    + ", ".join(sorted(covered & present))
+                    + ". No rule says anything about "
+                    + shown
+                    + ". Nothing is claimed about "
+                    + ("it" if len(uncovered) == 1 else "them")
+                    + " either way.",
+                    policy_label,
+                ),
+                source="analysis/checks/policy_compliance.py",
+                number=UNCOVERED_NUMBER,
             )
         )
 
@@ -422,7 +608,7 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                     severity=rule["violation_severity"],
                     device=node,
                     summary=rule["violation_summary"],
-                    detail=_describe(rule, hits),
+                    detail=_with_provenance(_describe(rule, hits), policy_label),
                     # searchFilters names the matching LINE but not its line
                     # NUMBER, so device:filter is the most precise source it can
                     # give us. (definedStructures does return real file:line
@@ -449,7 +635,9 @@ def run(bf: Session) -> List[Dict[str, Any]]:
             else:
                 summary = f"Could not check policy rule: {rule['description'].lower()}"
 
-            detail = findings.describe_error(failures[0])
+            detail = _with_provenance(
+            findings.describe_error(failures[0]), policy_label
+        )
             if len(rule["queries"]) > 1:
                 detail = (
                     f"{len(failures)} of {len(rule['queries'])} queries for this "
@@ -479,7 +667,7 @@ def run(bf: Session) -> List[Dict[str, Any]]:
         return [
             findings.no_issues_finding(
                 check=CHECK_NAME,
-                device=POLICY_RULES[0]["node"] if POLICY_RULES else "unknown",
+                device=rules[0]["node"] if rules else "unknown",
                 summary="No issues found by policy compliance",
                 # `applicable`, not POLICY_RULES: only rules that actually ran
                 # can be claimed to hold. They are the same list unless some
@@ -487,7 +675,10 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                 # made `results` non-empty, so this branch is unreachable. Said
                 # accurately anyway, because the day that stops being true this
                 # sentence would quietly start overstating what we checked.
-                detail=f"All {len(applicable)} policy rule(s) hold",
+                detail=_with_provenance(
+                    f"All {len(applicable)} policy rule(s) hold",
+                    policy_label,
+                ),
                 source=", ".join(sorted({r["node"] for r in applicable})) or "unknown",
                 # PC-000. Since A-2 (#102) change_impact has its own "CH-"
                 # prefix, so there is no cross-check collision to avoid here
