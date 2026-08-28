@@ -301,8 +301,24 @@ them and they describe nobody's real network. Real configs stay in the ignored
 in `CHECKS`. See `docs/design/pipeline-feature-shapes.md`.
 
 CI (`.github/workflows/tests.yml`) runs the suite on every pull request, on
-Python 3.12 and 3.13. It cannot block a merge — branch protection needs GitHub
-Pro or a public repo — so a red cross is a signal rather than a gate.
+Python 3.12 and 3.13. **It does not block a merge today, and that is now a
+choice rather than a limitation.** Branch protection needs GitHub Pro or a
+public repo — and this repository is public, so every setting is available to
+us, free. Measured 27 August:
+
+```
+private    : False
+visibility : public
+GET /repos/ARSH871-bot/Netwise/branches/main/protection
+   -> {"message":"Branch not protected"}
+```
+
+So a red cross is a signal rather than a gate **because nobody has turned the
+gate on**, not because we cannot. What to enable is #245, and the measurement
+there is worth reading before assuming the answer is "all of it": across 45
+PRs merged since 20 August, requiring a review would have blocked **none**,
+and `dismiss_stale_reviews` would **contradict** M-2 rule 2 by voiding an
+approval on a merge-only push.
 
 ## 7c. Asking questions (US-11) — the other direction, and why it refuses
 
