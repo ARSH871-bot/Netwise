@@ -121,12 +121,26 @@ def test_the_servers_own_rejection_message_is_shown_verbatim(rendered):
 
 @needs_node
 def test_the_success_message_is_the_servers_own(rendered):
-    """One place can say "staged, not applied", and it is the server.
+    """One place says what staging means, and it is the server.
 
-    Summarising it here would give that sentence a second author, free to
-    drift into claiming the policy is in force.
+    Summarising it in the frontend would give that sentence a second author,
+    free to drift from the first -- which is the failure this whole file
+    exists to prevent, and which happened anyway at a different seam: the
+    server's own sentence said "not yet applied" for a day after #181 made it
+    false, because a test was pinning it there.
+
+    So this asserts the frontend RELAYS the server's wording rather than
+    asserting any particular wording of its own. It checks the message shown
+    on screen is the message the server sent, byte for byte.
     """
-    assert "not yet applied" in rendered["accepted"]["policyMessage"].lower()
+    shown = rendered["accepted"]["policyMessage"]
+
+    # The harness sends this sentinel as the server's `message`. It can only
+    # be on screen if the frontend relayed the server's own words.
+    assert "SERVER-AUTHORED-SENTINEL-9f3a" in shown, (
+        "the frontend did not render the server's message verbatim; there "
+        f"must be exactly one author of that sentence.\n  shown: {shown!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

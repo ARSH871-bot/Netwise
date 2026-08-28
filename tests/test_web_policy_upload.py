@@ -141,17 +141,39 @@ def test_a_valid_policy_is_accepted_and_staged():
     assert json.loads(main.POLICY_PATH.read_text(encoding="utf-8")) == VALID_POLICY
 
 
-def test_the_message_says_staged_and_not_applied():
+def test_the_message_says_staged_and_which_checks_read_it():
     """#82's honest-staging pattern, applied to the policy.
 
-    "Accepted and staged" is true. "In force" is not, and will not be until
-    the wiring lands. A message that let someone believe their rules were
-    being enforced would be the #87 confusion arriving through the UI.
+    THIS TEST USED TO ASSERT "not yet applied", AND KEPT PASSING AFTER #181
+    MADE THAT FALSE. That is the sharper half of what went wrong: the string
+    was not merely stale, it was pinned in place by a test, so the one
+    mechanism that should have objected was instead enforcing it.
+
+    Both directions are wrong and the message has to avoid both:
+
+        understating   "not yet applied" while a scan uses the policy
+        overstating    "your policy is in force" while two checks ignore it
+
+    So the assertions below name what must be present AND what must not, and
+    the negative one is the one that would have caught the original bug.
     """
     body = _post_policy(VALID_POLICY).json()
+    message = body["message"].lower()
 
-    assert "staged" in body["message"].lower()
-    assert "not yet applied" in body["message"].lower()
+    assert "staged" in message
+    assert "applied" in message
+    # The check that actually reads a policy is named, so the user knows the
+    # scope rather than inferring it.
+    assert "policy compliance" in message
+    # ...and the two that do not are named too, with the issue that tracks it.
+    assert "access control" in message
+    assert "routing" in message
+    assert "#87" in body["message"]
+
+    # The regression itself. If someone reintroduces the old sentence, or
+    # writes a new one that denies the policy is used, this fails.
+    assert "not yet applied" not in message
+    assert "not applied" not in message
 
 
 def test_a_policy_is_never_staged_inside_configs():

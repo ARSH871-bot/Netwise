@@ -158,6 +158,24 @@ async function upload(inputId, fileName, response) {
   };
 }
 
+// The message is deliberately a SENTINEL rather than a copy of the server's
+// real wording.
+//
+// It used to read "...staged. Not yet applied.", and the Python test asserted
+// "not yet applied" was on screen. That asserted nothing about the product:
+// the string was in THIS file, so the test compared the harness to itself and
+// would have passed against a frontend that ignored the server entirely.
+//
+// It also outlived the truth. #181 made "not yet applied" false, and this
+// fixture went on saying it -- a fixture, unlike a document, is never reread.
+//
+// A sentinel with no plausible wording of its own can only appear on screen if
+// the frontend relayed what the server sent, which is the property the test
+// is named for. Whether the server's own sentence is CORRECT is a server-side
+// question, tested in tests/test_web_policy_upload.py.
+const SERVER_MESSAGE_SENTINEL =
+  "SERVER-AUTHORED-SENTINEL-9f3a: this exact text must reach the screen.";
+
 const OK_POLICY = {
   ok: true,
   body: {
@@ -165,7 +183,7 @@ const OK_POLICY = {
     rule_count: 2,
     is_empty: false,
     renamed: [],
-    message: "'p.json' accepted (99 bytes) and staged. Not yet applied.",
+    message: SERVER_MESSAGE_SENTINEL,
   },
 };
 

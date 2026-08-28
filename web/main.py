@@ -1016,11 +1016,24 @@ async def upload_policy(file: UploadFile) -> Dict[str, Any]:
         # splits back into the dialects D1 was agreed to remove.
         "renamed": list(policy.renamed),
         # The same honest-staging pattern as #82: say what has happened and
-        # what has NOT. "Accepted and staged" is true; "in force" is not, and
-        # will not be until the wiring lands.
+        # what has NOT.
+        #
+        # THIS MESSAGE SAID "Not yet applied -- wiring to the analysis lands
+        # with #181" UNTIL #181 LANDED, AND THEN KEPT SAYING IT. On screen
+        # that read: your policy is not applied, followed immediately by a
+        # scan whose findings had changed because it was. A control that
+        # understates itself is not the safe direction of the #82 rule; it is
+        # the same defect pointing the other way, and it is worse here because
+        # the user has no way to tell which statement to believe.
+        #
+        # What it must keep saying is WHICH checks read it. `policy_compliance`
+        # does; `access_control` and `routing` still assert our built-in rules
+        # whatever is uploaded (#87). "Your policy is now in force" would be
+        # the overclaim this message was originally written to avoid.
         "message": (
             f"'{display_name}' accepted ({size:,} bytes) and staged. {summary} "
-            "Not yet applied — wiring to the analysis lands with #181."
+            "Applied to the checks that read a policy — policy compliance. "
+            "Access control and routing still use our built-in rules (#87)."
         ),
     }
 
