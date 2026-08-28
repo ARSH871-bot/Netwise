@@ -49,6 +49,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from pybatfish.client.session import Session
 
 from analysis import findings
+from analysis import policy as policy_module
 from analysis.checks import access_control, policy_compliance, risk, routing
 
 # --- The check registry -----------------------------------------------------
@@ -272,6 +273,51 @@ def analyse(
     host: str = "localhost",
     network_name: str = "netwise",
     snapshot_name: str = "current",
+    policy: Optional["policy_module.Policy"] = None,
+) -> List[Dict[str, Any]]:
+    """Analyse a config folder, optionally against the user's own policy (#87).
+
+    `policy` is a validated `Policy` from `analysis.policy.load_policy()` or
+    `load_policy_file()`. When given, policy-driven checks assert the USER's
+    rules instead of Netwise's built-in example ones, and say so in every
+    finding's evidence. When omitted, behaviour is exactly as before.
+
+    Everything else about this function is unchanged; see `_analyse()` below,
+    which is the original body. This wrapper exists only to install the policy
+    and to guarantee it is cleared afterwards.
+    """
+    if policy is not None and not isinstance(policy, policy_module.Policy):
+        raise TypeError(
+            "analyse(policy=...) takes a Policy from load_policy() or "
+            f"load_policy_file(), not {type(policy).__name__}. Passing a raw "
+            "mapping would hand a check unvalidated user input."
+        )
+
+    # CLEARED IN A finally, AND THAT IS THE POINT.
+    #     analyse() is called repeatedly in one process -- every /api/findings
+    #     hit, every test. A policy that outlived its call would silently
+    #     apply to the NEXT analysis of a different config: the #82 failure
+    #     with a policy in place of a snapshot. A check raising must not be
+    #     able to leave one installed either.
+    policy_module.set_active_policy(policy)
+    try:
+        return _analyse(
+            config_dir,
+            check_names=check_names,
+            host=host,
+            network_name=network_name,
+            snapshot_name=snapshot_name,
+        )
+    finally:
+        policy_module.clear_active_policy()
+
+
+def _analyse(
+    config_dir: str | Path,
+    check_names: Optional[Sequence[str]] = None,
+    host: str = "localhost",
+    network_name: str = "netwise",
+    snapshot_name: str = "current",
 ) -> List[Dict[str, Any]]:
     """Analyse a config folder and return findings in the F-1 format.
 
@@ -298,6 +344,16 @@ def analyse(
             reading it would otherwise know only one of the two ways this
             function can raise -- noted by Shubham on #76.
     """
+    # WHY THE POLICY IS INSTALLED BY THE CALLER ABOVE AND NOT PASSED IN HERE
+    #     A check's signature is fixed by F-3 at `run(bf) -> list[dict]`, and
+    #     `docs/design/pipeline-feature-shapes.md` was ADOPTED by all four
+    #     signatures -- so a policy cannot travel as an argument without a
+    #     contract change the whole team has to agree to. Installing it in
+    #     `analyse()` keeps that contract untouched.
+    #
+    #     The alternative, each check loading a file itself, would put policy
+    #     PARSING and therefore policy ERRORS inside three checks with three
+    #     different failure behaviours. One place, one error path.
     config_dir = Path(config_dir)
     names = list(check_names) if check_names is not None else list(CHECKS)
 
@@ -760,12 +816,44 @@ def _print_summary(results: List[Dict[str, Any]]) -> None:
 def main() -> None:
     if len(sys.argv) < 2:
         sys.exit(
-            "usage: python -m analysis.pipeline <config-folder> [check ...]\n"
-            "example: python -m analysis.pipeline tests/fixtures/rtr-us5-secure"
+            "usage: python -m analysis.pipeline <config-folder> "
+            "[--policy <file.json>] [check ...]\n"
+            "example: python -m analysis.pipeline tests/fixtures/rtr-us5-secure\n"
+            "example: python -m analysis.pipeline my-configs/ --policy my-policy.json"
         )
-    config_dir = sys.argv[1]
-    requested = sys.argv[2:] or None
-    _print_summary(analyse(config_dir, check_names=requested))
+    argv = sys.argv[1:]
+
+    # --policy is parsed by hand rather than with argparse, to keep this
+    # consistent with the positional style the rest of the command already
+    # uses and documented in CONTRIBUTING section 4.
+    user_policy = None
+    if "--policy" in argv:
+        index = argv.index("--policy")
+        if index + 1 >= len(argv):
+            sys.exit("--policy needs a file path")
+        path = argv[index + 1]
+        del argv[index:index + 2]
+        try:
+            user_policy = policy_module.load_policy_file(path)
+        except policy_module.PolicyError as error:
+            # A policy the user got wrong is reported as a message, not a
+            # traceback, and analysis does NOT proceed. Running with our
+            # built-in rules after their file failed to load would silently
+            # check assertions they did not make -- which is the #87
+            # confusion arriving through the error path.
+            sys.exit(f"Policy not loaded, so nothing was analysed.\n  {error}")
+        # Both channels, not just renames. `assigned` reports values we
+        # supplied because the user did not -- currently the rule numbers
+        # that become finding ids. This module forbids SILENT defaults, and
+        # printing only half of what we changed would be exactly that.
+        for note in list(user_policy.renamed) + list(user_policy.assigned):
+            print(f"note: {note}")
+
+    config_dir = argv[0]
+    requested = argv[1:] or None
+    _print_summary(
+        analyse(config_dir, check_names=requested, policy=user_policy)
+    )
 
 
 if __name__ == "__main__":

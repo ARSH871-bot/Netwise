@@ -61,6 +61,7 @@ WHAT THIS MODULE MUST NOT BECOME
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
@@ -89,6 +90,58 @@ _SECTION_KEYS: Dict[str, frozenset] = {
 #: demanding fields they cannot know is how a format goes unused. `node` is
 #: required only AFTER the top-level default is applied (D2).
 _REQUIRED_KEYS = ("description", "node")
+
+#: Additionally required, per section: the keys that section's check
+#: DEREFERENCES rather than merely accepts.
+#:
+#: WHY THIS EXISTS (found by @patelankeet2 on #181)
+#:     He wrote a policy file by hand -- the exact thing `--policy` exists
+#:     for -- left out `number`, and got a bare `KeyError: 'number'` from
+#:     inside the check four calls later. D5 promised the opposite:
+#:     "validate by hand, failing loudly, naming the offending entry".
+#:
+#:     Measured after his report, and it is wider and worse than one key.
+#:     Six keys the check dereferences were optional here, and they split
+#:     into two classes:
+#:
+#:         missing key          no violation found   violation found
+#:         filter               KeyError             KeyError
+#:         kind                 KeyError             KeyError
+#:         queries              KeyError             KeyError
+#:         number               none                 KeyError   <--
+#:         violation_severity   none                 KeyError   <--
+#:         violation_summary    none                 KeyError   <--
+#:
+#:     The last three are the dangerous ones. A policy missing any of them
+#:     reports "checked, all clear" every single run -- and fails on the
+#:     first day it actually catches something. A green tick that turns into
+#:     an error exactly when there is a real problem to report is F-4's worst
+#:     shape, reached through the input rather than the output.
+#:
+#: WHY THIS LIST IS NOT DERIVED AT IMPORT TIME
+#:     Reading it out of the check modules would make `analysis.policy`
+#:     import `analysis.checks`, which import `analysis.policy`. So it is
+#:     declared here and `tests/test_policy_wiring.py` asserts it matches
+#:     what the check actually dereferences -- the drift is caught by a
+#:     test rather than prevented by an import cycle.
+#:
+#: WHY ONLY policy_compliance IS LISTED
+#:     A section joins this dict when its check is WIRED to read a user
+#:     policy, not before. `access_control` and `routing` still assert only
+#:     their own hardcoded rules, so requiring keys for them would enforce a
+#:     contract nothing consumes -- and it broke five of #173's own loader
+#:     tests, which build minimal access_control entries precisely because
+#:     nothing dereferences the rest yet. Demanding fields no code reads is
+#:     how a format goes unused, which the comment above _REQUIRED_KEYS
+#:     already warns about.
+#:
+#: `number` is NOT here: see _assign_missing_numbers().
+_SECTION_REQUIRED: Dict[str, frozenset] = {
+    "policy_compliance": frozenset({
+        "filter", "kind", "queries",
+        "violation_severity", "violation_summary",
+    }),
+}
 
 #: Renames we accept and correct rather than reject, because these are the
 #: names our own code used until #159 and a user copying from our docs or
@@ -123,12 +176,18 @@ class Policy:
         self,
         sections: Dict[str, List[Dict[str, Any]]],
         renamed: Optional[List[str]] = None,
+        assigned: Optional[List[str]] = None,
     ) -> None:
         self.sections = sections
         #: Legacy key names that were corrected, as human-readable notes.
         #: Reported rather than silent, because a user who wrote
         #: `start_node:` should learn the name changed.
         self.renamed = renamed or []
+        #: Values we supplied because the user did not -- currently only
+        #: `number`. Same contract as `renamed` and for the same reason:
+        #: this module forbids SILENT defaults, not defaults. A user whose
+        #: finding ids were chosen for them is entitled to know (#181).
+        self.assigned = assigned or []
 
     @property
     def is_empty(self) -> bool:
@@ -208,7 +267,13 @@ def _validate_entry(
     if "node" not in normalised and default_node is not None:
         normalised["node"] = default_node
 
-    missing = [k for k in _REQUIRED_KEYS if k not in normalised]
+    # Universal keys first, then the ones this section's check dereferences.
+    # Reported TOGETHER rather than one round-trip per key: a user fixing
+    # their first policy file should learn everything that is wrong with an
+    # entry in one go, not discover a second missing field after correcting
+    # the first. (#181, @patelankeet2.)
+    required = list(_REQUIRED_KEYS) + sorted(_SECTION_REQUIRED.get(section, ()))
+    missing = [k for k in required if k not in normalised]
     if missing:
         raise PolicyError(
             f"{where}: missing required key(s): {', '.join(missing)}"
@@ -220,6 +285,70 @@ def _validate_entry(
         )
 
     return normalised, renamed
+
+
+def _assign_missing_numbers(
+    sections: Dict[str, List[Dict[str, Any]]]
+) -> List[str]:
+    """Give every entry a `number`, and REPORT any we had to invent.
+
+    WHY number IS NOT SIMPLY REQUIRED (#181)
+        @patelankeet2 found that an entry without it produced a bare
+        `KeyError: 'number'` from inside the check. The obvious fix is to
+        demand it -- and that is the wrong fix.
+
+        `number` is OUR id-numbering concern, not the user's: it is what
+        turns a rule into `PC-00n`. `docs/policy-rules.md` discusses it only
+        as our built-in rules' internal numbering and never as something a
+        user-supplied entry needs. Demanding a field whose meaning we have
+        never explained, from the exact audience `--policy` exists for, is
+        how a format goes unused.
+
+    WHY ASSIGNING IT IS NOT A "SILENT DEFAULT"
+        This module's own docstring forbids silent defaults, and rightly.
+        So this is not silent: every assignment is reported on
+        `Policy.assigned`, exactly as `Policy.renamed` reports a corrected
+        legacy key. The caller shows them; the CLI prints them. A user who
+        did not write `number` learns that we chose one and what it means
+        for their finding ids.
+
+    WHY POSITION, AND WHAT THAT COSTS
+        Numbers come from the entry's position in its section, 1-based, so
+        the same file always produces the same ids -- which is what makes a
+        finding id comparable between runs. The cost is real and worth
+        stating: REORDERING a policy file renumbers the findings after the
+        moved entry. A user who wants an id pinned across edits should set
+        `number` themselves, which is exactly what our own built-in rules do.
+
+        Explicit numbers are never overwritten, and a file mixing explicit
+        and assigned numbers is refused rather than silently producing two
+        rules with the same id -- see below.
+    """
+    notes: List[str] = []
+    for section, entries in sections.items():
+        if not entries:
+            continue
+        explicit = [e for e in entries if "number" in e]
+        if explicit and len(explicit) != len(entries):
+            # Half-numbered is the case that would silently collide: an
+            # explicit 2 and a positional 2 are the same finding id, and
+            # duplicate_id_findings() would report a broken contract that the
+            # user's file caused and our numbering hid.
+            raise PolicyError(
+                f"{section}: {len(explicit)} of {len(entries)} entries set "
+                f"'number' and the rest do not. Either set it on every entry "
+                f"or on none -- mixing them can give two rules the same "
+                f"finding id."
+            )
+        if explicit:
+            continue
+        for position, entry in enumerate(entries, start=1):
+            entry["number"] = position
+        notes.append(
+            f"{section}: no entry set 'number', so they were numbered 1-"
+            f"{len(entries)} in file order (finding ids follow that order)"
+        )
+    return notes
 
 
 def load_policy(data: Any) -> Policy:
@@ -274,7 +403,8 @@ def load_policy(data: Any) -> Policy:
             sections[section].append(validated)
             renamed.extend(entry_renamed)
 
-    return Policy(sections, renamed)
+    assigned = _assign_missing_numbers(sections)
+    return Policy(sections, renamed, assigned)
 
 
 def load_policy_file(path: Any) -> Policy:
@@ -302,3 +432,118 @@ def load_policy_file(path: Any) -> Policy:
         ) from error
 
     return load_policy(parsed)
+
+
+# ------------------------------------------------------------------------------
+# Delivering a loaded policy to a check (#87, the vertical slice)
+# ------------------------------------------------------------------------------
+#
+# THE PROBLEM THIS SOLVES, AND WHY IT LOOKS LIKE THIS
+#     Everything above was written, tested and merged in #173 -- and wired to
+#     NOTHING. Measured before this change: no module under `analysis/checks/`,
+#     `analysis/pipeline.py`, `web/` or `ai/` imported it. A loader nobody calls
+#     closes no gap at all.
+#
+#     The obvious wiring is to pass the policy in as an argument. That is
+#     blocked, and correctly so: F-3 fixes a check's signature at
+#     `run(bf: Session) -> list[dict]`, and `docs/design/pipeline-feature-shapes.md`
+#     was ADOPTED by all four signatures. Widening it is a contract change
+#     needing the whole team, not something to slip inside a feature branch.
+#
+#     So the policy is set here, before the pipeline runs, and checks read it.
+#     Module-level state, which is a real cost and is stated rather than
+#     hidden -- see below.
+#
+# WHY MODULE-LEVEL STATE IS ACCEPTABLE HERE, AND WHERE IT STOPS BEING SO
+#     Netwise is a single-user local tool. `web/main.py` already keeps
+#     `_uploaded` this way and says the same thing: "Module-level state is only
+#     defensible because this is a single-user local tool... If Netwise ever
+#     serves more than one user, this becomes per-session state." The same
+#     sentence applies here, for the same reason, and the same day it stops
+#     being true it stops being true for both.
+#
+#     It is deliberately NOT a convenience. The alternative -- checks reaching
+#     for a file path themselves -- would put policy loading, and therefore
+#     policy ERRORS, inside three different checks with three different
+#     failure behaviours.
+#
+# THE SAFETY PROPERTY THAT MATTERS MORE THAN THE PLUMBING
+#     A finding produced from the user's policy and a finding produced from
+#     our built-in example policy look identical on screen. That is exactly
+#     the confusion #87 is about: the user believing their rules are enforced
+#     when ours are. So `active_policy()` returning None is a MEANINGFUL
+#     answer, and the check is obliged to say which policy it used rather than
+#     quietly defaulting. See policy_compliance.run().
+
+#: The policy in force for THIS THREAD, or None when the user supplied none.
+#:
+#: None is not "empty" -- an empty policy is a real, valid, deliberate state
+#: (D4) and is a Policy object with empty sections. Conflating the two would
+#: be F-4 in the policy layer: "the user asserted nothing" and "the user
+#: supplied nothing" are different claims.
+#:
+#: PER-THREAD, AND THAT IS A BUG FIX RATHER THAN A STYLE CHOICE (#182).
+#:     This was a plain module-level global. @SamikaPerera raised the risk on
+#:     #182: `/api/findings` is a SYNC FastAPI endpoint, so it runs in the
+#:     threadpool, so two overlapping requests genuinely execute in parallel
+#:     -- one browser with two tabs, or a double-clicked Scan Now, is enough.
+#:     Each calls `analyse()`, which installs a policy and clears it in a
+#:     `finally`.
+#:
+#:     He framed it as worth a sentence in a docstring. Measured, it is worse
+#:     than that. Two concurrent analyses, each with its own policy, a check
+#:     reading `active_policy()` partway through:
+#:
+#:         router-A installed its own policy, its check saw 'router-B'
+#:         router-B installed its own policy, its check saw None
+#:
+#:         2 of 2 concurrent analyses read the WRONG policy
+#:
+#:     Both wrong, in the two worst ways available: one check asserted a
+#:     DIFFERENT user's rules, and the other silently fell back to our
+#:     built-in examples -- which is #87's exact confusion, arriving through
+#:     the mechanism built to fix it.
+#:
+#:     `threading.local()` gives each request its own slot. The contract does
+#:     not change: checks still call `active_policy()` and know nothing about
+#:     where it lives, so option D is untouched and #191's exit condition
+#:     still applies.
+#:
+#:     WHAT THIS STILL ASSUMES: that a check runs on the same thread as the
+#:     `analyse()` call that installed the policy. True today -- no check
+#:     spawns a thread or a process. A check that ever does would read None
+#:     and fall back to our rules, which is the safe direction but silent, so
+#:     that is the assumption to break loudly if it ever changes.
+_state = threading.local()
+
+
+def set_active_policy(policy: Optional[Policy]) -> None:
+    """Install the policy the checks on THIS THREAD should read.
+
+    Raises TypeError rather than accepting a raw dict: a caller that has not
+    been through `load_policy()` has not been validated, and letting one
+    through would put unvalidated user input in front of a check -- the
+    failure the whole module exists to prevent.
+    """
+    if policy is not None and not isinstance(policy, Policy):
+        raise TypeError(
+            "set_active_policy() takes a Policy from load_policy() or "
+            f"load_policy_file(), not {type(policy).__name__}. Passing a raw "
+            "mapping would hand a check unvalidated user input."
+        )
+    _state.active = policy
+
+
+def active_policy() -> Optional[Policy]:
+    """The policy in force on this thread, or None if the user supplied none.
+
+    Returns None on a thread that never had one installed, which is the same
+    answer as "the user supplied no policy" -- correct, because a check on
+    such a thread genuinely has no user rules to read.
+    """
+    return getattr(_state, "active", None)
+
+
+def clear_active_policy() -> None:
+    """Forget this thread's active policy. Called on upload, and in tests."""
+    _state.active = None

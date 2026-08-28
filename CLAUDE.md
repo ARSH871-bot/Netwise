@@ -537,11 +537,39 @@ project's recurring failure family arriving through process rather than code.
 | AI: natural-language questions | Ankeet + Samika | **Backend built** (#66) and **now actually crosses the ACL** (#108, fixed in #141) — `ai/query.py` + `/api/ask`. The dashboard wiring is Samika's half and is not done. See §7c |
 | The AI byline tells the truth | Samika | #109. `/api/findings` now carries `explanation_source` (#143), but `style.css`'s `content: "AI explanation"` is still unconditional, so on any machine without Ollama the dashboard attributes deterministic text to a model. The signal exists; the label has not changed |
 
-**The policy is ours, not the user's.** `access_control` and `policy_compliance`
-name `rtr-us5`; `routing` names `rtr-hq`/`rtr-branch`. Two carry a `PLACEHOLDER`
-comment promising the real client policy will replace them, and nothing does —
-there is no file format, no loader, no UI. Measured on `rtr-us5-messy` by
-renaming the device and changing nothing else:
+**The policy is ours, not the user's — but one check now takes theirs.**
+`access_control` and `policy_compliance` name `rtr-us5`; `routing` names
+`rtr-hq`/`rtr-branch`.
+
+**What exists now.** `analysis/policy.py` loads and validates a user policy
+(#173), and since #87's vertical slice `policy_compliance` actually reads it:
+
+```bash
+python -m analysis.pipeline my-configs/ --policy my-policy.json
+```
+
+The rules travel via `analyse(policy=...)`, which installs them and clears
+them in a `finally` — **not** by widening `run(bf)`, because F-3 fixes that
+signature and changing it needs all four. Every finding says whose policy
+produced it, because a finding from the user's rules and one from our example
+look identical on screen otherwise.
+
+Measured with `tools/stranger_config.py`, which now carries a third column:
+
+```
+                            ours        stranger    + their policy
+                           f/n/e      our policy             f/n/e
+TOTAL                   12 /  3 /  7     3 /  0 / 15       8 /  1 / 20
+```
+
+**Policy-driven detections on a network that is not ours: 3 → 8.**
+
+**What is still missing.** `access_control` and `routing` still ignore a
+supplied policy, and there is no UI — a user can only pass `--policy` on the
+command line. So the gap is narrowed for one check, not closed.
+
+The original measurement, still true for a user who supplies nothing, on
+`rtr-us5-messy` by renaming the device and changing nothing else:
 
 ```
 our device name      6 findings   access_control + policy_compliance

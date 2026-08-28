@@ -105,8 +105,60 @@ def _make_stranger_copy(source: Path, destination: Path) -> None:
         config.write_text(_HOSTNAME.sub(r"hostname stranger-\1", text), encoding="utf-8")
 
 
+def _stranger_policy(destination: Path):
+    """Build the policy a stranger would write for their OWN device.
+
+    WHY THIS COLUMN EXISTS (#87, the vertical slice)
+        The two columns above measure "their config, OUR policy", and that
+        number is unchanged by the wiring -- correctly, because nothing about
+        the no-policy case changed. Running this tool after the wiring and
+        reporting "12/3/7 -> 3/0/15, unchanged" would be true and would miss
+        the point entirely.
+
+        The question the wiring answers is a different one: if the stranger
+        ALSO supplies a policy naming their device, do the findings come back?
+        So there is a third column, and it is the only one that can move.
+
+    HOW THE POLICY IS BUILT, AND WHY THAT IS FAIR
+        By taking our own rules and changing ONLY the device name to the one
+        `_make_stranger_copy` produced. Nothing else differs, so the column
+        isolates exactly the variable this issue is about. Writing a
+        different policy would measure the policy, not the gap.
+
+    It goes through `load_policy()`, not straight into the check, so this
+    exercises the real validation path a user's file would take.
+    """
+    from analysis.checks import policy_compliance
+    from analysis.policy import load_policy
+
+    names = set()
+    for config in (destination / "configs").glob("*"):
+        match = _HOSTNAME.search(config.read_text(encoding="utf-8"))
+        if match:
+            names.add(match.group(1))
+    if not names:
+        return None
+
+    # One device per fixture in practice; if a fixture ever has more, bind
+    # every rule to the first by sorted name so the result is deterministic.
+    node = sorted(names)[0]
+    rules = [dict(rule, node=node) for rule in policy_compliance.POLICY_RULES]
+    return load_policy({"policy_compliance": rules})
+
+
 def _counts(findings: List[Dict]) -> Counter:
     return Counter(f["status"] for f in findings)
+
+
+def _fmt(counter: Counter) -> str:
+    """found / none / error, in fixed columns.
+
+    Module level rather than defined inside the loop: the TOTAL line below
+    uses it, and a helper defined in a loop body does not exist if the loop
+    never runs -- so a missing fixtures directory would turn a clean "nothing
+    to measure" into a NameError.
+    """
+    return f"{counter['found']:>3} /{counter['none']:>3} /{counter['error']:>3}"
 
 
 def _surviving_detections(findings: List[Dict]) -> List[str]:
@@ -119,17 +171,20 @@ def run() -> int:
 
     print("What Netwise finds on the same config, renamed (#87)")
     print("=" * 78)
-    print(f"{'fixture':24} {'ours f/n/e':>14}   {'stranger f/n/e':>14}")
+    print(f"{'fixture':22} {'ours':>13}   {'stranger':>13}   "
+          f"{'+ their policy':>15}")
+    print(f"{'':22} {'f/n/e':>13}   {'our policy':>13}   {'f/n/e':>15}")
     print("-" * 78)
 
     total_ours = Counter()
     total_theirs = Counter()
+    total_with_policy = Counter()
     survivors: Dict[str, List[str]] = {}
 
     for name in FIXTURES:
         source = FIXTURE_ROOT / name
         if not source.exists():
-            print(f"{name:24} SKIPPED -- fixture not found")
+            print(f"{name:22} SKIPPED -- fixture not found")
             continue
 
         ours = analyse(str(source))
@@ -138,21 +193,43 @@ def run() -> int:
             _make_stranger_copy(source, destination)
             theirs = analyse(str(destination))
 
-        a, b = _counts(ours), _counts(theirs)
+            # The third column: same config, same rules, THEIR device name.
+            policy = _stranger_policy(destination)
+            with_policy = (analyse(str(destination), policy=policy)
+                           if policy is not None else [])
+
+        a, b, c = _counts(ours), _counts(theirs), _counts(with_policy)
         total_ours.update(a)
         total_theirs.update(b)
+        total_with_policy.update(c)
         survivors[name] = _surviving_detections(theirs)
 
-        def fmt(c: Counter) -> str:
-            return f"{c['found']:>3} /{c['none']:>3} /{c['error']:>3}"
-
-        print(f"{name:24} {fmt(a):>14}   {fmt(b):>14}")
+        print(f"{name:22} {_fmt(a):>13}   {_fmt(b):>13}   {_fmt(c):>15}")
 
     print("-" * 78)
     print(
-        f"{'TOTAL':24} {total_ours['found']:>3} /{total_ours['none']:>3} /"
-        f"{total_ours['error']:>3}   {total_theirs['found']:>3} /"
-        f"{total_theirs['none']:>3} /{total_theirs['error']:>3}"
+        f"{'TOTAL':22} {_fmt(total_ours):>13}   {_fmt(total_theirs):>13}   "
+        f"{_fmt(total_with_policy):>15}"
+    )
+
+    print(
+        "\nThe third column is #87's vertical slice: the SAME stranger's "
+        "config,\nanalysed against a policy that names THEIR device instead "
+        "of ours.\nOnly the device name differs from column one."
+    )
+    print(
+        f"\n  policy-driven detections on a network that is not ours: "
+        f"{total_theirs['found']} -> {total_with_policy['found']}"
+    )
+    print(
+        "\n  READ THE ERROR COLUMN HONESTLY. It RISES in column three, and\n"
+        "  that is an artifact of how this synthetic policy is built rather\n"
+        "  than a regression. Our rules all name the filter `acl_in`, so on\n"
+        "  the routing fixtures -- which have no such filter -- every rule\n"
+        "  correctly reports 'could not check' instead of being skipped as\n"
+        "  belonging to another device. A real stranger would not write\n"
+        "  rules about a filter their config does not have.\n"
+        "  The number that answers #87 is the FOUND column."
     )
 
     print("\nWhat still gets detected on a stranger's config:")

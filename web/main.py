@@ -331,6 +331,57 @@ def _snapshot_fingerprint(configs_dir: Path) -> Optional[str]:
         return None
 
 
+def _staged_policy():
+    """The validated policy the user uploaded, or None if there is not one.
+
+    Returns None rather than raising when the staged file will not load.
+    That cannot normally happen -- `/api/policy` validates BEFORE staging,
+    so a file only reaches POLICY_PATH after `load_policy_file()` returns --
+    but a file edited on disk between upload and scan would otherwise take
+    down an endpoint that has nothing to do with it.
+
+    Falling back to None means "analyse against our built-in example rules",
+    which is exactly what the run would have done before a policy existed,
+    and `policy_compliance` says which of the two it used in every finding's
+    evidence. So the degraded path is still self-describing rather than
+    silently pretending the user's rules were applied.
+    """
+    if not POLICY_PATH.exists():
+        return None
+    try:
+        return load_policy_file(POLICY_PATH)
+    except (PolicyError, OSError):
+        return None
+
+
+def _analysis_key() -> Optional[str]:
+    """One cache key covering BOTH inputs the analysis depends on.
+
+    The config fingerprint alone is not enough once a policy can change the
+    result -- see the block comment in `get_findings()`. A policy that is
+    absent, present, or edited must each produce a different key.
+    """
+    config_part = _snapshot_fingerprint(CONFIGS_DIR)
+    if config_part is None:
+        # The config half could not be fingerprinted, so the cache is already
+        # disabled for this request. Do not invent half a key.
+        return None
+    digest = hashlib.sha256()
+    digest.update(config_part.encode())
+    # A domain separator. Deliberately NOT covered by a test: `config_part`
+    # is always a 64-character hex digest, so the boundary is already
+    # unambiguous and removing this line changes no key. Mutation-tested and
+    # it survives, which is the correct outcome for defensive clarity rather
+    # than a gap -- recorded here so nobody later mistakes it for one.
+    digest.update(b"\0policy\0")
+    try:
+        digest.update(POLICY_PATH.read_bytes() if POLICY_PATH.exists()
+                      else b"<no policy>")
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
 def _analysis_is_worth_caching(results: List[Dict[str, Any]]) -> bool:
     """Did any check actually produce a result?
 
@@ -497,11 +548,26 @@ def get_findings() -> List[Dict[str, Any]]:
     # work on every page load. The key is the staged config's CONTENT, so a
     # new upload is a new key and no stale result can be served; an analysis
     # that could not run is never stored. See the block comment above.
-    key = _snapshot_fingerprint(CONFIGS_DIR)
+    #
+    # THE KEY COVERS THE POLICY TOO, AND IT MUST (#181).
+    #     POLICY_PATH lives beside `configs/`, not inside it, so
+    #     `_snapshot_fingerprint(CONFIGS_DIR)` cannot see it. Wiring the
+    #     policy into analyse() without also widening the key produces a
+    #     feature that silently does nothing:
+    #
+    #         upload config, Scan   -> analysed, cached under K
+    #         upload policy, Scan   -> same K, so the PRE-POLICY result is
+    #                                  served and the policy appears inert
+    #
+    #     That is worse than not shipping it. The user gets a green
+    #     "policy accepted" message and findings computed without it.
+    key = _analysis_key()
     results = _cached_analysis(key)
     if results is None:
         results = analysis_pipeline.analyse(
-            SNAPSHOT_DIR, snapshot_name=SNAPSHOT_NAME
+            SNAPSHOT_DIR,
+            snapshot_name=SNAPSHOT_NAME,
+            policy=_staged_policy(),
         )
         _remember_analysis(key, results)
 
@@ -724,20 +790,25 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
 #     `.json` would let a policy be staged into `configs/` as a device file,
 #     which is the one place it must never land.
 #
-# WHAT THIS ENDPOINT DELIBERATELY DOES NOT DO -- SEE #181 AND #182
-#     It stages a validated policy. It does NOT install it, because the
-#     mechanism for a policy reaching a check is still being decided:
+# WHAT THIS ENDPOINT DOES WITH THE POLICY -- #181, AND #182 GATES THE MERGE
+#     It stages a validated policy, and `/api/findings` now passes it to
+#     `analyse()`. That was deliberately NOT done for most of this PR's life,
+#     and the reason is worth keeping:
 #
-#         #181  a PR that installs the policy in module-level state, so the
-#               ADOPTED `run(bf)` signature never changes
-#         #182  an open decision request asking the team to choose between
-#               three other options for that same question
+#         #181  this PR -- installs the policy in module-level state, so the
+#               ADOPTED `run(bf)` signature never changes (option D)
+#         #182  the decision request asking the team to choose between that
+#               and three alternatives
 #
-#     `analysis.policy.set_active_policy()` exists only on #181's branch, not
-#     on `main`. Calling it from here would pick the winner of an open team
-#     decision from inside a feature branch -- the exact thing #182 was raised
-#     to prevent. So the wiring is one call, added when that settles, and the
-#     message on screen says plainly that nothing is applied yet.
+#     Calling `set_active_policy()` from here picks the winner of that
+#     decision. It is written now because option D has three of four recorded
+#     positions and this PR already implements it -- the web call is the same
+#     decision one layer out, not a second one. It must NOT merge before #182
+#     is recorded, which is a review gate rather than anything the code can
+#     enforce.
+#
+#     Until it does merge, the dashboard hint tells the user the policy is
+#     staged and not applied, because on `main` that is still true.
 #
 # THE SAFETY PROPERTY, WHICH IS WHY VALIDATION HAPPENS BEFORE STAGING
 #     A rejected policy must never reach POLICY_PATH. If it did, a user who
