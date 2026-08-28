@@ -6,11 +6,13 @@ WHAT THIS PROTECTS
 
     1. A REJECTED POLICY MUST NEVER BE STAGED.
        If validation fails and the file lands anyway, the user sees an error
-       and still has a broken policy sitting in the staging location. Once
-       the wiring in #181/#182 lands, the next analysis would run against a
-       file nobody accepted. The endpoint validates into a temp file and
-       copies to POLICY_PATH only after `load_policy_file()` returns, and
-       `test_a_rejected_policy_is_never_staged` is the guard on that order.
+       and still has a broken policy sitting in the staging location. **Since
+       #181 landed this is no longer hypothetical** -- the next analysis DOES
+       run against whatever is staged, so a rejected file that reached
+       POLICY_PATH would silently become the rules in force. The endpoint
+       validates into a temp file and copies to POLICY_PATH only after
+       `load_policy_file()` returns, and `test_a_rejected_policy_is_never_
+       staged` is the guard on that order.
 
     2. A POLICY MUST NEVER LAND IN configs/.
        Batfish reads every file under `configs/`. A policy there is handed
@@ -19,11 +21,19 @@ WHAT THIS PROTECTS
        a file that is not a config.
 
 WHAT IS DELIBERATELY NOT TESTED HERE
-    That an uploaded policy is APPLIED to the analysis. It is not, and the
-    endpoint says so. How a Policy reaches a check is open -- #181 proposes
-    module-level state, #182 asks the team to choose -- so this branch stages
-    and validates only. When that settles, the wiring is one call and these
-    tests keep their meaning.
+    That an uploaded policy CHANGES THE FINDINGS. It does, since #181 --
+    `tests/test_web_policy_applied.py` is where that lives, because it needs
+    the pipeline and this file deliberately needs nothing but the endpoint.
+
+    THIS PARAGRAPH USED TO SAY THE POLICY WAS NOT APPLIED AT ALL: "It is not,
+    and the endpoint says so." Both halves stopped being true when #181
+    landed, and the endpoint's message went on saying it for a day because a
+    test below was asserting it. Corrected together, and recorded here because
+    a docstring is where a reader checks what a file is FOR -- a stale one
+    sends them looking for a behaviour that moved.
+
+    What this file still tests is the UPLOAD path only: accepted, rejected,
+    staged, never staged, and what the response says about it.
 
 NO BATFISH, NO OLLAMA, NO NETWORK. The endpoint validates with
 `analysis.policy.load_policy_file()`, which is pure standard library.
