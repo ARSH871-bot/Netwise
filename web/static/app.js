@@ -714,8 +714,348 @@ function addSkippedNotes(notes) {
   });
 }
 
+/* ------------------------------------------------------------------------ *
+ * Propose a change (US-13/US-14)
+ *
+ * Talks to the real POST /api/propose, which landed on `main` with #183 and
+ * #184 on 27 August. This pane built against it as a shell first, calling
+ * the endpoint for real and falling back only on a 404 -- the one status
+ * meaning "not here yet" rather than "your request was wrong". That fallback
+ * is now unreachable and has been deleted rather than left as dead code
+ * nobody dares remove.
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Render one /api/propose response.
+ *
+ * THE SHAPE, from ai/propose.py:
+ *
+ *     { request_understood: string | null,
+ *       proposed_change:   {device, filter, line} | null,
+ *       impact:            F-1 findings,
+ *       verified:          bool,
+ *       warning:           bool,
+ *       grounded:          bool,
+ *       answer:            string }
+ *
+ * TWO RULES INHERITED FROM addResponse(), FOR THE SAME REASONS
+ *
+ *   1. The translated request is always shown back, above everything else.
+ *      ai/propose.py matches against a closed template and calls no model
+ *      in either direction; that narrow scope is only SAFE, rather than
+ *      merely limited, because the person who asked can read what was
+ *      actually generated and say "that is not what I meant". Here it
+ *      matters MORE than in the chat pane: a mistranslated question
+ *      produces a wrong answer, while a mistranslated request produces a
+ *      config line somebody might paste into a device.
+ *
+ *   2. A refusal never looks like a lesser success.
+ *      `grounded !== true`, not `=== false`, so a missing or malformed key
+ *      lands on the side that claims LESS -- the same cautious default the
+ *      chat pane and the explanation byline both use.
+ */
+function addProposeResponse(result) {
+  const log = document.getElementById("propose-log");
+  const exchange = el("div", "exchange");
+
+  // Shown whenever the server understood the request at all. On a refusal
+  // this is null, because there is no generated line to show -- the answer
+  // then carries the reason on its own.
+  if (result.request_understood) {
+    exchange.appendChild(el("div", "understood", result.request_understood));
+  }
+
+  const refused = result.grounded !== true;
+
+  // THREE INDEPENDENT FACTS, NEVER FOLDED INTO ONE.
+  //
+  //     refused          nothing ran
+  //     warning === true a high-severity OPENING was proved in the diff
+  //     verified !== true some of the impact analysis could not run
+  //
+  // #183 made `verified` and `warning` separate booleans after review found
+  // a proved opening being suppressed by an unrelated error in the same
+  // diff. ANDing them here would re-create that bug in the UI after the
+  // backend was fixed for it -- the same fact, lost one layer later.
+  //
+  // `=== true` and `!== true` both lean the cautious way, matching
+  // `grounded !== true` above: a missing or malformed key must never
+  // silently drop the warning, and must never silently claim verification.
+  const warned = result.warning === true;
+
+  // A NON-BOOLEAN `warning` IS NOT A "NO".
+  //     `=== true` alone would render a malformed flag as silence, and
+  //     silence in this pane implicitly claims "this change does not open
+  //     access". That is F-4 in a boolean: "we could not determine" is not
+  //     "we determined it is fine".
+  //
+  //     Leaning the other way (`!== false`) is no better -- it fires the
+  //     warning on every malformed response, and a warning that appears
+  //     regardless is one the reader learns to skip, which costs exactly
+  //     the case it exists for.
+  //
+  //     So a malformed flag is neither warned nor ignored: it feeds the
+  //     "could not fully verify" note below, which is the honest reading of
+  //     a response we cannot interpret. A mutation surviving is what
+  //     exposed this -- both directions passed, because every malformed
+  //     case tested also had a malformed `grounded` and never reached here.
+  const flagsAreUsable =
+    typeof result.warning === "boolean" && typeof result.verified === "boolean";
+  const unverified = result.verified !== true || !flagsAreUsable;
+
+  if (warned) {
+    exchange.appendChild(
+      el(
+        "div",
+        "propose-warning",
+        "This change opens access that is currently blocked. Read the " +
+          "simulated impact below before applying it."
+      )
+    );
+  }
+
+  exchange.appendChild(
+    el("div", `message system${refused ? " refusal" : ""}`, result.answer)
+  );
+
+  // Shown on a grounded response whose impact analysis was incomplete. Not
+  // shown on a refusal: there, nothing ran at all and the answer already
+  // says so, and a second "could not verify" line would imply a partial
+  // result existed.
+  if (!refused && unverified) {
+    exchange.appendChild(
+      el(
+        "div",
+        "propose-unverified",
+        "Some of the impact analysis could not run, so this is not the " +
+          "whole picture. This is not a claim that the change is safe."
+      )
+    );
+  }
+
+  // The generated line itself. Only ever shown when the server actually
+  // produced one -- a refusal carries proposed_change: null, and inventing
+  // a placeholder card for it would be showing a change that does not
+  // exist.
+  if (result.proposed_change) {
+    exchange.appendChild(renderProposedChange(result.proposed_change));
+  }
+
+  // What the simulation actually found. Empty on a refusal, and empty on a
+  // change with no detected effect -- both correctly render nothing here,
+  // because the answer text already says which of the two it was.
+  if (result.impact && result.impact.length) {
+    exchange.appendChild(renderImpact(result.impact));
+  }
+
+  log.appendChild(exchange);
+
+  // WHERE THE LOG SCROLLS TO IS A SAFETY DECISION HERE, NOT A NICETY.
+  //     `.propose-log` is capped at 18rem and scrolls. Scrolling to the
+  //     newest content -- what every other log in this app does, and what
+  //     this one did -- puts the END of the exchange in view: the impact
+  //     list. The warning is at the TOP of the exchange, so on any response
+  //     long enough to scroll, the one element that must be read first is
+  //     the one element off screen.
+  //
+  //     Found by rendering it in a real browser. The DOM shim has no
+  //     geometry, so every assertion about the warning being "first" passed
+  //     while it was, in practice, out of view.
+  //
+  //     So a warned response scrolls to the START of its exchange and a
+  //     clean one keeps the usual behaviour. Guarded on the method existing
+  //     because the test shim is not a browser.
+  if (warned && typeof exchange.scrollIntoView === "function") {
+    exchange.scrollIntoView({ block: "start" });
+  } else {
+    log.scrollTop = log.scrollHeight;
+  }
+
+  return exchange;
+}
+
+/**
+ * The generated config line, shown as GENERATED and never as APPLIED.
+ *
+ * WHY THE REMINDER IS PERMANENT AND NOT DISMISSIBLE
+ *     CLAUDE.md's non-negotiable constraint: "Netwise GENERATES and
+ *     SIMULATES config changes. It must never push changes to a live
+ *     device." ai/propose.py holds that end structurally -- the candidate
+ *     line is written only into a throwaway copy that is deleted before the
+ *     function returns, and `before_dir` is never written to.
+ *
+ *     What this element defends is the OTHER end: the user's belief. A
+ *     monospace config line in a tool that just analysed their network
+ *     reads as something that happened. The difference between "here is a
+ *     line you could apply" and "here is a line that has been applied" is
+ *     one word, and the consequence of getting it wrong is somebody not
+ *     making a change they think they already made.
+ *
+ *     So the reminder is part of the card rather than a one-off notice at
+ *     the top of the pane: it cannot scroll away from the line it is about,
+ *     and a log with five proposals in it carries five reminders rather
+ *     than one the reader passed twenty minutes ago.
+ *
+ * The line is `el()`-built like everything else -- it is generated text
+ * containing addresses from the user's own request.
+ */
+function renderProposedChange(change) {
+  const card = el("div", "proposed-change");
+
+  card.appendChild(el("div", "proposed-heading", "Proposed change"));
+
+  // Device and filter first: a line without them is not actionable, and
+  // "which box, which ACL" is the first thing anyone asks.
+  const where = el("div", "proposed-where");
+  where.appendChild(el("span", "proposed-device", change.device));
+  where.appendChild(el("span", "proposed-filter", change.filter));
+  card.appendChild(where);
+
+  card.appendChild(el("code", "proposed-line", change.line));
+
+  // Spelled out in words, not only in colour or position -- the same
+  // reasoning as the "this is not a clean result" sentence on a blind
+  // finding card. A style can be overridden, missed, or read past; a
+  // sentence cannot be misread.
+  card.appendChild(
+    el(
+      "div",
+      "proposed-not-applied",
+      "Not applied. Netwise generated this line and simulated it against a " +
+        "throwaway copy of your config — nothing has been written to any " +
+        "device or to the config you uploaded."
+    )
+  );
+
+  return card;
+}
+
+/**
+ * The simulated impact, rendered with the EXISTING finding-card renderer.
+ *
+ * WHY renderFinding() AND NOT A SECOND CARD BUILDER
+ *     These are ordinary F-1 findings. `analysis/change_impact.py` produced
+ *     them, the pipeline validated them, and /api/propose attaches the same
+ *     plain-English explanation /api/findings attaches. Building a second
+ *     renderer for them would mean two places that decide what an amber
+ *     "could not check" card looks like -- and the moment those two drift,
+ *     one of them is showing a blind spot as something else.
+ *
+ *     That is not hypothetical for this pane specifically. A propose
+ *     response can carry a PROVEN high-severity opening beside a check that
+ *     could not run (#183: `verified` and `warning` are separate booleans
+ *     precisely so one cannot swallow the other). Both of those have to
+ *     render correctly, and renderFinding() is the code that already knows
+ *     how -- including the "this is not a clean result" sentence on a blind
+ *     card, which a hand-rolled version here would almost certainly omit.
+ *
+ * ORDERING MATCHES THE DASHBOARD, AND FOR THE DASHBOARD'S REASON
+ *     Errors first, then found worst-first, then clean. A check that did
+ *     not run is the thing most likely to mislead someone reading quickly,
+ *     so it goes where it cannot be missed. Sorting the impact list by
+ *     severity alone would bury a "could not verify" under three
+ *     medium-severity diffs.
+ */
+function renderImpact(impact) {
+  const box = el("div", "impact");
+
+  box.appendChild(
+    el(
+      "div",
+      "impact-heading",
+      "Simulated impact — what changed when this line was applied to a copy"
+    )
+  );
+
+  const blind = impact.filter((f) => f.status === "error");
+  const problems = impact
+    .filter((f) => f.status === "found")
+    .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+  const clean = impact.filter((f) => f.status === "none");
+
+  // Exactly the variant/icon/badge triples renderFindings() uses, so an
+  // impact card and a dashboard card of the same status are the same card.
+  blind.forEach((f) => box.appendChild(renderFinding(f, "blind", "⚠", "could not check")));
+  problems.forEach((f) => box.appendChild(renderFinding(f, f.severity, "●", f.severity)));
+  clean.forEach((f) => box.appendChild(renderFinding(f, "clean", "✓", "checked")));
+
+  return box;
+}
+
+function addProposeMessage(text, who) {
+  const log = document.getElementById("propose-log");
+  const node = el("div", `message ${who}`, text);
+  log.appendChild(node);
+  log.scrollTop = log.scrollHeight;
+  return node;
+}
+
+function setUpProposeChange() {
+  const form = document.getElementById("propose-form");
+  if (!form) return;
+
+  const input = document.getElementById("propose-input");
+  const button = form.querySelector("button");
+
+  addProposeMessage(
+    "Describe one change, e.g. \"block 10.10.10.5 to 10.20.0.5 on " +
+      "tcp/443 on rtr-us5\". Addresses must be written out -- a name like " +
+      "\"YouTube\" is refused rather than guessed at.",
+    "system"
+  );
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const request = input.value.trim();
+    if (!request) return;
+
+    addProposeMessage(request, "user");
+    input.value = "";
+
+    // Locked while in flight, for a stronger version of setUpChat()'s
+    // reason. /api/propose connects to Batfish, loads the snapshot, writes a
+    // scratch copy and runs change_impact TWICE -- slower than /api/ask, so
+    // a second submission mid-flight is likelier, not less.
+    input.disabled = true;
+    button.disabled = true;
+    const pending = addProposeMessage(
+      "Simulating the change against a copy of your config…",
+      "system pending"
+    );
+
+    try {
+      const response = await fetch("/api/propose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request }),
+      });
+
+      pending.remove();
+
+      if (!response.ok) throw new Error(`server returned ${response.status}`);
+
+      addProposeResponse(await response.json());
+    } catch (error) {
+      // Nothing was simulated, so nothing is known. Same reasoning as the
+      // chat pane's catch: "could not be asked" and "was refused" are the
+      // same thing to the person reading.
+      pending.remove();
+      addProposeMessage(
+        `Could not propose that change: ${error.message}. Nothing was ` +
+          `simulated, so nothing is known either way.`,
+        "system refusal"
+      );
+    } finally {
+      input.disabled = false;
+      button.disabled = false;
+      input.focus();
+    }
+  });
+}
+
 /* ------------------------------------------------------------------------ */
 loadFindings();
 setUpUpload();
 setUpPolicyUpload();
 setUpChat();
+setUpProposeChange();

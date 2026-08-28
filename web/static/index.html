@@ -134,6 +134,43 @@
           />
           <button type="submit">Ask</button>
         </form>
+
+        <!-- ---- Propose a change (US-13/US-14) ----
+             A SIBLING OF THE CHAT PANEL, NOT A SECOND CHAT.
+             Both take one plain-English sentence and both refuse rather than
+             guess, so they share the visual family. They are separated by a
+             rule and their own heading because what they DO differs in the
+             way that matters most: asking is read-only, and proposing
+             produces a config line somebody might paste into a device.
+
+             SHELL ONLY. The response rendering -- how proposed_change,
+             verified and warning actually display -- is deliberately NOT
+             here yet. #183 is still open and its `warning` logic changed
+             once already during review (a proven high-severity opening was
+             being suppressed by an unrelated error), so building the
+             rendering against that shape now would be building against a
+             contract that has moved this week. -->
+        <hr class="pane-divider" />
+
+        <h2 id="propose-heading">Propose a change</h2>
+        <p class="hint">
+          Describe one change in plain English and Netwise will write the
+          config line, simulate it, and warn you if it opens something.
+          <strong>Nothing is ever applied to a device</strong> &mdash; the
+          change is tested against a throwaway copy.
+        </p>
+
+        <div id="propose-log" class="chat-log propose-log" aria-live="polite"></div>
+
+        <form id="propose-form" class="chat-form">
+          <input
+            type="text"
+            id="propose-input"
+            placeholder="e.g. block 10.10.10.5 to 10.20.0.5 on tcp/443 on rtr-us5"
+            autocomplete="off"
+          />
+          <button type="submit">Propose</button>
+        </form>
       </section>
     </main>
 
