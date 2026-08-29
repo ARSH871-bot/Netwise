@@ -54,6 +54,7 @@ from typing import Any, Dict, Iterator, List
 from pybatfish.client.session import Session
 from pybatfish.datamodel.flow import HeaderConstraints
 
+from analysis import policy as policy_module
 from analysis import findings, snapshot
 
 # The name this check is registered under, and the value that goes in every
@@ -211,6 +212,50 @@ def run(bf: Session) -> List[Dict[str, Any]]:
     results.extend(_check_guarantees(bf, numbering, guarantees))
     results.extend(_check_dead_rules(bf, numbering))
     results.extend(_check_undefined_references(bf, numbering))
+
+    # A supplied policy this check does not read (#196).
+    #
+    # `policy_compliance` reads a user's policy since #181; this check does
+    # not. Before this, a user who supplied access-control rules was told
+    # NOTHING here -- the entries were silently discarded.
+    #
+    # Reported as `error` rather than folded into another card, because it is
+    # a distinct fact. Not "we could not check your rules" but "we did not
+    # read them" -- and F-4's whole point is that two different claims must
+    # not be made to look like one. Nothing here says the built-in rules are
+    # wrong; it says whose rules ran.
+    #
+    # APPENDED LAST, deliberately. This module's ids are positional -- see the
+    # KNOWN WEAKNESS note beside `numbering` above -- so a card inserted
+    # earlier would renumber every other finding the moment a policy is
+    # supplied. At the end it takes the next free number and shifts nothing.
+    #
+    # This block goes away when the check learns to read a policy properly,
+    # which is the capability half of #196 and needs its own issue.
+    ignored = policy_module.entries_supplied_for(CHECK_NAME)
+    if ignored:
+        results.append(
+            findings.error_finding(
+                check=CHECK_NAME,
+                device="unknown",
+                summary=f"{ignored} supplied rule(s) for this check were not read",
+                detail=(
+                    f"You supplied {ignored} rule(s) for access control. This "
+                    "check does not yet read a supplied policy, so Netwise's "
+                    "built-in rules were checked instead. Nothing is claimed "
+                    "about your rules either way (#196)."
+                ),
+                source="analysis/checks/access_control.py",
+                number=next(numbering),
+            )
+        )
+
+    # BEFORE the clean-sentinel return below, deliberately. Appending after it
+    # meant this card was skipped in exactly the case that matters most: the
+    # built-in rules find nothing, the user gets a GREEN TICK, and nothing
+    # mentions that their own rules were never read. Caught by the test for
+    # it, not by reading the code. Making `results` non-empty suppresses the
+    # sentinel, which is the same trade PC-049 makes (#229).
 
     # Only claim "all clear" if every analysis ran AND found nothing. If any
     # produced an error finding, `results` is non-empty and we never get here --
