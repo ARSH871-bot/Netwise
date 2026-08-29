@@ -281,7 +281,7 @@ def test_an_empty_upload_is_refused_and_says_how_to_mean_it():
 #: put any of them in a multipart filename field.
 TRAVERSAL_NAMES = [
     "../../../../etc/passwd.json",
-    "..\..\windows\system32\evil.json",
+    r"..\..\windows\system32\evil.json",
     "/tmp/absolute.json",
 ]
 
@@ -351,7 +351,7 @@ def test_the_backslash_reduction_is_platform_dependent_and_that_is_recorded():
     here, because a shared helper touching three endpoints does not belong
     in a business-context branch.
     """
-    windows_style = "..\..\windows\system32\evil.json"
+    windows_style = r"..\..\windows\system32\evil.json"
 
     assert PureWindowsPath(windows_style).name == "evil.json"
     assert PurePosixPath(windows_style).name == windows_style, (
