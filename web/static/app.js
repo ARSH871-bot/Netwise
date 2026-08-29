@@ -1282,6 +1282,23 @@ function renderProposedChange(change) {
  *     severity alone would bury a "could not verify" under three
  *     medium-severity diffs.
  */
+// Module-level, and DELIBERATELY NEVER RESET (#255 review, Arsh + Samika).
+//
+// renderFindings() resets its own counter every call, but it can do that
+// safely only because loadFindings() clears the whole container first --
+// exactly one generation of dashboard cards is ever in the DOM at a time.
+// The propose log does not work that way: addProposeResponse() appends each
+// exchange to #propose-log and never clears it, so a second proposal in the
+// same session renders ALONGSIDE the first, not instead of it. A counter
+// reset per call would hand the second response's cards the same ids as the
+// first's, which are still on screen -- the exact collision this exists to
+// prevent, moved from "two panes" to "two turns of one pane".
+//
+// A distinct prefix (not shared with renderFindings()'s "evidence-N") means
+// neither renderer has to know the other exists, or coordinate a shared
+// counter across two different call sites.
+let _impactEvidenceCounter = 0;
+
 function renderImpact(impact) {
   const box = el("div", "impact");
 
@@ -1299,11 +1316,19 @@ function renderImpact(impact) {
     .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
   const clean = impact.filter((f) => f.status === "none");
 
+  const nextImpactEvidenceId = () => `impact-evidence-${++_impactEvidenceCounter}`;
+
   // Exactly the variant/icon/badge triples renderFindings() uses, so an
   // impact card and a dashboard card of the same status are the same card.
-  blind.forEach((f) => box.appendChild(renderFinding(f, "blind", "⚠", "could not check")));
-  problems.forEach((f) => box.appendChild(renderFinding(f, f.severity, "●", f.severity)));
-  clean.forEach((f) => box.appendChild(renderFinding(f, "clean", "✓", "checked")));
+  blind.forEach((f) =>
+    box.appendChild(renderFinding(f, "blind", "⚠", "could not check", nextImpactEvidenceId()))
+  );
+  problems.forEach((f) =>
+    box.appendChild(renderFinding(f, f.severity, "●", f.severity, nextImpactEvidenceId()))
+  );
+  clean.forEach((f) =>
+    box.appendChild(renderFinding(f, "clean", "✓", "checked", nextImpactEvidenceId()))
+  );
 
   return box;
 }
