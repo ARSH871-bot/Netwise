@@ -57,6 +57,18 @@ function makeElement(tag) {
       this.children = nodes;
     },
     addEventListener() {},
+    // app.js's report-download control (#222) sets aria-disabled via the
+    // real DOM API on every loadFindings() call, which this harness's
+    // module-load also triggers. Attributes are kept in their own map
+    // rather than as properties, matching the other tests/js shims, so a
+    // test cannot read back one that was never set (#262's own reasoning).
+    setAttribute(key, value) {
+      this.attributes = this.attributes || {};
+      this.attributes[key] = String(value);
+    },
+    getAttribute(key) {
+      return (this.attributes || {})[key] ?? null;
+    },
     querySelector() {
       return null;
     },
