@@ -6,11 +6,13 @@ WHAT THIS PROTECTS
 
     1. A REJECTED POLICY MUST NEVER BE STAGED.
        If validation fails and the file lands anyway, the user sees an error
-       and still has a broken policy sitting in the staging location. Once
-       the wiring in #181/#182 lands, the next analysis would run against a
-       file nobody accepted. The endpoint validates into a temp file and
-       copies to POLICY_PATH only after `load_policy_file()` returns, and
-       `test_a_rejected_policy_is_never_staged` is the guard on that order.
+       and still has a broken policy sitting in the staging location. **Since
+       #181 landed this is no longer hypothetical** -- the next analysis DOES
+       run against whatever is staged, so a rejected file that reached
+       POLICY_PATH would silently become the rules in force. The endpoint
+       validates into a temp file and copies to POLICY_PATH only after
+       `load_policy_file()` returns, and `test_a_rejected_policy_is_never_
+       staged` is the guard on that order.
 
     2. A POLICY MUST NEVER LAND IN configs/.
        Batfish reads every file under `configs/`. A policy there is handed
@@ -19,11 +21,19 @@ WHAT THIS PROTECTS
        a file that is not a config.
 
 WHAT IS DELIBERATELY NOT TESTED HERE
-    That an uploaded policy is APPLIED to the analysis. It is not, and the
-    endpoint says so. How a Policy reaches a check is open -- #181 proposes
-    module-level state, #182 asks the team to choose -- so this branch stages
-    and validates only. When that settles, the wiring is one call and these
-    tests keep their meaning.
+    That an uploaded policy CHANGES THE FINDINGS. It does, since #181 --
+    `tests/test_web_policy_applied.py` is where that lives, because it needs
+    the pipeline and this file deliberately needs nothing but the endpoint.
+
+    THIS PARAGRAPH USED TO SAY THE POLICY WAS NOT APPLIED AT ALL: "It is not,
+    and the endpoint says so." Both halves stopped being true when #181
+    landed, and the endpoint's message went on saying it for a day because a
+    test below was asserting it. Corrected together, and recorded here because
+    a docstring is where a reader checks what a file is FOR -- a stale one
+    sends them looking for a behaviour that moved.
+
+    What this file still tests is the UPLOAD path only: accepted, rejected,
+    staged, never staged, and what the response says about it.
 
 NO BATFISH, NO OLLAMA, NO NETWORK. The endpoint validates with
 `analysis.policy.load_policy_file()`, which is pure standard library.
@@ -141,17 +151,39 @@ def test_a_valid_policy_is_accepted_and_staged():
     assert json.loads(main.POLICY_PATH.read_text(encoding="utf-8")) == VALID_POLICY
 
 
-def test_the_message_says_staged_and_not_applied():
+def test_the_message_says_staged_and_which_checks_read_it():
     """#82's honest-staging pattern, applied to the policy.
 
-    "Accepted and staged" is true. "In force" is not, and will not be until
-    the wiring lands. A message that let someone believe their rules were
-    being enforced would be the #87 confusion arriving through the UI.
+    THIS TEST USED TO ASSERT "not yet applied", AND KEPT PASSING AFTER #181
+    MADE THAT FALSE. That is the sharper half of what went wrong: the string
+    was not merely stale, it was pinned in place by a test, so the one
+    mechanism that should have objected was instead enforcing it.
+
+    Both directions are wrong and the message has to avoid both:
+
+        understating   "not yet applied" while a scan uses the policy
+        overstating    "your policy is in force" while two checks ignore it
+
+    So the assertions below name what must be present AND what must not, and
+    the negative one is the one that would have caught the original bug.
     """
     body = _post_policy(VALID_POLICY).json()
+    message = body["message"].lower()
 
-    assert "staged" in body["message"].lower()
-    assert "not yet applied" in body["message"].lower()
+    assert "staged" in message
+    assert "applied" in message
+    # The check that actually reads a policy is named, so the user knows the
+    # scope rather than inferring it.
+    assert "policy compliance" in message
+    # ...and the two that do not are named too, with the issue that tracks it.
+    assert "access control" in message
+    assert "routing" in message
+    assert "#87" in body["message"]
+
+    # The regression itself. If someone reintroduces the old sentence, or
+    # writes a new one that denies the policy is used, this fails.
+    assert "not yet applied" not in message
+    assert "not applied" not in message
 
 
 def test_a_policy_is_never_staged_inside_configs():
