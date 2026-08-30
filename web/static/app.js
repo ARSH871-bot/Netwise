@@ -160,6 +160,44 @@ function renderFinding(finding, variant, icon, badgeText) {
     card.appendChild(explanation);
   }
 
+  // Remediation -- what to CHANGE, not what is wrong (#221). A different
+  // claim from the explanation above, so its own block with its own byline
+  // rather than an extra sentence tacked onto .ai-explanation -- the same
+  // "different claims stay honestly separate" discipline #109 established
+  // for model vs. fallback.
+  //
+  // NEVER MODEL-WRITTEN. web/main.py's _attach_remediation() only ever
+  // calls ai.explain.remediate_with_source(), which never touches Ollama --
+  // every string it can produce is built from a regex-captured piece of
+  // evidence.detail a check already produced. So there is no "model" vs.
+  // "fallback" distinction to make here the way explanation has one; the
+  // byline says "deterministic" because that is the only thing it could
+  // honestly say.
+  //
+  // ABSENT ON A "found" CARD IS NOT SILENCE, THE SAME REASONING #31 GIVES
+  // EXPLANATION.
+  //     Most found findings do not match one of the three shapes
+  //     remediate_with_source() knows -- silence here would read as
+  //     "nothing to add" when the true state is "no mechanical suggestion
+  //     is available for this one". So a found finding with no remediation
+  //     says so in words, the same instinct behind `.no-explanation`-style
+  //     states elsewhere in this file.
+  if (variant !== "blind" && variant !== "clean") {
+    if (finding.remediation) {
+      card.appendChild(
+        el("div", "remediation", finding.remediation)
+      );
+    } else {
+      card.appendChild(
+        el(
+          "p",
+          "no-remediation",
+          "No mechanical remediation is available for this finding yet."
+        )
+      );
+    }
+  }
+
   // Spell it out in words as well as colour. An amber card is a signal; a
   // sentence saying "this is not a clean result" cannot be misread.
   if (variant === "blind") {

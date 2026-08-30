@@ -56,6 +56,15 @@
   --ai: #8b5cf6;
   --ai-ink: #5b21b6;
   --ai-fill: #f5f3ff;
+
+  /* Remediation (#221) -- what to CHANGE, a third voice distinct from both
+     of the above. Not violet: --ai means "a model wrote this", and
+     remediation text never is (see .remediation's own comment). Teal is
+     used by nothing else here either, so a suggested fix can never be
+     misread as a severity, a status, or a model's paraphrase. */
+  --fix: #0d9488;
+  --fix-ink: #115e59;
+  --fix-fill: #f0fdfa;
 }
 
 /* --- Page ---------------------------------------------------------------- */
@@ -505,6 +514,52 @@ body {
 
 .ai-explanation.fallback::before {
   content: "Plain-English summary";
+  color: var(--ink-soft);
+}
+
+/* --- Remediation: what to change, not what is wrong (#221) ---------------
+   A third voice, distinct from both .evidence (Batfish's own words) and
+   .ai-explanation (a paraphrase, model or fallback). This is neither --
+   web/main.py's _attach_remediation() only ever calls
+   ai.explain.remediate_with_source(), which never calls the model at all.
+   Every string it can produce is a regex-captured piece of evidence.detail
+   a check already produced, restated as an instruction. So this gets its
+   own byline rather than borrowing --ai's, which would misstate who wrote
+   it, and its own colour (teal), used by nothing else on this page. */
+.remediation {
+  margin: 0.55rem 0 0;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.83rem;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--fix-fill);
+  border-left: 3px solid var(--fix);
+  border-radius: 0 4px 4px 0;
+}
+
+.remediation::before {
+  content: "Suggested fix";
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fix-ink);
+  margin-bottom: 0.15rem;
+}
+
+/* --- No mechanical remediation available (#221) ---------------------------
+   Most found findings do not match one of the three shapes
+   remediate_with_source() knows how to name a fix for. Silence here would
+   read as "nothing to add", when the true state is "no suggestion is
+   available for this one" -- the same reasoning that keeps a "could not
+   check" card from looking like a clean one. Italic and muted, like
+   .rename-note: a plain fact stated in words, not a warning and not a
+   second colour competing with the ones that mean something stronger. */
+.no-remediation {
+  margin: 0.55rem 0 0;
+  font-style: italic;
+  font-size: 0.8rem;
   color: var(--ink-soft);
 }
 
