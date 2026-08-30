@@ -246,14 +246,6 @@ function renderFindings(findings) {
   ];
 
   sections.filter(Boolean).forEach((s) => container.appendChild(s));
-
-  // Findings are on screen, so there is something to export. Said here
-  // rather than at each call site because this is the ONE function that puts
-  // findings on screen -- mock or real, first load or after a scan.
-  setDownloadAvailable(
-    true,
-    "Downloads what is shown above. The report states what it describes."
-  );
 }
 
 /**
@@ -270,6 +262,19 @@ async function loadFindings() {
     const response = await fetch("/api/findings");
     if (!response.ok) throw new Error(`server returned ${response.status}`);
     renderFindings(await response.json());
+
+    // Findings are on screen, so there is something to export.
+    //
+    // Set HERE and not inside renderFindings(), which is a pure renderer of
+    // its own container and should stay one. Reaching out of it to mutate an
+    // unrelated control coupled every caller to the report links -- measured,
+    // it broke 84 tests across four DOM harnesses that have no reason to
+    // model a download button. Worth recording: the first version did that,
+    // and the harnesses were right to object.
+    setDownloadAvailable(
+      true,
+      "Downloads what is shown above. The report states what it describes."
+    );
   } catch (error) {
     document.getElementById("summary").replaceChildren();
     container.replaceChildren(
@@ -1269,9 +1274,10 @@ function reportLinks() {
  *     for and hand back a report describing results the screen has never
  *     shown.
  *
- *     So availability tracks renderFindings() and clearStaleResults(), the
- *     two functions that already own whether findings exist. There is no
- *     third source of truth to drift.
+ *     So availability tracks loadFindings() -- both its success and its
+ *     failure path -- and clearStaleResults(). Those are the places that
+ *     already decide whether findings exist, so there is no third source
+ *     of truth to drift out of step with them.
  *
  * THE HINT CHANGES WITH IT, because a greyed control with no explanation is
  * a puzzle. Same reasoning as the disabled Scan Now button, which this

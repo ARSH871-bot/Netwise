@@ -57,6 +57,17 @@ function makeElement(tag) {
       this.children = nodes;
     },
     addEventListener() {},
+    // app.js sets aria-disabled on the report links via the real
+    // DOM API, so the shim has to model it. Attributes are kept in
+    // their own map rather than as properties, so a test cannot
+    // read one that was never set.
+    setAttribute(key, value) {
+      this.attributes = this.attributes || {};
+      this.attributes[key] = String(value);
+    },
+    getAttribute(key) {
+      return (this.attributes || {})[key] ?? null;
+    },
     removeEventListener() {},
     remove() {},
     focus() {},
