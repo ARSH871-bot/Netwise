@@ -1209,6 +1209,45 @@ function addUnusableNotes(notes) {
   });
 }
 
+/* ------------------------------------------------------------------------ *
+ * Download the report (#222, backend from #233)
+ *
+ * The download itself is the browser's. `GET /api/report` returns
+ * `Content-Disposition: attachment`, so following the link IS the download --
+ * there is no fetch here, no Blob, and no object URL that has to be revoked
+ * on a path somebody will eventually forget.
+ *
+ * So what is this function for? Exactly one thing: STOPPING the navigation
+ * while the control is unavailable. An anchor has no `disabled` attribute,
+ * so without a handler an aria-disabled link is still a working link -- it
+ * would look unavailable and download anyway, which is worse than either
+ * honest state.
+ * ------------------------------------------------------------------------ */
+
+/** The two report links, in one place so nothing has to list ids twice. */
+function reportLinks() {
+  return [
+    document.getElementById("report-html"),
+    document.getElementById("report-csv"),
+  ].filter(Boolean);
+}
+
+function setUpReportDownload() {
+  reportLinks().forEach((link) => {
+    link.addEventListener("click", (event) => {
+      // getAttribute, not a property: `aria-disabled` is an attribute and
+      // reading `link.ariaDisabled` is not supported everywhere this has to
+      // run. Compared to the string "true" so that a missing attribute, or
+      // any other value, means AVAILABLE -- the state that does nothing
+      // surprising. A control that silently stopped working because an
+      // attribute was misspelled would be the harder failure to notice.
+      if (link.getAttribute("aria-disabled") === "true") {
+        event.preventDefault();
+      }
+    });
+  });
+}
+
 /* ------------------------------------------------------------------------ */
 loadFindings();
 setUpUpload();
@@ -1216,3 +1255,4 @@ setUpPolicyUpload();
 setUpBusinessContextUpload();
 setUpChat();
 setUpProposeChange();
+setUpReportDownload();
