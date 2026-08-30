@@ -907,3 +907,58 @@ body {
   color: var(--blind-ink);
   font-size: 0.8rem;
 }
+
+/* --- Download the report (#222) ------------------------------------------
+   SAME FAMILY AS .scan-now, ONE STEP QUIETER.
+       Scan Now is the primary action in this pane -- it is how anything
+       happens at all. Exporting is something you do AFTER, to a result that
+       already exists, so it is bordered rather than filled. Making it as
+       loud as Scan Now would compete with the control that has to be found
+       first.
+
+   THE UNAVAILABLE STATE IS THE SAME GREY .scan-now:disabled USES, because
+   it means the same thing here: not yet, and here is why. Anchors have no
+   :disabled pseudo-class, so it hangs off [aria-disabled="true"] -- which
+   is also the attribute a screen reader reads, rather than a colour it
+   cannot see. */
+.report-download {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.9rem;
+}
+
+.report-download-label {
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.report-link {
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.3rem 0.8rem;
+  border: 1px solid var(--ink);
+  border-radius: 6px;
+  color: var(--ink);
+  background: transparent;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.report-link:hover:not([aria-disabled="true"]) {
+  background: var(--ink);
+  color: #fff;
+}
+
+.report-link[aria-disabled="true"] {
+  background: var(--page);
+  border-color: var(--line);
+  color: var(--ink-soft);
+  cursor: not-allowed;
+}
+
+#report-hint {
+  margin-top: 0.35rem;
+}
