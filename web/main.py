@@ -29,7 +29,7 @@ import json
 import shutil
 import tempfile
 import xml.etree.ElementTree as ET
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -43,6 +43,16 @@ from ai.explain import explain_with_source
 from ai.propose import propose_change
 from ai.query import answer_question
 from analysis import findings, pipeline as analysis_pipeline, report
+from analysis.business_context import (
+    TIERS,
+    BusinessContextError,
+    load_business_context_file,
+)
+from analysis.checks.risk import (
+    apply_business_context,
+    sort_findings,
+    unusable_entries,
+)
 from analysis.pfsense_convert import PfSenseConversionError, convert as pfsense_convert
 from analysis.policy import PolicyError, load_policy_file
 from web import mock_findings
@@ -125,6 +135,25 @@ POLICY_PATH = SNAPSHOT_DIR / "policy.json"
 #: dependency to a security tool on one person's say-so -- and this endpoint
 #: must not accept a format the loader cannot read.
 POLICY_EXTENSIONS = {".json"}
+
+# --- Where an uploaded BUSINESS CONTEXT is staged (#87, risk side) ----------
+#
+# Beside the policy, and outside `configs/` for the identical reason: Batfish
+# reads every file under `configs/`, and a JSON asset list handed to a config
+# parser is either a parse error blamed on the user's network or a snapshot
+# that analyses cleanly while containing a file that is not a config.
+#
+#     uploaded_configs/
+#       current/
+#         configs/                 <- Batfish reads THIS
+#           device.cfg
+#         policy.json              <- and never this
+#         business-context.json    <- nor this
+BUSINESS_CONTEXT_PATH = SNAPSHOT_DIR / "business-context.json"
+
+#: JSON only, matching `analysis/business_context.py`'s own limit. This
+#: endpoint must not accept a format the loader cannot read.
+BUSINESS_CONTEXT_EXTENSIONS = {".json"}
 
 # Has a config been uploaded in this process? Until one has, /api/findings
 # serves mock data, because there is genuinely nothing to analyse yet.
@@ -646,6 +675,29 @@ def get_findings() -> List[Dict[str, Any]]:
         )
         _remember_analysis(key, results)
 
+    # --- Business context (#87, risk side) ---------------------------------
+    #
+    # Applied here rather than inside the pipeline -- see the block comment
+    # above /api/business-context for why, and for why calling refine() a
+    # second time would be wrong rather than merely redundant.
+    #
+    # WITH NO STAGED FILE, NOTHING RUNS AT ALL.
+    #     Not "runs and changes nothing" -- the calls are skipped, so the
+    #     list returned is the same object graph as before this feature
+    #     existed. That is deliberately provable rather than argued: a user
+    #     who never uploads a context is on exactly the old path.
+    #
+    # BOTH CALLS COPY, WHICH THE CACHE DEPENDS ON.
+    #     `results` may be the list held in _analysis_cache. escalating in
+    #     place would bake the escalation into the cached entry, and the
+    #     NEXT request would escalate the already-escalated copy again --
+    #     medium, high, and R-4 would carry it further still. Both
+    #     apply_business_context() and sort_findings() return new lists, and
+    #     tests/test_business_context_scoring.py pins the copying.
+    context = _staged_business_context()
+    if context is not None:
+        results = sort_findings(apply_business_context(results, context))
+
     # _attach_explanations() copies rather than mutating, so the list held in
     # the cache never acquires the two extra keys. That is not incidental --
     # it is the condition this module's own docstring set for caching here.
@@ -805,6 +857,17 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     policy_was_staged = POLICY_PATH.exists()
     _discard_staged_policy()
 
+    # A NEW NETWORK MUST NOT INHERIT THE OLD NETWORK'S BUSINESS CONTEXT.
+    #     Exactly the policy's reasoning, and if anything sharper. A context
+    #     names devices -- `device: rtr-us5` -- and the failure is silent
+    #     rather than loud: a stale entry that happens to match a device name
+    #     on the NEW network would escalate findings there on the strength of
+    #     a judgement the user made about a different machine. A policy that
+    #     does not apply reports "could not check"; a context that does not
+    #     apply just quietly re-rates the wrong box.
+    context_was_staged = BUSINESS_CONTEXT_PATH.exists()
+    _discard_staged_business_context()
+
     global _uploaded
     _uploaded = True
 
@@ -852,6 +915,10 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
         # project's own "an absent row is a weaker statement than an
         # explicit zero" rule for the findings summary tiles.
         "skipped": skipped,
+        # Same reasoning as policy_cleared: a user who uploaded a context and
+        # then a config needs to know it went with them, not discover it by
+        # wondering why a severity dropped back.
+        "business_context_cleared": context_was_staged,
     }
 
 
@@ -1021,6 +1088,190 @@ async def upload_policy(file: UploadFile) -> Dict[str, Any]:
         "message": (
             f"'{display_name}' accepted ({size:,} bytes) and staged. {summary} "
             "Not yet applied — wiring to the analysis lands with #181."
+        ),
+    }
+
+
+# --- The business-context upload (#87, risk side) ---------------------------
+#
+# WHY THIS ONE IS WIRED UP WHEN THE POLICY UPLOAD DELIBERATELY IS NOT
+#     `/api/policy` stages and stops, because how a policy reaches a check
+#     was an open team decision (#181, #182) and picking the winner from
+#     inside a feature branch is what that issue exists to prevent.
+#
+#     Business context has no such open question, for a structural reason:
+#     it is consumed by a POST-PROCESSOR, which already receives the finished
+#     findings. A check needs a policy handed to it before it runs; `risk`
+#     needs the context only after everything has run. So there is nothing to
+#     decide about how it gets there.
+#
+# WHERE IT IS APPLIED, AND WHY NOT IN THE PIPELINE
+#     `refine()` is not called from this module. `analysis/pipeline.py` calls
+#     it, through POST_PROCESSORS, with exactly one argument -- that
+#     signature is the ADOPTED F-3 shape, and CLAUDE.md is explicit that the
+#     three shapes are settled and need the team to change.
+#
+#     So the context is applied HERE, to the findings `analyse()` returns,
+#     using the two functions `risk` exposes for it. The result is identical
+#     to a single `refine(results, context)` call -- escalation applies to
+#     the severity the ruleset settled on either way -- and
+#     `test_business_context_wiring.py` proves that equivalence rather than
+#     asserting it. If the team later decides a post-processor may take a
+#     second argument, this becomes one line in the pipeline and this block
+#     goes away.
+#
+# WHY NOT SIMPLY CALL refine() A SECOND TIME
+#     Because it is not idempotent, and the way it fails is quiet. R-4 --
+#     "everything else keeps its default" -- reads the severity ON the
+#     finding. A `low` finding escalated to `medium` would, on a second pass,
+#     have `medium` read back as its default and escalate again to `high`.
+#     Two page loads, two different severities, no upload in between.
+
+
+def _discard_staged_business_context() -> None:
+    """Remove the staged business-context file, if there is one."""
+    BUSINESS_CONTEXT_PATH.unlink(missing_ok=True)
+
+
+def _staged_business_context():
+    """The staged business context, or None if there is not one.
+
+    Returns None on a file that will not load, rather than raising. Nothing
+    unvalidated can reach this path -- the endpoint stages only after
+    `load_business_context_file()` has returned -- so a failure here means
+    the file changed underneath us or was written by something else. The
+    honest response to that is to score exactly as if no context existed,
+    which is what "absence of context is not information" already requires.
+
+    It must never take down /api/findings: a business context is a refinement
+    of a severity, and losing it is not worth losing the findings over.
+    """
+    if not BUSINESS_CONTEXT_PATH.exists():
+        return None
+    try:
+        return load_business_context_file(BUSINESS_CONTEXT_PATH)
+    except (BusinessContextError, OSError):
+        return None
+
+
+@app.post("/api/business-context")
+async def upload_business_context(file: UploadFile) -> Dict[str, Any]:
+    """Accept and validate a business context, staging it only if it loads.
+
+    Mirrors `upload_policy()` exactly -- basename at the boundary, extension
+    check, chunked read against the size limit, empty upload refused, our
+    filename rather than theirs, and validation strictly BEFORE staging so a
+    rejected file can never reach BUSINESS_CONTEXT_PATH.
+
+    A rejection is HTTP 400 carrying `BusinessContextError`'s own message
+    unchanged. That message names the entry and offers a did-you-mean for a
+    miscased tier -- work `analysis/business_context.py` already did, and
+    which rephrasing here could only degrade.
+    """
+    display_name = Path(file.filename or "").name
+    if not display_name:
+        raise HTTPException(status_code=400, detail="No file was uploaded.")
+
+    extension = Path(display_name).suffix.lower()
+    if extension not in BUSINESS_CONTEXT_EXTENSIONS:
+        allowed = ", ".join(sorted(BUSINESS_CONTEXT_EXTENSIONS))
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{display_name}' is not a business context Netwise can "
+                f"read. A business context is {allowed}."
+            ),
+        )
+
+    size = 0
+    contents = bytearray()
+    while chunk := await file.read(CHUNK_BYTES):
+        size += len(chunk)
+        if size > MAX_UPLOAD_BYTES:
+            limit_mb = MAX_UPLOAD_BYTES / (1024 * 1024)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{display_name}' is larger than the {limit_mb:.0f} MB "
+                    "limit. A business context is a short list of assets -- "
+                    "is this definitely the right file?"
+                ),
+            )
+        contents.extend(chunk)
+
+    if size == 0:
+        # NOT the same as an empty CONTEXT. The loader treats an empty file
+        # as a context that says nothing, which is valid. A zero-byte UPLOAD
+        # is far likelier to be a mistake, and accepting it would stage "no
+        # asset matters more than any other" without the user saying it.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{display_name}' is empty. To say nothing about any asset "
+                "deliberately, upload an empty list `[]` rather than an "
+                "empty file, so that it is a choice on the record."
+            ),
+        )
+
+    # --- Validate BEFORE staging ------------------------------------------
+    handle, temp_name = tempfile.mkstemp(suffix=".json")
+    temp_path = Path(temp_name)
+    try:
+        with open(handle, "wb") as staging:
+            staging.write(bytes(contents))
+        context = load_business_context_file(temp_path)
+    except BusinessContextError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+    # --- Only now does anything reach the staging location -----------------
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    BUSINESS_CONTEXT_PATH.write_bytes(bytes(contents))
+
+    # NO reset_analysis_cache() HERE, AND THAT IS DELIBERATE.
+    #     A `reset_analysis_cache()` call stood here, with a comment saying a
+    #     new context had to invalidate the cache or the escalation would not
+    #     appear until something evicted the entry. That was simply false: the
+    #     cache holds the findings `analyse()` returned, BEFORE any context is
+    #     applied, and /api/findings applies the context downstream of the
+    #     cache read on every request. The escalation appears on the very next
+    #     request whether the cache was cleared or not.
+    #
+    #     A mutation deleting the call survived, which is what exposed it --
+    #     no test could fail, because the call changed nothing. Kept, it would
+    #     have cost a full re-analysis (~3.6s of real Batfish work, #92b) on
+    #     every context upload, in exchange for a mechanism that does not
+    #     exist. A comment asserting a false mechanism is worse than no
+    #     comment: the next reader would have built on it.
+
+    # Entries that cannot affect anything are named, not swallowed. A user
+    # who tagged their finance VLAN by subnet, saw "accepted", and saw no
+    # change would reasonably conclude their context had been applied.
+    unusable = unusable_entries(context)
+
+    if context.is_empty:
+        summary = (
+            "It names no assets, which is a valid choice -- every finding "
+            "keeps exactly the severity the rules gave it."
+        )
+    else:
+        tiers = Counter(entry["tier"] for entry in context.entries)
+        summary = f"{len(context)} asset(s): " + ", ".join(
+            f"{tier} {tiers[tier]}" for tier in TIERS if tiers[tier]
+        ) + "."
+
+    return {
+        "filename": display_name,
+        "size_bytes": size,
+        "accepted": True,
+        "asset_count": len(context),
+        "is_empty": context.is_empty,
+        # Reported, never silently ignored -- see unusable_entries().
+        "unusable": unusable,
+        "message": (
+            f"'{display_name}' accepted ({size:,} bytes) and staged. {summary} "
+            "Findings on a 'critical' asset will be raised one severity level."
         ),
     }
 
