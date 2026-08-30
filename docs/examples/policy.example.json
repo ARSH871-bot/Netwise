@@ -1,0 +1,57 @@
+{
+  "device": "rtr-us5",
+
+  "policy_compliance": [
+    {
+      "number": 1,
+      "description": "The LAN may reach only the two approved servers",
+      "kind": "prohibition",
+      "filter": "acl_in",
+      "violation_severity": "high",
+      "violation_summary": "The internal network can reach servers it should not",
+      "queries": [
+        {
+          "srcIps": "10.10.10.0/24",
+          "dstIps": "0.0.0.0/0 \\ (218.8.104.58, 10.20.0.5)"
+        }
+      ]
+    },
+    {
+      "number": 2,
+      "description": "The internal server is reachable only over HTTPS",
+      "kind": "prohibition",
+      "filter": "acl_in",
+      "violation_severity": "high",
+      "violation_summary": "The internal server accepts traffic other than HTTPS",
+      "queries": [
+        {
+          "srcIps": "10.10.10.0/24",
+          "dstIps": "10.20.0.5",
+          "ipProtocols": ["!tcp"]
+        },
+        {
+          "srcIps": "10.10.10.0/24",
+          "dstIps": "10.20.0.5",
+          "ipProtocols": ["tcp"],
+          "dstPorts": "0-442,444-65535"
+        }
+      ]
+    },
+    {
+      "number": 4,
+      "description": "DNS to the approved resolver must work",
+      "kind": "requirement",
+      "filter": "acl_in",
+      "violation_severity": "medium",
+      "violation_summary": "DNS to the approved resolver is blocked, so name lookups fail",
+      "queries": [
+        {
+          "srcIps": "10.10.10.0/24",
+          "dstIps": "218.8.104.58",
+          "ipProtocols": ["udp"],
+          "dstPorts": "53"
+        }
+      ]
+    }
+  ]
+}

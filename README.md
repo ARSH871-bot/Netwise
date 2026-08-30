@@ -66,7 +66,7 @@ check assertions written against this project's own test fixtures — that a
 particular device denies a particular flow, and so on.
 
 You **can** now supply your own policy: there is a documented format
-([`docs/design/user-policy-format.md`](docs/design/user-policy-format.md)), a
+(start from [`docs/examples/policy.example.json`](docs/examples/policy.example.json)), a
 validating loader (`analysis/policy.py`, #173), an upload endpoint with a file
 picker (`POST /api/policy`, #186), and **since #181 merged on 28 August one
 check actually reads it** — `policy_compliance` asserts your rules instead of
