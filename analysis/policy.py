@@ -544,6 +544,43 @@ def active_policy() -> Optional[Policy]:
     return getattr(_state, "active", None)
 
 
+
+def entries_supplied_for(check_name: str) -> int:
+    """How many entries a supplied policy holds for `check_name`, or 0 (#196).
+
+    WHY A CHECK THAT IGNORES A POLICY STILL NEEDS TO KNOW ABOUT ONE
+        `policy_compliance` reads a supplied policy since #181.
+        `access_control` and `routing` do not. Before this, a user who
+        supplied rules for those two was told:
+
+            RT-050  2 route assertion(s) could not be checked against this
+                    config. They are written about rtr-branch, rtr-hq, which
+                    are not in this snapshot.
+
+        Every device and every count in that sentence is OURS. The user wrote
+        about their own device. `access_control` said nothing at all -- the
+        supplied rule was silently discarded.
+
+        F-4 holds narrowly, because both report `error` rather than `none`
+        and nobody is told they are safe. But *"we could not check YOUR
+        rules"* and *"we never read your rules"* are different claims, and
+        the product was making the wrong one.
+
+    WHY THIS RETURNS A COUNT AND NOT THE ENTRIES
+        A check that cannot act on the rules should not be handed them --
+        the temptation to half-read them is exactly how a check ends up
+        asserting something it cannot support. The count is enough to say
+        the honest sentence, and nothing more.
+
+        When a check learns to read a policy properly it uses
+        `entries_for()` like `policy_compliance` does, and its call to this
+        function goes away.
+    """
+    active = active_policy()
+    if active is None:
+        return 0
+    return len(active.entries_for(check_name))
+
 def clear_active_policy() -> None:
     """Forget this thread's active policy. Called on upload, and in tests."""
     _state.active = None

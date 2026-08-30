@@ -115,6 +115,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from pybatfish.client.session import Session
 from pybatfish.datamodel.flow import HeaderConstraints
 
+from analysis import policy as policy_module
 from analysis import findings, snapshot
 
 # The name this check is registered under, and the value in every "check" field.
@@ -131,6 +132,12 @@ CHECK_NAME = "routing"
 # there are two of them, so nothing else can land here -- asserted by
 # tests/test_device_scoping.py rather than left as an assumption.
 SKIPPED_NUMBER = 50
+
+#: RT-051: a supplied policy this check does not read (#196).
+#: Clear of the route numbers (1..N) and of SKIPPED_NUMBER above. A DIFFERENT
+#: fact from 50: that one says "your snapshot lacks the device our assertions
+#: name", this one says "you gave us assertions and we did not read them".
+UNREAD_POLICY_NUMBER = 51
 
 # See the "WHAT COUNTS AS REACHABLE" section of the module docstring for why
 # this is NOT the same set pybatfish's own tooling treats as success.
@@ -243,6 +250,40 @@ def run(bf: Session) -> List[Dict[str, Any]]:
     this function only has to ask questions and shape the answers.
     """
     results: List[Dict[str, Any]] = []
+
+    # A supplied policy this check does not read (#196).
+    #
+    # Measured before this, with a user policy naming their own device:
+    #
+    #     RT-050  2 route assertion(s) could not be checked against this
+    #             config. They are written about rtr-branch, rtr-hq, which
+    #             are not in this snapshot.
+    #
+    # Every device and every count there is OURS. The user wrote about
+    # rtr-acme. F-4 held narrowly -- it says `error`, not `none`, so nobody
+    # was told they were safe -- but "we could not check YOUR rules" and
+    # "we never read your rules" are different claims and this was the
+    # wrong one.
+    #
+    # This block goes away when this check learns to read a policy properly,
+    # which is the capability half of #196 and needs its own issue.
+    ignored = policy_module.entries_supplied_for(CHECK_NAME)
+    if ignored:
+        results.append(
+            findings.error_finding(
+                check=CHECK_NAME,
+                device="unknown",
+                summary=f"{ignored} supplied route assertion(s) were not read",
+                detail=(
+                    f"You supplied {ignored} route assertion(s). This check "
+                    "does not yet read a supplied policy, so Netwise's "
+                    "built-in assertions were checked instead. Nothing is "
+                    "claimed about your assertions either way (#196)."
+                ),
+                source="analysis/checks/routing.py",
+                number=UNREAD_POLICY_NUMBER,
+            )
+        )
 
     # --- Scope the statements to the devices actually in this snapshot -------
     #
