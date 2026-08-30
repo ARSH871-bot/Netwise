@@ -457,7 +457,7 @@ format, to the screen. This replaced the earlier engine/frontend split.
 | **Shubham** | Policy-compliance + change-impact analysis |
 | **Samika** | Risk prioritisation + the interface + secure upload |
 
-## 11. Status — last updated 2026-08-13
+## 11. Status — last updated 2026-08-28
 
 > **⚠️ This section goes stale faster than anything else in the file.** It has
 > been wrong about `main` repeatedly, in both directions — claiming work that
@@ -488,11 +488,26 @@ sprint rather than reconstructed after it.
 on 8 August. The record is `docs/sprint3/SPRINT3.md`, and its closing section
 was written the day after the sprint ended rather than reconstructed later.
 
-**Sprint 4 — in progress** (13–19 August 2026). Scope is @shubhamkataria2005's
-counter-proposal on #86, which Arsh accepted over his own: **#78 timeboxed to
-item 1 with an explicit stop**, #16 split, #30 with A-2 raised on day 1. The
-record is `docs/sprint4/SPRINT4.md`. **#87 is the open question against all of
-it** and is deliberately unassigned.
+**Sprint 4 — complete** (13–19 August 2026), milestone closed at 27 issues.
+Scope was @shubhamkataria2005's counter-proposal on #86, which Arsh accepted
+over his own: **#78 timeboxed to item 1 with an explicit stop**, #16 split, #30
+with A-2 raised on day 1. The record is `docs/sprint4/SPRINT4.md`.
+
+**Sprints 5 and 6 exist on the board and nowhere else.** Read from the
+milestones API on 28 August, not remembered:
+
+```
+Sprint 4   closed   0 open / 27 closed   due 2026-08-19
+Sprint 5   open    11 open / 32 closed   due 2026-08-26   <- overdue
+Sprint 6   open    10 open /  6 closed   no due date
+```
+
+`docs/sprint1/` through `docs/sprint4/` each carry a `SPRINTn.md` written
+inside the sprint. **There is no `docs/sprint5/` or `docs/sprint6/`.** Sprint 3's
+entry says its record was written the day after the sprint ended "rather than
+reconstructed later", and that practice has since lapsed for two sprints —
+which is this project's recurring failure family arriving through process
+again, the same way the release tags did before 13 August.
 
 **Five pull requests landed together on 17 August** — #141, #140, #143, #144,
 #137 — taking `main` to 370 tests, CI green at `dba64f8`. That merge closed
@@ -525,6 +540,11 @@ project's recurring failure family arriving through process rather than code.
 | Dashboard + secure upload | Samika | Done — real findings on screen since #39 |
 | PF Sense conversion | Ankeet | Done — `analysis/pfsense_convert.py`, and **hardened**: refuses config injection and path traversal via free-text fields (#53), an unbound ACL / empty rule set / unvalidated addressing (#54), and ambiguous rule order (#58, closing #47). See §7 |
 | **`change_impact`** | Shubham | Done (#140, merged 17 August) — `analysis/change_impact.py`, `analyse_change(before, after)`. Shape C: **not** in `CHECKS`, and both the module docstring and the registry comment say so. Pairs `compareFilters` (which ACL *lines* moved) with `differentialReachability` (which *traffic* changed fate), because a changed line that moves no traffic is noise and moved traffic with no changed line is the case a filter diff alone misses. Direction-aware per `docs/policy-rules.md`: opening `high`, tightening `medium`, both reported |
+| **A user policy reaching a check** | Arsh | Done (#181, merged 28 August) — `analysis/policy.py` loads and validates it; `policy_compliance` reads it via `rules_in_use()`, keyed on `active_policy() is None` rather than on emptiness. Measured below: policy-driven detections on a stranger's network go 3 → 8 |
+| **AI: natural-language questions, on screen** | Ankeet + Samika | Done — `ai/query.py` + `/api/ask` (#66), crossing the ACL since #108/#141, and the chat pane is wired (`app.js` `chat-form` → `fetch("/api/ask")`). `question_understood` is rendered, which §7c says is the safety argument, not decoration |
+| **The AI byline tells the truth** | Samika | Done (#109, closed) — `app.js` branches on `explanation_source === "model"`, and `style.css` gives fallback text its own byline, *"Plain-English summary"*, in neutral grey rather than the violet reserved for model output. Written `=== "model"` so an absent or unexpected value claims LESS, never more |
+| **Findings that can leave the screen** | Arsh | Done (#233, merged 28 August) — `analysis/report.py`, `/api/report?format=html\|csv`. Pure function, no web import; "could not check" is rendered FIRST and is present even when empty |
+| **Propose-a-change, on screen** | Samika | Done (#253, merged 28 August) — the propose pane calls `/api/propose`. Grammar is `block <src> to <dst> on <proto>/<port> on <device>`; anything else is refused with a reason rather than guessed |
 | Test suite | team | Needs neither Batfish nor Ollama. For the count, run it — a number written here rots the next time anyone adds a test |
 
 **All five features are now on `main` together**, which first became true on
@@ -534,9 +554,8 @@ project's recurring failure family arriving through process rather than code.
 
 | Piece | Owner | Note |
 |---|---|---|
-| **A way for the user to state their own policy** | unassigned | **The biggest gap in the product** (#87). Every policy assertion is hardcoded to our fixtures. See below |
-| AI: natural-language questions | Ankeet + Samika | **Backend built** (#66) and **now actually crosses the ACL** (#108, fixed in #141) — `ai/query.py` + `/api/ask`. The dashboard wiring is Samika's half and is not done. See §7c |
-| The AI byline tells the truth | Samika | #109. `/api/findings` now carries `explanation_source` (#143), but `style.css`'s `content: "AI explanation"` is still unconditional, so on any machine without Ollama the dashboard attributes deterministic text to a model. The signal exists; the label has not changed |
+| **A way for the user to state their own policy** | unassigned | **Still the biggest gap, but no longer total** (#87). `policy_compliance` reads a user policy since #181 (28 August); `access_control` and `routing` do not, so two of three checks remain hardcoded to our fixtures. See below for the measurement |
+| **Two of three checks ignore a user policy** | unassigned | The remainder of #87. `access_control` and `routing` still name `rtr-us5` and `rtr-hq`/`rtr-branch` regardless of what the user supplies |
 
 **The policy is ours, not the user's — but one check now takes theirs.**
 `access_control` and `policy_compliance` name `rtr-us5`; `routing` names
@@ -558,16 +577,66 @@ look identical on screen otherwise.
 Measured with `tools/stranger_config.py`, which now carries a third column:
 
 ```
-                            ours        stranger    + their policy
-                           f/n/e      our policy             f/n/e
-TOTAL                   12 /  3 /  7     3 /  0 / 15       8 /  1 / 20
+fixture                         ours        stranger    + their policy
+                               f/n/e      our policy             f/n/e
+TOTAL                   12 /  3 /  7     3 /  0 / 15       8 /  1 / 22
 ```
+
+The last figure read **20** here until 28 August, when re-running the tool
+gave **22**. Chased to the finding rather than left as a discrepancy.
+
+**It is `PC-049`, from @shubhamkataria2005's #229.** The extra two are one per
+*routing* fixture; the three `rtr-us5` fixtures are unchanged:
+
+```
+                       57ce13d      now
+routing-secure          7 err       8 err     + PC-049
+routing-missing-route   7 err       8 err     + PC-049
+rtr-us5-*               unchanged
+```
+
+```
+PC-049  policy_compliance  stranger-rtr-hq
+        1 of 2 device(s) in this config are not covered by any policy rule
+```
+
+The mechanism is the card doing exactly its job. Both routing fixtures carry
+**two** devices and the synthetic stranger policy names **one**, so one device
+is uncovered and #229's card says so. The `rtr-us5` fixtures are single-device
+and fully covered, so it never fires there.
+
+**And the number was stale the day it was written, not since.** `57ce13d` — the
+commit that wrote 20 — is dated **21 August**. `db90c19`, which added PC-049,
+landed on `main` via #229 on **27 August**, and #181 merged `main` into itself
+before landing on the **28th**. So by the time this figure reached `main` it
+was already 22; it was measured on a branch six days before the thing that
+changed it existed. The FOUND column, which is what answers #87, is unchanged
+at 3 → 8 throughout.
+
+**A number copied into a document is a measurement with an expiry date nobody
+wrote down.** Run `python -m tools.stranger_config` rather than trusting this
+block — this paragraph exists because the stale 20 was nearly copied onward
+into `README.md` from here.
 
 **Policy-driven detections on a network that is not ours: 3 → 8.**
 
 **What is still missing.** `access_control` and `routing` still ignore a
-supplied policy, and there is no UI — a user can only pass `--policy` on the
-command line. So the gap is narrowed for one check, not closed.
+supplied policy. So the gap is narrowed for one check, not closed.
+
+**There IS a UI, since #181 merged on 28 August** — this paragraph said there
+was none, and said it three lines below the sentence recording that the check
+now reads a user policy. `web/static/index.html` has its own policy picker,
+`/api/policy` validates and stages the file, and `web/main.py:645` passes
+`policy=_staged_policy()` into `analyse()`. Measured through the dashboard on
+`rtr-us5-messy`:
+
+```
+no policy       6 found, 1 could-not-check
+their policy    4 found, 1 clean, 1 could-not-check
+```
+
+The command line still works too (`--policy`), and `tests/test_web_policy_
+applied.py` is what stops this regressing.
 
 The original measurement, still true for a user who supplies nothing, on
 `rtr-us5-messy` by renaming the device and changing nothing else:
