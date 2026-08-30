@@ -321,6 +321,11 @@ def test_no_dashboard_only_text_leaks_into_either_format(monkeypatch):
     enriched = dict(PROBLEM)
     enriched["explanation"] = "SENTINEL-EXPLANATION-TEXT"
     enriched["explanation_source"] = "fallback"
+    # remediation/remediation_source (#221) are the same shape of key, added
+    # the same way, so they get the same leak check rather than a second
+    # near-identical test.
+    enriched["remediation"] = "SENTINEL-REMEDIATION-TEXT"
+    enriched["remediation_source"] = "deterministic"
     monkeypatch.setattr(main, "get_findings", lambda: [enriched])
 
     csv_body = client.get("/api/report?format=csv").text
@@ -330,5 +335,12 @@ def test_no_dashboard_only_text_leaks_into_either_format(monkeypatch):
     assert "SENTINEL-EXPLANATION-TEXT" not in html_body, (
         "AI-written prose reached a report that documents itself as "
         "rendering F-1 and nothing else"
+    )
+    assert "SENTINEL-REMEDIATION-TEXT" not in csv_body
+    assert "SENTINEL-REMEDIATION-TEXT" not in html_body, (
+        "remediation text reached a report that documents itself as "
+        "rendering F-1 and nothing else -- see web/main.py's "
+        "_attach_remediation() for why that is still an open decision, "
+        "not one this test should silently start allowing"
     )
     assert set(_rows(csv_body)[0]) == set(report.CSV_COLUMNS)
