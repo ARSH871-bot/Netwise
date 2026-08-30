@@ -246,6 +246,14 @@ function renderFindings(findings) {
   ];
 
   sections.filter(Boolean).forEach((s) => container.appendChild(s));
+
+  // Findings are on screen, so there is something to export. Said here
+  // rather than at each call site because this is the ONE function that puts
+  // findings on screen -- mock or real, first load or after a scan.
+  setDownloadAvailable(
+    true,
+    "Downloads what is shown above. The report states what it describes."
+  );
 }
 
 /**
@@ -271,6 +279,15 @@ async function loadFindings() {
         `Could not load findings: ${error.message}. This is not a clean ` +
           `result — no analysis has been shown. Is the server running?`
       )
+    );
+
+    // The third path with nothing on screen, and the one most worth
+    // guarding: the notice above says explicitly that no analysis has been
+    // shown, and an available Download button beside it would contradict
+    // that sentence.
+    setDownloadAvailable(
+      false,
+      "Nothing to export — the findings could not be loaded."
     );
   }
 }
@@ -356,6 +373,14 @@ function clearStaleResults(reason) {
   document.getElementById("summary").replaceChildren();
   document.getElementById("findings").replaceChildren(
     el("div", "notice staged", reason)
+  );
+
+  // Nothing on screen means nothing to export. Without this, the control
+  // would stay available over a cleared pane and a click would start a real
+  // analysis to produce a report of results nobody has seen.
+  setDownloadAvailable(
+    false,
+    "Nothing to export yet — click Scan Now to check the staged config."
   );
 }
 
@@ -1230,6 +1255,41 @@ function reportLinks() {
     document.getElementById("report-html"),
     document.getElementById("report-csv"),
   ].filter(Boolean);
+}
+
+/**
+ * Make the report links available, or not, and say which in words.
+ *
+ * DRIVEN BY WHAT IS ON SCREEN, NOT BY WHETHER A CONFIG IS STAGED.
+ *     The two are different, and the gap between them is the state worth
+ *     guarding. After an upload but before Scan Now, a config IS staged and
+ *     the findings pane deliberately shows nothing -- #82 cleared it so a
+ *     staged file could never be confused with a checked one. Following the
+ *     link in that state would start a real Batfish analysis nobody asked
+ *     for and hand back a report describing results the screen has never
+ *     shown.
+ *
+ *     So availability tracks renderFindings() and clearStaleResults(), the
+ *     two functions that already own whether findings exist. There is no
+ *     third source of truth to drift.
+ *
+ * THE HINT CHANGES WITH IT, because a greyed control with no explanation is
+ * a puzzle. Same reasoning as the disabled Scan Now button, which this
+ * borrows its colour from.
+ */
+function setDownloadAvailable(available, reason) {
+  reportLinks().forEach((link) => {
+    // Set to "false" rather than removed. An absent attribute also reads as
+    // available to the click guard, but leaving it present means the state
+    // is legible in the DOM either way -- and a screen reader announces the
+    // change rather than an attribute quietly vanishing.
+    link.setAttribute("aria-disabled", available ? "false" : "true");
+  });
+
+  const hint = document.getElementById("report-hint");
+  if (hint) {
+    hint.textContent = reason;
+  }
 }
 
 function setUpReportDownload() {
