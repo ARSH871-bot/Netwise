@@ -654,7 +654,7 @@ together.
 |---|---|---|
 | **Shubham** | M-1 is his; this corrects his own justification, and two of the three measurements above are approvals of his that went stale unnoticed | ✅ |
 | **Arsh** | Wrote #241's re-request rule, which this is the reciprocal of; stopped on #213 rather than trusting a fresh-looking approval | ⬜ |
-| **Ankeet** | Reviews under it, and #211 is the case where a stale tick sat over his branch | ⬜ |
+| **Ankeet** | Reviews under it, and #211 is the case where a stale tick sat over his branch | ✅ |
 | **Samika** | Bound equally; owns the dashboard PRs most often reviewed then fixed | ⬜ |
 
 > **NOT RATIFIED.** One of four. Do not treat the wording above as agreed
