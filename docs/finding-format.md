@@ -255,3 +255,100 @@ amendment nobody had scheduled. A-1 took six days to collect four signatures.
 > actions. That is the shape of every staleness bug this project has had. If a
 > third amendment ever happens, the tick should be part of approving rather
 > than a separate chore someone remembers.
+
+
+### A-3 — an OPTIONAL `subject`, so findings can be joined without parsing prose
+
+**PROPOSED, not ratified. Nothing depends on this yet and nothing should
+until the table below is full.**
+
+Raised because **#238** (attack-path chaining) cannot start without it, and
+that issue's own acceptance criteria say so: *"Any finding-format change is
+raised and ratified separately before it is used."* This is that.
+
+#### The problem, measured
+
+Chaining means recognising that finding A's traffic reaches the device
+finding B is about. So something has to join them. Today, only one field is
+machine-readable:
+
+```
+AC-001  keys = [check, device, evidence, id, severity, status, summary]
+        device : 'rtr-us5'
+        detail : 'Expected DENY but got PERMIT, decided by: permit ip any any'
+
+structured rule / flow / policy / src / dst / port on ANY finding:  none
+```
+
+Everything except `device` is inside one free-text sentence. Joining findings
+today means **parsing `evidence.detail` with a regex**, and this project has
+been burnt by exactly that twice in a fortnight:
+
+- **#145/#194** — `ai/explain.py` matched the evidence wording with
+  `_POLICY_DETAIL_PATTERN`. Rewording the evidence silently stopped the guard
+  matching anything; it degraded to the generic path rather than failing.
+- **#205** — a test held a *copy* of that wording. It stopped matching either
+  side and kept passing while proving nothing.
+
+A prose parser at the centre of a *security* join would be the same mistake
+with worse consequences: a chain that silently stops forming is a
+vulnerability nobody is shown.
+
+#### The change
+
+One **optional** key on a finding:
+
+```python
+"subject": {"dst": "10.20.0.5", "dstPort": 443, "protocol": "tcp"}
+```
+
+Every key inside it is optional too. A check populates what it actually
+knows and omits the rest.
+
+```python
+make_finding(..., subject={"dst": "10.20.0.5"})   # new, optional
+make_finding(...)                                  # unchanged, still valid
+```
+
+#### What it deliberately does not do
+
+- **It does not replace `evidence.detail`.** The prose stays exactly as it
+  is, so `ai/explain.py`, the dashboard's `finding.evidence.detail`, and
+  #194's guard are all untouched. `subject` is a second, machine-readable
+  view of what the sentence already says — never the only copy.
+- **It is not required.** No existing finding changes, no check must be
+  edited, and a check that cannot fill it truthfully leaves it out. An
+  optional field nobody populates is inert; a required one would force every
+  check to invent a value, which is how `device="unknown"` already happens.
+- **It carries no severity, no judgement, and no new vocabulary.** Only
+  facts the check already had in hand before it wrote them into a sentence.
+
+#### Why optional rather than required
+
+Required would mean `routing`, `access_control` and `policy_compliance` all
+producing a `subject` on day one, including for findings where the honest
+answer is "this is about a config structure, not a flow" — an undefined ACL
+reference has no destination. Forcing a value there invents one.
+
+The cost is that a consumer must handle its absence. That is the correct
+cost: **a chain that cannot be formed should not be formed**, and a missing
+`subject` says so explicitly rather than by a parser finding nothing.
+
+#### The alternative that was rejected
+
+Parse `evidence.detail`. Cheaper today, no amendment, no signatures — and it
+puts a regex between two findings whose combination is the whole point. The
+two incidents above are the argument, and both were in code with tests.
+
+| Member | Why it touches them | Agreed |
+|---|---|---|
+| **Shubham** | Raised it; #238 is blocked on it and `policy_compliance` would populate it first | ✅ |
+| **Arsh** | Owns `analysis/findings.py`, where the optional field is validated, and `access_control` would be a second producer | ⬜ |
+| **Ankeet** | The AI layer reads `evidence.detail`, which this deliberately does not touch — his sign-off is the check on that claim | ⬜ |
+| **Samika** | `risk` reads every finding and the dashboard renders them; an unrendered new field is hers to decide about | ⬜ |
+
+> **NOT RATIFIED — one of four.** Merging this PR means the wording is worth
+> having. It does **not** mean the amendment is agreed, and **no code may
+> populate or read `subject` until this table is full.** A-2 merged at two of
+> four with its code already on `main`, and this file spends two paragraphs
+> on why that was wrong. #238 waits.
