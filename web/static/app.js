@@ -272,6 +272,19 @@ function updateDeviceFilter(findings) {
   select.value = devices.includes(previous) ? previous : "";
 
   row.hidden = devices.length < 2;
+
+  // A HIDDEN CONTROL MUST NOT LEAVE A FILTER ON.
+  //     Found by the harness: filter to rtr-us5 on a multi-device scan,
+  //     then rescan a single-device one. The device is still present, so
+  //     the choice was preserved -- while the control hid itself, because
+  //     there is now only one device. The result was an active filter with
+  //     no visible way to clear it, and a "0 finding(s) hidden" notice
+  //     explaining a control the reader cannot see.
+  //
+  //     Harmless in effect, since with one device the filter selects
+  //     everything. Incoherent as a state, and the kind of thing that
+  //     becomes a real bug the moment anything else reads the selector.
+  if (row.hidden) select.value = "";
 }
 
 /** The subset the reader is currently looking at. */
