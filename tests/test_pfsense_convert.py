@@ -200,6 +200,17 @@ def _rule_on(role: str) -> str:
     )
 
 
+def _nat_generated_rule_on(role: str, *, rule_id: str = "nat_1") -> str:
+    """A filter rule PF Sense auto-generated as a side effect of a NAT
+    rule (#264) -- <associated-rule-id> links it back to that NAT rule."""
+    return (
+        f"<rule><type>pass</type><interface>{role}</interface>"
+        "<protocol>tcp</protocol><source><any/></source>"
+        "<destination><any/></destination>"
+        f"<associated-rule-id>{rule_id}</associated-rule-id></rule>"
+    )
+
+
 def test_a_rule_on_a_dhcp_interface_is_skipped_and_named_the_real_reason():
     """Declared under <interfaces>, just has no static address -- the
     skip note should say so, not imply the role does not exist. The LAN
@@ -265,6 +276,116 @@ def test_a_clean_file_has_nothing_skipped():
     callers should be able to check `if result.skipped` unconditionally."""
     result = _convert_string_full(_minimal_xml())
     assert result.skipped == []
+
+
+# --- NAT-generated rules (#264) -----------------------------------------------
+# PF Sense auto-generates a filter rule as a side effect of a NAT rule (e.g. a
+# port-forward), and <associated-rule-id> links it back to the NAT rule that
+# created it. This module does not parse <nat>, so such a rule's real meaning
+# -- its addresses often describe translated traffic, not the literal ones
+# written -- cannot be determined here. Skipped, not converted as an ordinary
+# rule and not refused for the whole file, same shape as the interface
+# exclusions above.
+
+
+def test_a_nat_generated_rule_is_skipped_and_named_the_real_reason():
+    xml_text = _minimal_xml(
+        rules_xml=_nat_generated_rule_on("lan") + _ONE_BENIGN_LAN_RULE,
+    )
+    result = _convert_string_full(xml_text)
+
+    assert len(result.skipped) == 1
+    note = result.skipped[0]
+    assert "1 rule(s)" in note
+    assert "NAT-generated" in note or "associated-rule-id" in note
+
+
+def test_a_nat_generated_rule_never_reaches_the_converted_acl():
+    """The ordinary rule must still convert; the NAT-generated one must not
+    appear at all, not even as a malformed or approximate line."""
+    xml_text = _minimal_xml(
+        rules_xml=_nat_generated_rule_on("lan", rule_id="nat_distinctive_marker")
+        + _ONE_BENIGN_LAN_RULE,
+    )
+    result = _convert_string_full(xml_text)
+
+    assert "nat_distinctive_marker" not in result.text
+    # Just the one benign rule -- "lan" has a real rule left after the
+    # NAT-generated one is excluded, so it gets no fail-closed default; that
+    # only applies to an interface left with NO rules at all.
+    assert result.text.count("permit") + result.text.count("deny") == 1
+    assert "permit tcp any any" in result.text
+
+
+def test_an_associated_rule_id_that_is_empty_does_not_count():
+    """Same normalisation as _rule_interface()'s whitespace-only tag case --
+    PF Sense may write an empty element rather than omitting it, and that
+    must not be treated as NAT-generated."""
+    rule_with_empty_tag = (
+        "<rule><type>pass</type><interface>lan</interface>"
+        "<protocol>tcp</protocol><source><any/></source>"
+        "<destination><any/></destination>"
+        "<associated-rule-id></associated-rule-id></rule>"
+    )
+    xml_text = _minimal_xml(rules_xml=rule_with_empty_tag)
+    result = _convert_string_full(xml_text)
+
+    assert result.skipped == []
+    assert "permit tcp" in result.text
+
+
+def test_two_nat_generated_rules_are_counted_together_not_one_note_each():
+    xml_text = _minimal_xml(
+        rules_xml=(
+            _nat_generated_rule_on("lan", rule_id="nat_a")
+            + _nat_generated_rule_on("lan", rule_id="nat_b")
+            + _ONE_BENIGN_LAN_RULE
+        ),
+    )
+    result = _convert_string_full(xml_text)
+
+    assert len(result.skipped) == 1
+    assert "2 rule(s)" in result.skipped[0]
+
+
+def test_a_nat_generated_rule_alongside_an_unmodellable_interface_gets_its_own_note():
+    """Matches test_both_kinds_at_once_are_both_named_as_separate_skip_notes()'s
+    reasoning for the two interface-exclusion reasons -- a third, unrelated
+    exclusion reason must not be folded into either of theirs."""
+    xml_text = _minimal_xml(
+        interfaces_xml=_dhcp_wan_and_lan_interfaces(),
+        rules_xml=_rule_on("wan") + _nat_generated_rule_on("lan") + _ONE_BENIGN_LAN_RULE,
+    )
+    result = _convert_string_full(xml_text)
+
+    assert len(result.skipped) == 2
+    joined = " | ".join(result.skipped)
+    assert "wan" in joined and "no static address configured" in joined
+    assert "NAT-generated" in joined or "associated-rule-id" in joined
+
+
+def test_when_every_rule_is_nat_generated_it_refuses_with_the_specific_reason():
+    """A distinct refusal from an empty <filter> (no rules ever existed) and
+    from every rule missing <interface> (no_interface_named) -- the file had
+    real, interface-bound rules, they were simply all NAT-generated."""
+    xml_text = _minimal_xml(rules_xml=_nat_generated_rule_on("lan"))
+
+    with pytest.raises(PfSenseConversionError) as excinfo:
+        _convert_string(xml_text)
+
+    assert "NAT-generated" in str(excinfo.value)
+    assert REFUSALS["all_rules_nat_generated"] in str(excinfo.value)
+
+
+def test_when_every_rule_is_nat_generated_the_message_is_not_the_other_two_refusals():
+    xml_text = _minimal_xml(rules_xml=_nat_generated_rule_on("lan"))
+
+    with pytest.raises(PfSenseConversionError) as excinfo:
+        _convert_string(xml_text)
+
+    message = str(excinfo.value)
+    assert REFUSALS["no_filter_rules"] not in message
+    assert REFUSALS["no_interface_named"] not in message
 
 
 def test_the_bad_interface_never_gets_an_acl_or_interface_block():

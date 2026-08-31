@@ -139,6 +139,50 @@
         </p>
         <div id="summary" class="summary" aria-live="polite"></div>
 
+        <!-- ---- Download the report (#222, backend from #233) ----
+             TWO LINKS, NOT A BUTTON AND A FORMAT DROPDOWN.
+                 Each format is its own destination, so each gets its own
+                 anchor. A dropdown would add a state to get wrong and would
+                 hide one of the two options behind an interaction.
+
+             ANCHORS RATHER THAN BUTTONS, deliberately. `GET /api/report`
+             already returns `Content-Disposition: attachment`, so a plain
+             link IS the download -- the browser does it natively, with no
+             fetch, no Blob, and no object URL to revoke. It also gets
+             open-in-new-tab, copy-link and middle-click for free, which a
+             click handler would have to reimplement badly.
+
+             NO `download` ATTRIBUTE. The server names the file, with a
+             timestamp (netwise-report-YYYYMMDD-HHMM.html). A bare `download`
+             here would let the browser prefer its own guess in some cases,
+             and two reports downloaded minutes apart would collide.
+
+             STARTS UNAVAILABLE. `aria-disabled` and a class, not the
+             `disabled` attribute, which anchors do not have -- app.js
+             prevents the navigation while it is set. Nothing is on screen
+             before the first render, and a report of nothing is a report
+             that says the analysis found nothing. -->
+        <div class="report-download" id="report-download">
+          <span class="report-download-label">Download this report:</span>
+          <a
+            id="report-html"
+            class="report-link"
+            href="/api/report?format=html"
+            aria-disabled="true"
+            >HTML</a
+          >
+          <a
+            id="report-csv"
+            class="report-link"
+            href="/api/report?format=csv"
+            aria-disabled="true"
+            >CSV</a
+          >
+        </div>
+        <p class="hint" id="report-hint">
+          Nothing to export yet &mdash; run a scan first.
+        </p>
+
         <!-- ---- The findings themselves, grouped by status ---- -->
         <div id="findings"></div>
       </section>

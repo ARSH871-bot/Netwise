@@ -262,6 +262,19 @@ async function loadFindings() {
     const response = await fetch("/api/findings");
     if (!response.ok) throw new Error(`server returned ${response.status}`);
     renderFindings(await response.json());
+
+    // Findings are on screen, so there is something to export.
+    //
+    // Set HERE and not inside renderFindings(), which is a pure renderer of
+    // its own container and should stay one. Reaching out of it to mutate an
+    // unrelated control coupled every caller to the report links -- measured,
+    // it broke 84 tests across four DOM harnesses that have no reason to
+    // model a download button. Worth recording: the first version did that,
+    // and the harnesses were right to object.
+    setDownloadAvailable(
+      true,
+      "Downloads what is shown above. The report states what it describes."
+    );
   } catch (error) {
     document.getElementById("summary").replaceChildren();
     container.replaceChildren(
@@ -271,6 +284,15 @@ async function loadFindings() {
         `Could not load findings: ${error.message}. This is not a clean ` +
           `result — no analysis has been shown. Is the server running?`
       )
+    );
+
+    // The third path with nothing on screen, and the one most worth
+    // guarding: the notice above says explicitly that no analysis has been
+    // shown, and an available Download button beside it would contradict
+    // that sentence.
+    setDownloadAvailable(
+      false,
+      "Nothing to export — the findings could not be loaded."
     );
   }
 }
@@ -356,6 +378,14 @@ function clearStaleResults(reason) {
   document.getElementById("summary").replaceChildren();
   document.getElementById("findings").replaceChildren(
     el("div", "notice staged", reason)
+  );
+
+  // Nothing on screen means nothing to export. Without this, the control
+  // would stay available over a cleared pane and a click would start a real
+  // analysis to produce a report of results nobody has seen.
+  setDownloadAvailable(
+    false,
+    "Nothing to export yet — click Scan Now to check the staged config."
   );
 }
 
@@ -1209,6 +1239,81 @@ function addUnusableNotes(notes) {
   });
 }
 
+/* ------------------------------------------------------------------------ *
+ * Download the report (#222, backend from #233)
+ *
+ * The download itself is the browser's. `GET /api/report` returns
+ * `Content-Disposition: attachment`, so following the link IS the download --
+ * there is no fetch here, no Blob, and no object URL that has to be revoked
+ * on a path somebody will eventually forget.
+ *
+ * So what is this function for? Exactly one thing: STOPPING the navigation
+ * while the control is unavailable. An anchor has no `disabled` attribute,
+ * so without a handler an aria-disabled link is still a working link -- it
+ * would look unavailable and download anyway, which is worse than either
+ * honest state.
+ * ------------------------------------------------------------------------ */
+
+/** The two report links, in one place so nothing has to list ids twice. */
+function reportLinks() {
+  return [
+    document.getElementById("report-html"),
+    document.getElementById("report-csv"),
+  ].filter(Boolean);
+}
+
+/**
+ * Make the report links available, or not, and say which in words.
+ *
+ * DRIVEN BY WHAT IS ON SCREEN, NOT BY WHETHER A CONFIG IS STAGED.
+ *     The two are different, and the gap between them is the state worth
+ *     guarding. After an upload but before Scan Now, a config IS staged and
+ *     the findings pane deliberately shows nothing -- #82 cleared it so a
+ *     staged file could never be confused with a checked one. Following the
+ *     link in that state would start a real Batfish analysis nobody asked
+ *     for and hand back a report describing results the screen has never
+ *     shown.
+ *
+ *     So availability tracks loadFindings() -- both its success and its
+ *     failure path -- and clearStaleResults(). Those are the places that
+ *     already decide whether findings exist, so there is no third source
+ *     of truth to drift out of step with them.
+ *
+ * THE HINT CHANGES WITH IT, because a greyed control with no explanation is
+ * a puzzle. Same reasoning as the disabled Scan Now button, which this
+ * borrows its colour from.
+ */
+function setDownloadAvailable(available, reason) {
+  reportLinks().forEach((link) => {
+    // Set to "false" rather than removed. An absent attribute also reads as
+    // available to the click guard, but leaving it present means the state
+    // is legible in the DOM either way -- and a screen reader announces the
+    // change rather than an attribute quietly vanishing.
+    link.setAttribute("aria-disabled", available ? "false" : "true");
+  });
+
+  const hint = document.getElementById("report-hint");
+  if (hint) {
+    hint.textContent = reason;
+  }
+}
+
+function setUpReportDownload() {
+  reportLinks().forEach((link) => {
+    link.addEventListener("click", (event) => {
+      // getAttribute, not a property: `aria-disabled` is an attribute and
+      // reading `link.ariaDisabled` is not supported everywhere this has to
+      // run. Compared to the string "true" so that a missing attribute, or
+      // any other value, means AVAILABLE -- the state that does nothing
+      // surprising. A control that silently stopped working because an
+      // attribute was misspelled would be the harder failure to notice.
+      if (link.getAttribute("aria-disabled") === "true") {
+        event.preventDefault();
+      }
+    });
+  });
+}
+
 /* ------------------------------------------------------------------------ */
 loadFindings();
 setUpUpload();
@@ -1216,3 +1321,4 @@ setUpPolicyUpload();
 setUpBusinessContextUpload();
 setUpChat();
 setUpProposeChange();
+setUpReportDownload();

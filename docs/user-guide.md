@@ -80,35 +80,45 @@ To run only some checks, name them:
 python -m analysis.pipeline tests/fixtures/rtr-us5-messy access_control
 ```
 
-### Using your own security policy — NOT AVAILABLE YET
+### Using your own security policy
 
 By default Netwise checks **our** example rules, which name our example
-devices. Checking *your* rules against *your* network is the largest gap in
-the product (#87), and it is **not something you can do today**.
+devices. To check *your* rules against *your* network:
 
-> **Do not expect a `--policy` flag to work.** `analysis/pipeline.py` takes
-> check names as its positional arguments and has no argument parsing at
-> all; passing a filename gets you `ValueError: Unknown check(s)`. The
-> dashboard's policy picker stages and validates a file and then does not
-> apply it, and says so on screen. Both halves land with **#181**, and the
-> dashboard half additionally waits on **#182**, a decision the team owns.
+```bash
+python -m analysis.pipeline my-network/ --policy my-policy.json
+```
 
-This section will describe the real command, with a complete and copyable
-example, when that lands — tracked as **#195**, which is deliberately
-blocked on #181 so the example is written against the schema that actually
-ships.
+**Start from the example rather than a blank file:**
 
-**Why there is no example here yet.** The obvious thing to link is
-`design/user-policy-format.md`, and that would be wrong: it is a *decisions*
-document arguing D1–D5, its only sample is YAML with a literal `...` in it,
-and it says "YAML **or** JSON" because the choice had not been made when it
-was written. The loader calls `json.loads` and nothing else. Pointing a user
-at a design argument as if it were a format reference is how somebody ends
-up writing a file that cannot load.
+```bash
+cp docs/examples/policy.example.json my-policy.json
+```
 
-When it exists, a policy that cannot be loaded will stop the run and name
-the entry and the missing field — it will never analyse against half a
-policy.
+Change `"device"` to your device's hostname, edit the addresses, and run it.
+That file is validated by the test suite on every run
+(`tests/test_policy_example_is_valid.py`), so it cannot quietly stop being a
+policy the loader accepts.
+
+**What reads it, today.** `policy_compliance` asserts your rules instead of
+our built-in ones, and every finding says which of the two it used.
+`access_control` and `routing` do not read a supplied policy yet — they say
+so rather than staying silent about it (#196), so you are never left
+believing rules were checked that were not.
+
+**A policy that cannot be loaded stops the run** and names the entry and the
+missing field. It never analyses against half a policy.
+
+The format is JSON. `docs/examples/policy.example.json` is the reference —
+it shows both rule kinds and a multi-arm rule, which are the two things that
+are not obvious. `docs/design/user-policy-format.md` is a **decisions**
+document arguing why the format is shaped this way; it is worth reading if
+you want the reasoning, and it is not a format reference.
+
+> This section previously said *"NOT AVAILABLE YET — do not expect a
+> `--policy` flag to work"*, which was true when it was written and stopped
+> being true when #181 merged on 28 August. It was a deliberate placeholder
+> pointing at #195; this is #195.
 
 ---
 
