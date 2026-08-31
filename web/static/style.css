@@ -934,6 +934,24 @@ body {
   color: var(--ink-soft);
 }
 
+/* --- Filter by device (#219) --------------------------------------------
+   QUIET BY DESIGN. This is a view control, not an action -- it changes what
+   you are looking at and never what the analysis found. So it reads as a
+   label with a selector rather than as a button competing with Scan Now.
+
+   `[hidden]` is honoured explicitly because `display: flex` below would
+   otherwise beat the attribute's default `display: none`, and the control
+   would stay visible on a single-device scan -- the one case it is meant to
+   disappear for. */
+.device-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.9rem 0 0.2rem;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
 .report-link {
   font: inherit;
   font-size: 0.82rem;
@@ -961,4 +979,18 @@ body {
 
 #report-hint {
   margin-top: 0.35rem;
+}
+
+.device-filter[hidden] {
+  display: none;
+}
+
+.device-filter select {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper, #fff);
+  color: var(--ink);
 }

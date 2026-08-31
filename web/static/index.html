@@ -137,6 +137,24 @@
           <strong>Could not check</strong> is not a pass: those checks did not
           run, so nothing is known about what they cover.
         </p>
+        <!-- ---- Filter by device (#219) ----
+             HIDDEN UNTIL A SCAN COVERS MORE THAN ONE DEVICE. A selector
+             offering exactly one choice is a control that cannot do
+             anything, and leaving it visible-but-useless is a worse answer
+             than not showing it -- the reader spends attention working out
+             that it is inert.
+
+             Client-side only. Every finding already carries `device`, so
+             filtering is a view over what has already been fetched; there
+             is no endpoint here and no second source of truth about what
+             the scan found. -->
+        <div id="device-filter-row" class="device-filter" hidden>
+          <label for="device-filter">Show findings for</label>
+          <select id="device-filter">
+            <option value="">All devices</option>
+          </select>
+        </div>
+
         <div id="summary" class="summary" aria-live="polite"></div>
 
         <!-- ---- Download the report (#222, backend from #233) ----
