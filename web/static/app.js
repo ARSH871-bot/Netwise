@@ -209,7 +209,89 @@ function renderSummary(problems, clean, blind) {
 }
 
 /** Render the whole findings list, grouped by status. */
+/* ------------------------------------------------------------------------ *
+ * Filter by device (#219)
+ *
+ * A view over findings already fetched. Every finding carries `device`, so
+ * nothing here asks the server anything -- there is no second source of
+ * truth about what the scan found.
+ *
+ * THE LAST RENDERED LIST IS KEPT so changing the selector can re-render
+ * without a round trip. It is the findings as the server sent them, never a
+ * filtered copy: filtering a filtered list would narrow it further on every
+ * change and there would be no way back to "all".
+ * ------------------------------------------------------------------------ */
+
+let allFindings = [];
+
+/** Distinct devices in a findings list, in first-seen order. */
+function devicesIn(findings) {
+  const seen = [];
+  findings.forEach((f) => {
+    if (f.device && !seen.includes(f.device)) seen.push(f.device);
+  });
+  return seen;
+}
+
+/** The device currently selected, or "" for all of them. */
+function selectedDevice() {
+  const select = document.getElementById("device-filter");
+  return select ? select.value || "" : "";
+}
+
+/**
+ * Fill the selector, and hide it unless there is a real choice to make.
+ *
+ * HIDDEN AT ONE DEVICE, NOT DISABLED. A disabled control still asks the
+ * reader to notice it and work out why it cannot be used. With one device
+ * there is nothing to choose, and the honest presentation of no choice is
+ * no control -- the same reasoning as not rendering an empty section.
+ *
+ * The chosen device is preserved across re-renders when it is still
+ * present, so a rescan does not silently throw the reader back to "all"
+ * and show them findings they had deliberately filtered away.
+ */
+function updateDeviceFilter(findings) {
+  const row = document.getElementById("device-filter-row");
+  const select = document.getElementById("device-filter");
+  if (!row || !select) return;
+
+  const devices = devicesIn(findings);
+  const previous = select.value || "";
+
+  select.replaceChildren();
+  select.appendChild(el("option", "", `All devices (${findings.length})`)).value = "";
+  devices.forEach((device) => {
+    const count = findings.filter((f) => f.device === device).length;
+    const option = el("option", "", `${device} (${count})`);
+    option.value = device;
+    select.appendChild(option);
+  });
+
+  // Keep the reader's choice only if it still exists in these results.
+  select.value = devices.includes(previous) ? previous : "";
+
+  row.hidden = devices.length < 2;
+}
+
+/** The subset the reader is currently looking at. */
+function visibleFindings() {
+  const device = selectedDevice();
+  return device ? allFindings.filter((f) => f.device === device) : allFindings;
+}
+
+/** Re-render from the stored findings, honouring the selector. */
+function applyDeviceFilter() {
+  renderFindingSections(visibleFindings());
+}
+
 function renderFindings(findings) {
+  allFindings = findings;
+  updateDeviceFilter(findings);
+  renderFindingSections(visibleFindings());
+}
+
+function renderFindingSections(findings) {
   const container = document.getElementById("findings");
   container.replaceChildren();
 
@@ -1314,6 +1396,12 @@ function setUpReportDownload() {
   });
 }
 
+function setUpDeviceFilter() {
+  const select = document.getElementById("device-filter");
+  if (!select) return;
+  select.addEventListener("change", applyDeviceFilter);
+}
+
 /* ------------------------------------------------------------------------ */
 loadFindings();
 setUpUpload();
@@ -1322,3 +1410,4 @@ setUpBusinessContextUpload();
 setUpChat();
 setUpProposeChange();
 setUpReportDownload();
+setUpDeviceFilter();
