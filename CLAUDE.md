@@ -320,6 +320,14 @@ PRs merged since 20 August, requiring a review would have blocked **none**,
 and `dismiss_stale_reviews` would **contradict** M-2 rule 2 by voiding an
 approval on a merge-only push.
 
+> **M-2 IS CITED HERE AS SETTLED AND IS NOT.** Read from `CONTRIBUTING.md`'s
+> own table on 31 August: `Shubham ✅, Arsh ⬜, Ankeet ⬜, Samika ⬜` — **one of
+> four**, with #252 taking it to two once merged. The argument above about
+> `dismiss_stale_reviews` still holds on its merits, but it leans on an
+> amendment three of us have not signed, and this project has been quoting
+> M-2's three rules in reviews and merges all week. Same shape as A-2 below,
+> caught the same day. Deciding it is #252's thread.
+
 ## 7c. Asking questions (US-11) — the other direction, and why it refuses
 
 `ai/explain.py` goes **findings → English**: a finding already exists, produced
@@ -763,11 +771,33 @@ Nothing in Layer 1 or 2 is now unjoined. What remains is features, not plumbing.
   because "agreed" should be a fact anyone can check rather than something
   inferred from a merge. This closes the last outstanding piece of the shapes
   decision.
-- **F-1 amendment A-2 — RATIFIED by all four** (#102, raised and written by
-  Shubham on day 1 of Sprint 4). `change_impact` moves from the `PC-` prefix to
-  its own **`CH-`**, so `id` uniqueness *across* checks is now structural rather
-  than a convention split over two documents. Done before the code existed, so
-  no finding changed id — free now, a migration later.
+- **F-1 amendment A-2 — agreed by THREE of four, not ratified** (#102, raised
+  and written by Shubham on day 1 of Sprint 4). `change_impact` moves from the
+  `PC-` prefix to its own **`CH-`**, so `id` uniqueness *across* checks is now
+  structural rather than a convention split over two documents. Done before the
+  code existed, so no finding changed id — free now, a migration later.
+
+  **This entry said "RATIFIED by all four" until 31 August, and it was wrong.**
+  Read from the authoritative file rather than remembered:
+
+  ```
+  docs/finding-format.md, A-2 table
+      Shubham  ✅    Arsh  ✅    Samika  ✅    Ankeet  ⬜      3 of 4
+  ```
+
+  §7a of this file says `docs/finding-format.md` is authoritative, so this copy
+  was the wrong one — and it is the copy people read for status. **A false
+  claim about a CONTRACT RATIFICATION is the worst place this project's
+  recurring fault has landed**: it sits under "Settled — do not reopen without
+  the team", which is precisely the heading that stops anyone checking.
+
+  Worse, it is the same failure A-2's own note in `finding-format.md` regrets.
+  That note records that A-2's *code* merged on 13 August while the table was
+  incomplete; this entry then reported the table as complete. One document out,
+  and the regret became the claim.
+
+  **Ankeet's tick is still outstanding**, and nothing notified him — which is
+  #231. The code has been on `main` since 13 August regardless.
 
   **The duplicate-`id` guard stays, and deleting it would be a mistake.** A
   distinct prefix removes that particular pair; uniqueness *within* one check is
