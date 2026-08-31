@@ -580,6 +580,28 @@ def _analysis_key() -> Optional[str]:
         # disabled for this request. Do not invent half a key.
         return None
     digest = hashlib.sha256()
+
+    # THE SESSION IS PART OF THE KEY (#242, and this closes #208).
+    #     Two sessions can stage byte-identical configs -- the same vendor
+    #     example, the same fixture, the same file mailed to two people. The
+    #     content fingerprint is then identical, so without this they would
+    #     share one cache entry.
+    #
+    #     That is not merely a wrong-looking key. `_analysis_cache` holds the
+    #     findings LIST, and #208 is the concurrency question about mutating
+    #     it. Keyed by content alone, session B could be handed the list
+    #     object produced for session A -- so any later in-place edit reaches
+    #     both, and the two are not merely sharing a result but sharing
+    #     state. Folding the session in makes the entries disjoint by
+    #     construction, which is a stronger fix than locking would have been
+    #     and needs no lock.
+    #
+    #     Length-prefixed rather than concatenated, so a session id cannot
+    #     be confused with the digest that follows it.
+    session = _effective_session().encode()
+    digest.update(str(len(session)).encode())
+    digest.update(b"\0session\0")
+    digest.update(session)
     digest.update(config_part.encode())
     # A domain separator. Deliberately NOT covered by a test: `config_part`
     # is always a 64-character hex digest, so the boundary is already
