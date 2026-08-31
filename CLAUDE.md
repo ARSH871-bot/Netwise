@@ -457,7 +457,7 @@ format, to the screen. This replaced the earlier engine/frontend split.
 | **Shubham** | Policy-compliance + change-impact analysis |
 | **Samika** | Risk prioritisation + the interface + secure upload |
 
-## 11. Status — last updated 2026-08-28
+## 11. Status — last updated 2026-08-31
 
 > **⚠️ This section goes stale faster than anything else in the file.** It has
 > been wrong about `main` repeatedly, in both directions — claiming work that
@@ -517,6 +517,32 @@ batch only after the combination was tested locally: each had a green tick
 earned against a different `main`, which is precisely the §5a rule 3a case
 that produced two red `main`s in two days.
 
+**Twelve more landed between 28 and 31 August**, taking `main` from 702 to 987
+tests: #246, #251, #181, #233, #253, #257 (28th), then #254, #202, #259, #248,
+#260, #261 (30th). Seven were Arsh's, three Shubham's, two Samika's. Each batch
+was merged only after the *combination* was tested locally, and that mattered
+twice: #254 landed mid-session and moved `main` under a batch that had been
+tested against the commit before it — so the remaining PRs were re-tested on
+the new `main` before merging, because #254 touched `web/main.py` and so did
+#260.
+
+**Two lessons from that stretch are worth more than the merges.**
+
+*A test can pin a lie in place.* #260 fixed a message that told the user their
+policy was "not yet applied" while the next click applied it — #181 had landed
+that morning and the sentence did not move. It survived because **two tests
+asserted the false wording**, and one of them compared a harness to its own
+fixture, so it would have passed against a frontend that ignored the server
+entirely. The mechanism that should have objected was holding it in place.
+
+*A generated document goes stale from the merge queue, not from neglect.*
+#202's `docs/traceability.md` landed claiming 833 tests; `main` collected 995
+the same evening. Nobody forgot — four PRs merged between the regeneration and
+the merge button. The CI check proposed for it ("fail if it differs on anything
+but the SHA line") would be **permanently red**, because every feature row
+carries per-file test counts. Tracked as **#267**, with four options and none
+of them free.
+
 **Releases exist now**, for the first time. `v0.1.0`, `v0.2.0` and `v0.3.0` were
 tagged retroactively on 13 August, each on the last commit of that sprint's
 *work* per `CONTRIBUTING.md` §5b, verified with the ancestry check the section
@@ -545,6 +571,8 @@ project's recurring failure family arriving through process rather than code.
 | **The AI byline tells the truth** | Samika | Done (#109, closed) — `app.js` branches on `explanation_source === "model"`, and `style.css` gives fallback text its own byline, *"Plain-English summary"*, in neutral grey rather than the violet reserved for model output. Written `=== "model"` so an absent or unexpected value claims LESS, never more |
 | **Findings that can leave the screen** | Arsh | Done (#233, merged 28 August) — `analysis/report.py`, `/api/report?format=html\|csv`. Pure function, no web import; "could not check" is rendered FIRST and is present even when empty |
 | **Propose-a-change, on screen** | Samika | Done (#253, merged 28 August) — the propose pane calls `/api/propose`. Grammar is `block <src> to <dst> on <proto>/<port> on <device>`; anything else is refused with a reason rather than guessed |
+| **Business-context risk scoring** | Samika | Done (#254, merged 30 August) — `analysis/business_context.py`, `/api/business-context`, tiers `critical`/`important`/`standard`. Marking a device critical escalates its findings: measured on `rtr-us5-insecure`, `{high: 4, medium: 1}` → `{high: 5}`. An **unknown key is an error, never ignored** — silently dropping a key the user set is F-4 arriving through the input rather than the output |
+| **A check says when it ignored your policy** | Shubham | Done (#261, merged 30 August, closing #196) — supply rules for a check that does not read a policy and you now get `AC-005 [error] "1 supplied rule(s) for this check were not read"` instead of our device names in a message about your rules. It does not make those checks read the policy; it stops them lying about why they did not |
 | Test suite | team | Needs neither Batfish nor Ollama. For the count, run it — a number written here rots the next time anyone adds a test |
 
 **All five features are now on `main` together**, which first became true on
@@ -555,7 +583,7 @@ project's recurring failure family arriving through process rather than code.
 | Piece | Owner | Note |
 |---|---|---|
 | **A way for the user to state their own policy** | unassigned | **Still the biggest gap, but no longer total** (#87). `policy_compliance` reads a user policy since #181 (28 August); `access_control` and `routing` do not, so two of three checks remain hardcoded to our fixtures. See below for the measurement |
-| **Two of three checks ignore a user policy** | unassigned | The remainder of #87. `access_control` and `routing` still name `rtr-us5` and `rtr-hq`/`rtr-branch` regardless of what the user supplies |
+| **Two of three checks ignore a user policy** | unassigned | The remainder of #87. `access_control` and `routing` still name `rtr-us5` and `rtr-hq`/`rtr-branch` regardless of what the user supplies. **Since #261 they say so** — `AC-005 [error] "1 supplied rule(s) for this check were not read"` — which makes the gap visible rather than smaller. Being told you are not covered is not the same as being covered |
 
 **The policy is ours, not the user's — but one check now takes theirs.**
 `access_control` and `policy_compliance` name `rtr-us5`; `routing` names
