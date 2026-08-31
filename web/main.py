@@ -219,14 +219,34 @@ _last_session_id: str = DEFAULT_SESSION
 _uploaded: bool = False
 
 
+#: Sessions that have staged a config. A set rather than a dict of flags:
+#: the only fact tracked is "has this session uploaded", and a set cannot
+#: grow a second meaning by accident.
+#:
+#: UNBOUNDED, DELIBERATELY, AND SMALL. One short string per browser that has
+#: ever uploaded, in a process that serves a handful of people on one
+#: machine. Evicting entries would mean deciding when a session is over,
+#: which is a question this feature does not answer and should not pretend
+#: to -- see #242's own scope.
+_uploaded_sessions: "set[str]" = set()
+
+
 def _is_uploaded() -> bool:
     """Has THIS session staged a config?
 
-    A pass-through for now -- the per-session answer lands in the next
-    commit. Introduced here so the seam exists before the behaviour moves
-    through it, and so this commit changes storage location only.
+    THE MODULE-LEVEL `_uploaded` IS STILL HONOURED, AS AN OVERRIDE.
+        Fourteen tests across six files set it directly to drive the
+        endpoints without performing an upload. Those tests use ONE client,
+        so "this process is in the uploaded state" is exactly what they
+        mean, and honouring it keeps them passing unchanged.
+
+        Nothing SETS it any more -- a real upload records the session
+        instead. So it can only ever be True because a caller deliberately
+        made it True, and it cannot leak one user's upload to another: a
+        second session sees it only if a test put the whole process in that
+        state on purpose.
     """
-    return _uploaded
+    return _uploaded or current_session_id() in _uploaded_sessions
 
 app = FastAPI(
     title="Netwise",
@@ -770,8 +790,9 @@ def download_report(format: str = "html") -> Response:
         {k: v for k, v in finding.items() if k not in _DOWNSTREAM_KEYS}
         for finding in get_findings()
     ]
-    subject = configs_dir().name if _is_uploaded() else "example findings (no upload yet)"
-    if _uploaded:
+    uploaded = _is_uploaded()
+    subject = configs_dir().name if uploaded else "example findings (no upload yet)"
+    if uploaded:
         staged = sorted(p.name for p in configs_dir().glob("*") if p.is_file())
         subject = ", ".join(staged) or "an uploaded configuration"
 
@@ -807,7 +828,7 @@ def get_findings() -> List[Dict[str, Any]]:
     fact, which is exactly the distinction this whole project exists to
     keep clear.
     """
-    if not _uploaded:
+    if not _is_uploaded():
         return mock_findings.get_mock_findings()
 
     # #92b: re-analysing an unchanged snapshot costs ~3.6s of real Batfish
@@ -1030,8 +1051,11 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     context_was_staged = business_context_path().exists()
     _discard_staged_business_context()
 
-    global _uploaded
-    _uploaded = True
+    # Records THIS session, rather than putting the whole process into an
+    # uploaded state. Before #242 this was `global _uploaded; _uploaded =
+    # True`, which meant one person's upload made every other browser's
+    # /api/findings start analysing a config they had never sent.
+    _uploaded_sessions.add(current_session_id())
 
     # #92b / #82. Content-keying already makes a stale hit impossible, so
     # this is belt and braces -- but #82 exists precisely because a staged
@@ -1472,7 +1496,7 @@ def ask_question(request: AskRequest) -> Dict[str, Any]:
     makes for analyse() -- consistency over a caching optimisation
     nothing here has needed yet.
     """
-    if not _uploaded:
+    if not _is_uploaded():
         return {
             "question_understood": None,
             "answer": "Upload a config first, there is nothing to ask about yet.",
@@ -1528,7 +1552,7 @@ def propose_change_endpoint(body: ProposeRequest) -> Dict[str, Any]:
     warning naming the exact ACL lines that changed is more useful read in
     plain English than as a raw Batfish diff.
     """
-    if not _uploaded:
+    if not _is_uploaded():
         return {
             "request_understood": None,
             "proposed_change": None,
