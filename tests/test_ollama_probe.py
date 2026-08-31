@@ -250,6 +250,15 @@ def test_the_probe_follows_ollama_host(monkeypatch, value, expected):
     assert explain_module._ollama_endpoint() == expected
 
 
+@pytest.mark.parametrize(
+    "host",
+    ["localhost.evil.com", "evil-localhost.com", "localhost."],
+)
+def test_loopback_recognition_never_uses_a_localhost_substring(host):
+    """A substring match would reopen the most likely remote-host bypass."""
+    assert explain_module._is_loopback_host(host) is False
+
+
 @pytest.mark.parametrize("value", ["otherbox", "10.20.30.40", "https://example.test:11434"])
 def test_a_remote_ollama_host_is_refused_without_a_socket_or_model_call(monkeypatch, value):
     """The local-only promise must hold even when OLLAMA_HOST is configured.

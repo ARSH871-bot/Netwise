@@ -69,3 +69,20 @@ def test_logger_refuses_an_attempt_to_add_config_text(caplog):
         )
 
     assert secret not in "\n".join(record.getMessage() for record in caplog.records)
+
+
+def test_logger_refuses_an_unknown_field_before_emitting(caplog):
+    """Pin the closed schema itself, not only validation of known values."""
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with pytest.raises(ValueError, match="fields must be exactly"):
+        event(
+            "config_upload_accepted",
+            extension=".cfg",
+            size_bytes=1,
+            converted=False,
+            skipped_count=0,
+            filename="would-be-a-leak.cfg",
+        )
+
+    assert caplog.records == []
