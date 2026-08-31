@@ -994,3 +994,31 @@ body {
   background: var(--paper, #fff);
   color: var(--ink);
 }
+
+/* --- What the device filter is hiding (#219) -----------------------------
+   The summary tiles count what is in front of the reader. They cannot count
+   what a filter has removed, so this says it in words.
+
+   Amber ONLY when a could-not-check finding is among the hidden. If the
+   notice were always amber the colour would come to mean "a filter is on"
+   rather than "something is not known", which is the meaning it carries
+   everywhere else in this file. */
+.filter-notice {
+  margin: 0.5rem 0 0;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.82rem;
+  border-radius: 6px;
+  background: var(--sunk, #f4f5f7);
+  color: var(--ink-soft);
+}
+
+.filter-notice[hidden] {
+  display: none;
+}
+
+.filter-notice.blind {
+  background: var(--blind-fill);
+  color: var(--blind-ink);
+  border: 1px solid var(--blind);
+  font-weight: 600;
+}

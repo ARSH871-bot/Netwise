@@ -280,14 +280,68 @@ function visibleFindings() {
   return device ? allFindings.filter((f) => f.device === device) : allFindings;
 }
 
+/**
+ * Say what the filter is hiding, and how much of it could not be checked.
+ *
+ * THIS IS THE F-4 PROBLEM ARRIVING THROUGH A VIEW CONTROL.
+ *     Filtering to one device hides findings about the others -- including
+ *     `status="error"` ones. A reader who filters to rtr-us5, sees a green
+ *     summary, and forgets the selector is set has been shown "all clear"
+ *     for a network where a check never ran. The summary tiles are honest
+ *     about what they count; they cannot be honest about what is not in
+ *     front of them.
+ *
+ *     So a filtered view states the hidden count, and states the
+ *     could-not-check part of it separately, because those are the two
+ *     different claims F-4 exists to keep apart. It carries the amber
+ *     "could not check" tokens when a blind spot is among the hidden, and
+ *     the neutral note otherwise.
+ *
+ * Nothing is shown when no filter is active -- there is nothing hidden to
+ * disclose, and a permanent "0 hidden" line is noise that teaches the
+ * reader to skip this element.
+ */
+function renderFilterNotice(device) {
+  const notice = document.getElementById("filter-notice");
+  if (!notice) return;
+
+  notice.replaceChildren();
+  if (!device) {
+    notice.textContent = "";
+    notice.className = "filter-notice";
+    notice.hidden = true;
+    return;
+  }
+
+  const hidden = allFindings.filter((f) => f.device !== device);
+  const blind = hidden.filter((f) => f.status === "error").length;
+
+  let text =
+    `Showing ${device} only. ` +
+    `${hidden.length} finding(s) about other devices are hidden`;
+  text += blind
+    ? `, including ${blind} that could not be checked.`
+    : ".";
+
+  notice.textContent = text;
+  // Amber only when a blind spot is among the hidden. Using it always would
+  // make the colour mean "a filter is on" rather than "something is not
+  // known", which is the distinction it carries everywhere else here.
+  notice.className = blind ? "filter-notice blind" : "filter-notice";
+  notice.hidden = false;
+}
+
 /** Re-render from the stored findings, honouring the selector. */
 function applyDeviceFilter() {
+  const device = selectedDevice();
+  renderFilterNotice(device);
   renderFindingSections(visibleFindings());
 }
 
 function renderFindings(findings) {
   allFindings = findings;
   updateDeviceFilter(findings);
+  renderFilterNotice(selectedDevice());
   renderFindingSections(visibleFindings());
 }
 
