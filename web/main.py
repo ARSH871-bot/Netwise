@@ -33,7 +33,7 @@ from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi import Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -56,6 +56,15 @@ from analysis.checks.risk import (
 from analysis.pfsense_convert import PfSenseConversionError, convert as pfsense_convert
 from analysis.policy import PolicyError, load_policy_file
 from web import mock_findings
+from web.session import (
+    SESSION_COOKIE,
+    SESSION_MAX_AGE,
+    current_session_id,
+    is_valid_session_id,
+    new_session_id,
+    reset_current_session,
+    set_current_session,
+)
 
 # --- Upload validation rules ------------------------------------------------
 #
@@ -172,6 +181,57 @@ app = FastAPI(
     ),
     version="0.1.0",
 )
+
+
+# --- Per-session identity (#242) ---------------------------------------------
+#
+# Every request carries a session id, issued on the first one and kept in a
+# cookie. Everything else in this module that used to be one shared value --
+# the staged config, the `_uploaded` flag, the analysis cache -- keys off it.
+#
+# WHY A MIDDLEWARE RATHER THAN A DEPENDENCY ON EACH ROUTE
+#     A dependency has to be remembered on every new endpoint, and the cost
+#     of forgetting is not an error -- it is an endpoint quietly sharing the
+#     default session with everyone. A middleware cannot be forgotten.
+#
+# THE CONTEXTVAR IS RESET IN A `finally`
+#     Starlette reuses tasks and threads. Leaving a session installed after
+#     the response would let the NEXT request on the same worker inherit it
+#     before its own middleware runs -- which is the bug this whole feature
+#     exists to remove, arriving through the mechanism meant to fix it.
+
+
+@app.middleware("http")
+async def attach_session(request: Request, call_next):
+    """Give this request a session, issuing one if the browser has none."""
+    sent = request.cookies.get(SESSION_COOKIE)
+
+    # A cookie is client-supplied text and this value becomes a DIRECTORY
+    # NAME, so anything not shaped like an id we issued is discarded rather
+    # than repaired -- see is_valid_session_id().
+    if is_valid_session_id(sent):
+        session_id, issued = sent, False
+    else:
+        session_id, issued = new_session_id(), True
+
+    token = set_current_session(session_id)
+    try:
+        response = await call_next(request)
+    finally:
+        reset_current_session(token)
+
+    if issued:
+        # httponly: no page script needs to read this, and not handing it to
+        # JavaScript costs nothing. samesite=lax: the dashboard is the only
+        # thing that calls these endpoints.
+        response.set_cookie(
+            SESSION_COOKIE,
+            session_id,
+            max_age=SESSION_MAX_AGE,
+            httponly=True,
+            samesite="lax",
+        )
+    return response
 
 
 @app.get("/", include_in_schema=False)
