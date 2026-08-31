@@ -139,6 +139,14 @@ def test_no_explanation_renders_no_block_at_all(rendered):
     assert rendered["no_explanation"] is None
 
 
+@needs_node
+def test_a_refused_remote_model_host_is_visible_on_the_card(rendered):
+    assert rendered["remote_host_refused"] == (
+        "Local-model safety: remote host was refused."
+    )
+    assert rendered["no_remote_notice_for_model"] is None
+
+
 # ---------------------------------------------------------------------------
 # PART 2 -- THE WORDS, not just the class.  NOTHING here needs Node.
 # ---------------------------------------------------------------------------

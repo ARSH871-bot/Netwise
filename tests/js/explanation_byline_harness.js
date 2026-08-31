@@ -95,12 +95,29 @@ function findExplanation(node) {
   return null;
 }
 
+function findByClass(node, className) {
+  if (String(node.className).split(" ").includes(className)) return node;
+  for (const child of node.children || []) {
+    const hit = findByClass(child, className);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 function classFor(finding) {
   const container = document.getElementById("findings");
   container.replaceChildren();
   sandbox.renderFindings([finding]);
   const el = findExplanation(container);
   return el ? el.className : null;
+}
+
+function noticeFor(finding) {
+  const container = document.getElementById("findings");
+  container.replaceChildren();
+  sandbox.renderFindings([finding]);
+  const notice = findByClass(container, "model-boundary-notice");
+  return notice ? notice.textContent : null;
 }
 
 function finding(extra) {
@@ -135,4 +152,9 @@ const CASES = {
 
 const out = {};
 for (const [name, f] of Object.entries(CASES)) out[name] = classFor(f);
+out.remote_host_refused = noticeFor(finding({
+  explanation_source: "fallback",
+  explanation_notice: "Local-model safety: remote host was refused.",
+}));
+out.no_remote_notice_for_model = noticeFor(finding({ explanation_source: "model" }));
 process.stdout.write(JSON.stringify(out, null, 2));

@@ -41,6 +41,13 @@ instead of written by a model, and the dashboard labels them
 *"Plain-English summary"* rather than *"AI explanation"* so nothing claims a
 model wrote something it did not.
 
+**The model is local by default and enforced as local.** Netwise accepts
+`OLLAMA_HOST` for a non-default *loopback* address or port. If it points to a
+non-local host, Netwise refuses to send configuration-derived evidence there,
+uses the deterministic summary, and says so on the finding card. An operator
+can make the deliberate exception `NETWISE_ALLOW_REMOTE_OLLAMA=1`; that changes
+the data boundary and is not part of the normal local-first deployment.
+
 If Batfish is not running:
 
 ```bash

@@ -101,6 +101,7 @@ import socket
 import time
 import json
 import re
+import ipaddress
 from typing import Any, Dict, Optional
 
 import ollama
@@ -489,6 +490,11 @@ def _build_prompt(finding: Dict[str, Any]) -> str:
 def _generate(finding: Dict[str, Any]) -> str:
     """One call to the model. No validation here -- explain() decides
     whether the result is acceptable."""
+    # A second, independent enforcement point. `explain_with_source()` calls
+    # the reachability guard first, but this protects a future direct caller
+    # from accidentally bypassing the local boundary.
+    if not _model_use_is_permitted():
+        raise RuntimeError("remote Ollama host refused by Netwise local-model safety")
     response = ollama.generate(model=MODEL_NAME, prompt=_build_prompt(finding))
     return response["response"].strip()
 
@@ -552,6 +558,12 @@ def _is_unacceptable(text: str, *, is_error: bool) -> bool:
 #: than no probe at all.
 OLLAMA_DEFAULT_PORT = 11434
 
+#: Explicitly opting out of Netwise's local-only model boundary. This is an
+# environment variable rather than a dashboard control: a browser user must
+# not be able to send configuration-derived evidence away by clicking through
+# a convenient-looking prompt.
+REMOTE_OLLAMA_OPT_IN = "NETWISE_ALLOW_REMOTE_OLLAMA"
+
 #: How long a reachability answer is trusted, in seconds.
 #:
 #: SHORT ON PURPOSE, AND THE SHORTNESS IS THE SAFETY ARGUMENT.
@@ -587,6 +599,51 @@ def _ollama_endpoint() -> "tuple[str, int]":
         return (host or "127.0.0.1", int(port) if port else OLLAMA_DEFAULT_PORT)
     except ValueError:
         return (host or "127.0.0.1", OLLAMA_DEFAULT_PORT)
+
+
+def _is_loopback_host(host: str) -> bool:
+    """Whether `host` unambiguously names this machine.
+
+    Do not resolve arbitrary hostnames here. DNS resolution is network activity
+    and a hostname that resolves to loopback today can resolve somewhere else
+    tomorrow. Only the literal localhost name and literal loopback IP addresses
+    satisfy Netwise's local-only promise.
+    """
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _remote_ollama_is_explicitly_allowed() -> bool:
+    """Whether the operator made the deliberate remote opt-in."""
+    return os.environ.get(REMOTE_OLLAMA_OPT_IN) == "1"
+
+
+def _model_use_is_permitted() -> bool:
+    """Enforce Netwise's local-only model boundary before any model call.
+
+    `OLLAMA_HOST` is useful for choosing a non-default local port, but it must
+    not silently turn an offline product into one that transfers
+    configuration-derived evidence to another machine. A remote model is only
+    permitted after an operator explicitly sets `NETWISE_ALLOW_REMOTE_OLLAMA=1`.
+    """
+    host, _port = _ollama_endpoint()
+    return _is_loopback_host(host) or _remote_ollama_is_explicitly_allowed()
+
+
+def local_model_boundary_notice() -> Optional[str]:
+    """Explain to a user why the safe deterministic path was selected."""
+    if _model_use_is_permitted():
+        return None
+    return (
+        "Local-model safety: Netwise did not send config-derived evidence to "
+        "the non-local OLLAMA_HOST. It used a deterministic plain-English "
+        "summary instead. Remote inference requires the explicit operator "
+        "opt-in NETWISE_ALLOW_REMOTE_OLLAMA=1."
+    )
 
 
 def reset_reachability_cache() -> None:
@@ -627,6 +684,12 @@ def _ollama_is_reachable() -> bool:
         installation to deterministic text -- that would trade a slow page
         for a false byline, which is a far worse bargain.
     """
+    # This is an enforcement point, not merely a speed optimisation. Do this
+    # before the socket call so an unapproved remote hostname is neither
+    # resolved nor contacted.
+    if not _model_use_is_permitted():
+        return False
+
     now = time.monotonic()
     if (_reachability["up"] is not None
             and now - _reachability["at"] < OLLAMA_PROBE_TTL_SECONDS):

@@ -39,7 +39,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from ai.explain import explain_with_source
+from ai.explain import explain_with_source, local_model_boundary_notice
 from ai.propose import propose_change
 from ai.query import answer_question
 from analysis import findings, pipeline as analysis_pipeline, report
@@ -55,6 +55,7 @@ from analysis.checks.risk import (
 )
 from analysis.pfsense_convert import PfSenseConversionError, convert as pfsense_convert
 from analysis.policy import PolicyError, load_policy_file
+from web.audit_log import event as audit_event
 from web import mock_findings
 
 # --- Upload validation rules ------------------------------------------------
@@ -233,7 +234,7 @@ _explanation_cache: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
 #: Everything else in the dict participates, including fields F-1 does not
 #: have yet -- a narrower allow-list would silently stop distinguishing
 #: findings the day the contract is amended.
-_DOWNSTREAM_KEYS = ("explanation", "explanation_source")
+_DOWNSTREAM_KEYS = ("explanation", "explanation_source", "explanation_notice")
 
 
 def _finding_fingerprint(finding: Dict[str, Any]) -> str:
@@ -529,6 +530,7 @@ def _attach_explanations(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         never modified.
     """
     attached: List[Dict[str, Any]] = []
+    remote_model_refusal_logged = False
     for original in results:
         # A shallow copy per finding: the caller's dict (which may be the
         # cached one) must come out of this function exactly as it went in.
@@ -549,6 +551,14 @@ def _attach_explanations(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 _remember_explanation(key, explanation, source)
             finding["explanation"] = explanation
             finding["explanation_source"] = source
+            # Dashboard-only provenance: explain the safe fallback without
+            # exposing the configured hostname or configuration content.
+            notice = local_model_boundary_notice()
+            if source == "fallback" and notice is not None:
+                finding["explanation_notice"] = notice
+                if not remote_model_refusal_logged:
+                    audit_event("local_model_host_refused")
+                    remote_model_refusal_logged = True
         except Exception:
             pass
     return attached
@@ -667,6 +677,7 @@ def get_findings() -> List[Dict[str, Any]]:
     #     "policy accepted" message and findings computed without it.
     key = _analysis_key()
     results = _cached_analysis(key)
+    cache_hit = results is not None
     if results is None:
         results = analysis_pipeline.analyse(
             SNAPSHOT_DIR,
@@ -701,7 +712,15 @@ def get_findings() -> List[Dict[str, Any]]:
     # _attach_explanations() copies rather than mutating, so the list held in
     # the cache never acquires the two extra keys. That is not incidental --
     # it is the condition this module's own docstring set for caching here.
-    return _attach_explanations(results)
+    response = _attach_explanations(results)
+    audit_event(
+        "analysis_results_served",
+        cache_hit=cache_hit,
+        found_count=sum(item["status"] == "found" for item in response),
+        clean_count=sum(item["status"] == "none" for item in response),
+        unavailable_count=sum(item["status"] == "error" for item in response),
+    )
+    return response
 
 
 @app.post("/api/upload")
@@ -899,6 +918,14 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
             f"'{display_name}' accepted ({size:,} bytes) and staged. "
             "Nothing has been analysed yet — click Scan Now to check it."
         )
+
+    audit_event(
+        "config_upload_accepted",
+        extension=extension,
+        size_bytes=size,
+        converted=is_pfsense,
+        skipped_count=len(skipped),
+    )
 
     return {
         "filename": display_name,

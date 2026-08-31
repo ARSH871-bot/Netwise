@@ -508,6 +508,16 @@ body {
   color: var(--ink-soft);
 }
 
+/* This is an explicit privacy decision, not an operational error. The model
+   was deliberately not contacted, so it is shown neutrally beneath the
+   deterministic text rather than styled like a failed analysis. */
+.model-boundary-notice {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--ink-soft);
+}
+
 /* --- The unwired state ---------------------------------------------------
    THIS MODIFIER IS NOT DECORATION.
 
