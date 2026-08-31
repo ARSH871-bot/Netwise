@@ -301,24 +301,47 @@ them and they describe nobody's real network. Real configs stay in the ignored
 in `CHECKS`. See `docs/design/pipeline-feature-shapes.md`.
 
 CI (`.github/workflows/tests.yml`) runs the suite on every pull request, on
-Python 3.12 and 3.13. **It does not block a merge today, and that is now a
-choice rather than a limitation.** Branch protection needs GitHub Pro or a
-public repo — and this repository is public, so every setting is available to
-us, free. Measured 27 August:
+Python 3.12 and 3.13. **It does not block a merge today.** Branch protection
+needs GitHub Pro or a public repo, so whether it is a *choice* or a
+*limitation* depends on the repository's visibility at the time — and that has
+changed twice.
+
+**Do not read visibility from this file. Ask the API:**
+
+```bash
+gh api repos/ARSH871-bot/Netwise --jq '.private, .visibility'
+gh api repos/ARSH871-bot/Netwise/branches/main/protection
+```
+
+Two dated measurements, kept as history rather than as a current claim:
 
 ```
-private    : False
-visibility : public
-GET /repos/ARSH871-bot/Netwise/branches/main/protection
-   -> {"message":"Branch not protected"}
+27 August    private: false   visibility: public
+             protection -> {"message":"Branch not protected"}
+             i.e. available and simply not switched on
+
+31 August    private: true    visibility: private   (deliberate, temporary)
+             protection -> 403 "Upgrade to GitHub Pro or make this
+             repository public to enable this feature"
 ```
 
-So a red cross is a signal rather than a gate **because nobody has turned the
-gate on**, not because we cannot. What to enable is #245, and the measurement
-there is worth reading before assuming the answer is "all of it": across 45
-PRs merged since 20 August, requiring a review would have blocked **none**,
-and `dismiss_stale_reviews` would **contradict** M-2 rule 2 by voiding an
-approval on a merge-only push.
+**The present-tense sentence that used to sit here — "this repository is
+public, so every setting is available to us, free" — was true when #246 wrote
+it and false four days later.** Nobody made a mistake; the world moved. The
+lesson is not "check harder", it is that **a fact which can change underneath a
+document should not be stated in the present tense in one.** The dated block
+above degrades into history; the sentence degraded into a falsehood.
+
+A red cross is therefore a signal rather than a gate. **Why** it is not a gate
+depends on the visibility above: on 27 August it was available and switched
+off; on 31 August it is unavailable. #245 is the decision about what to enable,
+and it can only be *acted on* while the repository is public — so it is
+paused rather than answered whenever it is not.
+
+The measurement on #245 is worth reading before assuming the answer is "all of
+it": across 45 PRs merged since 20 August, requiring a review would have
+blocked **none**, and `dismiss_stale_reviews` would **contradict** M-2 rule 2
+by voiding an approval on a merge-only push.
 
 > **M-2 IS CITED HERE AS SETTLED AND IS NOT.** Read from `CONTRIBUTING.md`'s
 > own table on 31 August: `Shubham ✅, Arsh ⬜, Ankeet ⬜, Samika ⬜` — **one of
