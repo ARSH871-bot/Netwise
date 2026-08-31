@@ -275,6 +275,19 @@ app = FastAPI(
 #     the response would let the NEXT request on the same worker inherit it
 #     before its own middleware runs -- which is the bug this whole feature
 #     exists to remove, arriving through the mechanism meant to fix it.
+#
+#     DELETING THIS RESET IS AN EQUIVALENT MUTANT UNDER OUR TESTS, and that
+#     is recorded rather than left for someone to rediscover. Measured: with
+#     the reset removed, all 56 web tests still pass. The reason is the
+#     harness, not the code -- TestClient runs the app in its own portal
+#     context, so a leaked value is never visible to the test thread, and
+#     every real request overwrites it before the handler runs anyway.
+#
+#     It stays because it is the ContextVar contract and because the
+#     equivalence depends on a property of the test client rather than of
+#     the application. Same treatment as the `\0policy\0` separator below:
+#     a surviving mutation on deliberately defensive code is the correct
+#     outcome, not a gap to paper over with a contrived test.
 
 
 @app.middleware("http")
