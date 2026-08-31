@@ -648,6 +648,30 @@ into `README.md` from here.
 
 **Policy-driven detections on a network that is not ours: 3 → 8.**
 
+**And the client's own vendor now produces a real finding, which it never had
+before (#216, closed 31 August).** A converted PF Sense export used to report
+three "could not check" cards and nothing else, because our rules name
+`rtr-us5` and the converter emits `pfsense-us5` — those never meet. Measured
+end to end through the real endpoints against real Batfish:
+
+```
+PF Sense, no policy of the user's own     3 could-not-check, 0 findings
+PF Sense, a policy naming pfsense-us5     2 could-not-check, 1 finding
+
+PC-001  found  high  The LAN can reach the internal server
+        device     pfsense-us5
+        detail     Flow start=pfsense-us5 [10.10.10.0:49152->10.20.0.5:443
+                   TCP (SYN)] is permitted but policy requires it to be DENIED
+        explained  yes (model)
+```
+
+**Nothing in the suite protected that join.** Of the six test modules
+mentioning PF Sense, zero mentioned a policy; of the policy modules, zero
+mentioned PF Sense. Both halves were tested and the join between them was not,
+so a change to the converter's device naming would have returned the client's
+firewall to producing nothing with every test still green.
+`tests/test_pfsense_policy_join.py` pins it.
+
 **What is still missing.** `access_control` and `routing` still ignore a
 supplied policy. So the gap is narrowed for one check, not closed.
 
