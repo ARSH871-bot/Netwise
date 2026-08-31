@@ -128,8 +128,14 @@ def staged(tmp_path, monkeypatch):
     """Point the app at a temporary snapshot we control, and mark it uploaded."""
     configs = tmp_path / "current" / "configs"
     configs.mkdir(parents=True)
-    monkeypatch.setattr(main, "CONFIGS_DIR", configs)
-    monkeypatch.setattr(main, "SNAPSHOT_DIR", tmp_path / "current")
+    # Patch the FUNCTIONS, not the old module constants. Since #242 storage
+    # is per session, so `configs_dir()` resolves through a ContextVar --
+    # setting a module attribute would be shadowed and silently ignored,
+    # which is a test that redirects nothing while appearing to.
+    monkeypatch.setattr(main, "configs_dir", lambda session_id=None: configs)
+    monkeypatch.setattr(
+        main, "snapshot_dir", lambda session_id=None: tmp_path / "current"
+    )
     monkeypatch.setattr(main, "_uploaded", True)
     monkeypatch.setattr(main, "explain_with_source",
                         lambda finding: ("explained", "model"))

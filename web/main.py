@@ -57,6 +57,7 @@ from analysis.pfsense_convert import PfSenseConversionError, convert as pfsense_
 from analysis.policy import PolicyError, load_policy_file
 from web import mock_findings
 from web.session import (
+    DEFAULT_SESSION,
     SESSION_COOKIE,
     SESSION_MAX_AGE,
     current_session_id,
@@ -110,16 +111,55 @@ STATIC_DIR = Path(__file__).parent / "static"
 #
 #     uploaded_configs/          <- CONFIG_ROOT
 #       current/                 <- SNAPSHOT_DIR   ** this is what analyse() gets **
-#         configs/               <- CONFIGS_DIR
+#         configs/               <- configs_dir()
 #           device.cfg           <- the uploaded file
 #
 # analysis.pipeline.load_snapshot checks for that `configs/` subfolder and
 # raises if it is missing, so passing the wrong level fails loudly rather than
 # analysing nothing and reporting all clear.
+# PER SESSION SINCE #242. The layout above is unchanged -- it just sits one
+# level down, under the session that staged it:
+#
+#     uploaded_configs/
+#       sessions/
+#         <session id>/
+#           current/           <- snapshot_dir(), what analyse() gets
+#             configs/         <- configs_dir()
+#               device.cfg
 CONFIG_ROOT = Path(__file__).parent / "uploaded_configs"
+SESSIONS_ROOT = CONFIG_ROOT / "sessions"
 SNAPSHOT_NAME = "current"
-SNAPSHOT_DIR = CONFIG_ROOT / SNAPSHOT_NAME
-CONFIGS_DIR = SNAPSHOT_DIR / "configs"
+
+
+def _effective_session() -> str:
+    """Which session a path call belongs to, in or out of a request.
+
+    INSIDE a request the ContextVar holds the real session and is used --
+    that is what isolates concurrent users, and `_last_session_id` is never
+    consulted there.
+
+    OUTSIDE one -- a test fixture calling `_discard_staged_policy()`, a
+    script, the CLI -- the ContextVar is still at DEFAULT_SESSION. Resolving
+    to that would point at a directory no request ever wrote to, so a
+    fixture would clean one place while the thing it is cleaning up after
+    lives in another. That mismatch is not theoretical: it left 25 tests
+    failing in the full run while every one of them passed alone.
+
+    So out-of-request callers get the last session that made a request,
+    which is what a single-session caller means by "the staged file".
+    """
+    session_id = current_session_id()
+    return _last_session_id if session_id == DEFAULT_SESSION else session_id
+
+
+def snapshot_dir(session_id: Optional[str] = None) -> Path:
+    """The snapshot root for a session -- the folder that CONTAINS configs/."""
+    return SESSIONS_ROOT / (session_id or _effective_session()) / SNAPSHOT_NAME
+
+
+def configs_dir(session_id: Optional[str] = None) -> Path:
+    """Where Batfish reads device files from, for a session."""
+    return snapshot_dir(session_id) / "configs"
 
 # --- Where an uploaded POLICY is staged (#87) -------------------------------
 #
@@ -137,7 +177,9 @@ CONFIGS_DIR = SNAPSHOT_DIR / "configs"
 #             configs/            <- Batfish reads THIS
 #               device.cfg
 #             policy.json         <- and never this
-POLICY_PATH = SNAPSHOT_DIR / "policy.json"
+def policy_path(session_id: Optional[str] = None) -> Path:
+    """Where a session's uploaded policy is staged."""
+    return snapshot_dir(session_id) / "policy.json"
 
 #: A policy is JSON and only JSON. `analysis/policy.py` explains why the
 #: loader is JSON-only rather than YAML -- picking YAML would add a runtime
@@ -158,7 +200,9 @@ POLICY_EXTENSIONS = {".json"}
 #           device.cfg
 #         policy.json              <- and never this
 #         business-context.json    <- nor this
-BUSINESS_CONTEXT_PATH = SNAPSHOT_DIR / "business-context.json"
+def business_context_path(session_id: Optional[str] = None) -> Path:
+    """Where a session's uploaded business context is staged."""
+    return snapshot_dir(session_id) / "business-context.json"
 
 #: JSON only, matching `analysis/business_context.py`'s own limit. This
 #: endpoint must not accept a format the loader cannot read.
@@ -170,7 +214,19 @@ BUSINESS_CONTEXT_EXTENSIONS = {".json"}
 # Module-level state is only defensible because this is a single-user local
 # tool. Two people uploading at once would overwrite each other's snapshot.
 # If Netwise ever serves more than one user, this becomes per-session state.
+_last_session_id: str = DEFAULT_SESSION
+
 _uploaded: bool = False
+
+
+def _is_uploaded() -> bool:
+    """Has THIS session staged a config?
+
+    A pass-through for now -- the per-session answer lands in the next
+    commit. Introduced here so the seam exists before the behaviour moves
+    through it, and so this commit changes storage location only.
+    """
+    return _uploaded
 
 app = FastAPI(
     title="Netwise",
@@ -214,6 +270,9 @@ async def attach_session(request: Request, call_next):
     else:
         session_id, issued = new_session_id(), True
 
+    global _last_session_id
+    _last_session_id = session_id
+
     token = set_current_session(session_id)
     try:
         response = await call_next(request)
@@ -232,6 +291,49 @@ async def attach_session(request: Request, call_next):
             samesite="lax",
         )
     return response
+
+
+# --- Backwards-compatible module attributes (#242) ---------------------------
+#
+# `SNAPSHOT_DIR`, `CONFIGS_DIR`, `POLICY_PATH` and `BUSINESS_CONTEXT_PATH`
+# were module-level Paths before sessions existed, and forty-four assertions
+# across five test files read them. They resolve dynamically now, via PEP 562.
+#
+# WHY THE SHIM RESOLVES TO THE LAST SESSION THAT MADE A REQUEST
+#     A caller reading `main.POLICY_PATH` is outside any request -- a test
+#     asserting a file landed, or a script. The ContextVar is already reset
+#     by then, so resolving it there would give the DEFAULT session and point
+#     at a directory the request never wrote to.
+#
+#     `_last_session_id` is what the single-session caller means: "the
+#     session that just did the thing I am checking". For one client that is
+#     exact.
+#
+# THIS IS A READ-SIDE CONVENIENCE AND NOTHING ELSE.
+#     No request handler uses these names -- every one of them calls
+#     `configs_dir()` / `policy_path()` and reads the ContextVar, which is
+#     what actually isolates concurrent requests. `_last_session_id` is
+#     racy by construction under concurrency, and that is tolerable ONLY
+#     because nothing that serves a request reads it.
+#
+#     tests/test_session_isolation.py asserts that separation directly, so
+#     a handler that started using the shim would fail rather than quietly
+#     de-isolate itself.
+
+_SESSION_SCOPED_ATTRS = {
+    "SNAPSHOT_DIR": snapshot_dir,
+    "CONFIGS_DIR": configs_dir,
+    "POLICY_PATH": policy_path,
+    "BUSINESS_CONTEXT_PATH": business_context_path,
+}
+
+
+def __getattr__(name: str):
+    """Resolve the legacy path names against the last active session."""
+    resolver = _SESSION_SCOPED_ATTRS.get(name)
+    if resolver is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return resolver()
 
 
 @app.get("/", include_in_schema=False)
@@ -427,7 +529,7 @@ def _staged_policy():
 
     Returns None rather than raising when the staged file will not load.
     That cannot normally happen -- `/api/policy` validates BEFORE staging,
-    so a file only reaches POLICY_PATH after `load_policy_file()` returns --
+    so a file only reaches policy_path() after `load_policy_file()` returns --
     but a file edited on disk between upload and scan would otherwise take
     down an endpoint that has nothing to do with it.
 
@@ -437,10 +539,10 @@ def _staged_policy():
     evidence. So the degraded path is still self-describing rather than
     silently pretending the user's rules were applied.
     """
-    if not POLICY_PATH.exists():
+    if not policy_path().exists():
         return None
     try:
-        return load_policy_file(POLICY_PATH)
+        return load_policy_file(policy_path())
     except (PolicyError, OSError):
         return None
 
@@ -452,7 +554,7 @@ def _analysis_key() -> Optional[str]:
     result -- see the block comment in `get_findings()`. A policy that is
     absent, present, or edited must each produce a different key.
     """
-    config_part = _snapshot_fingerprint(CONFIGS_DIR)
+    config_part = _snapshot_fingerprint(configs_dir())
     if config_part is None:
         # The config half could not be fingerprinted, so the cache is already
         # disabled for this request. Do not invent half a key.
@@ -466,7 +568,7 @@ def _analysis_key() -> Optional[str]:
     # than a gap -- recorded here so nobody later mistakes it for one.
     digest.update(b"\0policy\0")
     try:
-        digest.update(POLICY_PATH.read_bytes() if POLICY_PATH.exists()
+        digest.update(policy_path().read_bytes() if policy_path().exists()
                       else b"<no policy>")
     except OSError:
         return None
@@ -668,9 +770,9 @@ def download_report(format: str = "html") -> Response:
         {k: v for k, v in finding.items() if k not in _DOWNSTREAM_KEYS}
         for finding in get_findings()
     ]
-    subject = CONFIGS_DIR.name if _uploaded else "example findings (no upload yet)"
+    subject = configs_dir().name if _is_uploaded() else "example findings (no upload yet)"
     if _uploaded:
-        staged = sorted(p.name for p in CONFIGS_DIR.glob("*") if p.is_file())
+        staged = sorted(p.name for p in configs_dir().glob("*") if p.is_file())
         subject = ", ".join(staged) or "an uploaded configuration"
 
     media_type, extension = REPORT_FORMATS[format]
@@ -696,7 +798,7 @@ def get_findings() -> List[Dict[str, Any]]:
     pipeline. The response shape is identical either way, including
     status="error" findings when analysis cannot run at all.
 
-    Note SNAPSHOT_DIR, not CONFIG_ROOT: analyse() wants the snapshot root, the
+    Note snapshot_dir(), not CONFIG_ROOT: analyse() wants the snapshot root, the
     folder that CONTAINS `configs/`. See the layout diagram at the top.
 
     Mock findings are NOT explained. #31's acceptance criterion is about a
@@ -715,7 +817,7 @@ def get_findings() -> List[Dict[str, Any]]:
     #
     # THE KEY COVERS THE POLICY TOO, AND IT MUST (#181).
     #     POLICY_PATH lives beside `configs/`, not inside it, so
-    #     `_snapshot_fingerprint(CONFIGS_DIR)` cannot see it. Wiring the
+    #     `_snapshot_fingerprint(configs_dir())` cannot see it. Wiring the
     #     policy into analyse() without also widening the key produces a
     #     feature that silently does nothing:
     #
@@ -729,7 +831,7 @@ def get_findings() -> List[Dict[str, Any]]:
     results = _cached_analysis(key)
     if results is None:
         results = analysis_pipeline.analyse(
-            SNAPSHOT_DIR,
+            snapshot_dir(),
             snapshot_name=SNAPSHOT_NAME,
             policy=_staged_policy(),
         )
@@ -892,15 +994,15 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     # "device.cfg" for a converted PF Sense export), never the client's.
     # display_name was already reduced to a basename above; this means the
     # client's string never reaches the filesystem at all.
-    if CONFIGS_DIR.exists():
-        shutil.rmtree(CONFIGS_DIR)
-    CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
+    if configs_dir().exists():
+        shutil.rmtree(configs_dir())
+    configs_dir().mkdir(parents=True, exist_ok=True)
 
     if is_pfsense:
-        staged_path = CONFIGS_DIR / "device.cfg"
+        staged_path = configs_dir() / "device.cfg"
         staged_path.write_text(device_text)
     else:
-        staged_path = CONFIGS_DIR / f"device{extension}"
+        staged_path = configs_dir() / f"device{extension}"
         staged_path.write_bytes(bytes(contents))
 
     # A NEW NETWORK MUST NOT INHERIT THE OLD NETWORK'S POLICY (#87, #82).
@@ -914,7 +1016,7 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     #     exists because a staged file and a checked one were once confused.
     #     Two files staged from two different intentions is that failure with
     #     one more moving part.
-    policy_was_staged = POLICY_PATH.exists()
+    policy_was_staged = policy_path().exists()
     _discard_staged_policy()
 
     # A NEW NETWORK MUST NOT INHERIT THE OLD NETWORK'S BUSINESS CONTEXT.
@@ -925,7 +1027,7 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     #     a judgement the user made about a different machine. A policy that
     #     does not apply reports "could not check"; a context that does not
     #     apply just quietly re-rates the wrong box.
-    context_was_staged = BUSINESS_CONTEXT_PATH.exists()
+    context_was_staged = business_context_path().exists()
     _discard_staged_business_context()
 
     global _uploaded
@@ -1028,7 +1130,7 @@ def _discard_staged_policy() -> None:
     unstages the FILE, which is all this branch is entitled to do until
     #181/#182 settle how a policy reaches a check.
     """
-    POLICY_PATH.unlink(missing_ok=True)
+    policy_path().unlink(missing_ok=True)
 
 
 @app.post("/api/policy")
@@ -1114,8 +1216,8 @@ async def upload_policy(file: UploadFile) -> Dict[str, Any]:
         temp_path.unlink(missing_ok=True)
 
     # --- Only now does anything reach the staging location -----------------
-    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    POLICY_PATH.write_bytes(bytes(contents))
+    snapshot_dir().mkdir(parents=True, exist_ok=True)
+    policy_path().write_bytes(bytes(contents))
 
     rule_count = sum(len(entries) for entries in policy.sections.values())
     if policy.is_empty:
@@ -1203,7 +1305,7 @@ async def upload_policy(file: UploadFile) -> Dict[str, Any]:
 
 def _discard_staged_business_context() -> None:
     """Remove the staged business-context file, if there is one."""
-    BUSINESS_CONTEXT_PATH.unlink(missing_ok=True)
+    business_context_path().unlink(missing_ok=True)
 
 
 def _staged_business_context():
@@ -1219,10 +1321,10 @@ def _staged_business_context():
     It must never take down /api/findings: a business context is a refinement
     of a severity, and losing it is not worth losing the findings over.
     """
-    if not BUSINESS_CONTEXT_PATH.exists():
+    if not business_context_path().exists():
         return None
     try:
-        return load_business_context_file(BUSINESS_CONTEXT_PATH)
+        return load_business_context_file(business_context_path())
     except (BusinessContextError, OSError):
         return None
 
@@ -1234,7 +1336,7 @@ async def upload_business_context(file: UploadFile) -> Dict[str, Any]:
     Mirrors `upload_policy()` exactly -- basename at the boundary, extension
     check, chunked read against the size limit, empty upload refused, our
     filename rather than theirs, and validation strictly BEFORE staging so a
-    rejected file can never reach BUSINESS_CONTEXT_PATH.
+    rejected file can never reach business_context_path().
 
     A rejection is HTTP 400 carrying `BusinessContextError`'s own message
     unchanged. That message names the entry and offers a did-you-mean for a
@@ -1299,8 +1401,8 @@ async def upload_business_context(file: UploadFile) -> Dict[str, Any]:
         temp_path.unlink(missing_ok=True)
 
     # --- Only now does anything reach the staging location -----------------
-    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    BUSINESS_CONTEXT_PATH.write_bytes(bytes(contents))
+    snapshot_dir().mkdir(parents=True, exist_ok=True)
+    business_context_path().write_bytes(bytes(contents))
 
     # NO reset_analysis_cache() HERE, AND THAT IS DELIBERATE.
     #     A `reset_analysis_cache()` call stood here, with a comment saying a
@@ -1379,7 +1481,7 @@ def ask_question(request: AskRequest) -> Dict[str, Any]:
 
     try:
         bf = analysis_pipeline.connect()
-        analysis_pipeline.load_snapshot(bf, SNAPSHOT_DIR, "netwise", SNAPSHOT_NAME)
+        analysis_pipeline.load_snapshot(bf, snapshot_dir(), "netwise", SNAPSHOT_NAME)
     except Exception as error:
         return {
             "question_understood": None,
@@ -1440,7 +1542,7 @@ def propose_change_endpoint(body: ProposeRequest) -> Dict[str, Any]:
             ),
         }
 
-    result = propose_change(body.request, SNAPSHOT_DIR)
+    result = propose_change(body.request, snapshot_dir())
     result["impact"] = _attach_explanations(result["impact"])
     return result
 
