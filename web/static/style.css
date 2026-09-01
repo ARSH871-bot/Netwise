@@ -138,6 +138,30 @@ body {
   margin-bottom: 1.25rem;
 }
 
+/* THE LABEL GOES ABOVE ITS OWN CONTROL (#279).
+   The markup is <label><input><span>Choose a config file</span></label>, so
+   the accessible name comes AFTER the control it names -- correct for
+   assistive tech, which reads the label element as a whole, and backwards on
+   screen: three pickers each rendered a bare "Choose File" button with its
+   description underneath, so the eye met the control before learning what it
+   was for. Pre-existing; visible from the day there was one picker and
+   three times as loud once there were three.
+
+   Fixed with `order`, not by moving the <span> in the markup. Wrapping the
+   input inside the label is what makes the whole caption clickable, and
+   reordering the DOM to fix a visual problem would trade that for it. */
+.file-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.9rem;
+}
+
+.file-picker > span {
+  order: -1;
+  font-size: 0.85rem;
+}
+
 .file-picker input[type="file"] {
   display: block;
   font: inherit;
@@ -1102,4 +1126,88 @@ body {
   color: var(--blind-ink);
   border: 1px solid var(--blind);
   font-weight: 600;
+}
+
+/* --- Areas (#279) --------------------------------------------------------
+   ONE ACTIVITY PER AREA, ONE HEADING PER AREA.
+
+   The page used to be two flat panes: the left one ran upload, Scan Now,
+   the results heading, its F-4 explainer, three tiles, two download links
+   and the findings list down a single uninterrupted column; the right one
+   put "Ask a question" and "Propose a change" under one <hr>. Nothing was
+   wrong individually -- it was all visible at once with no hierarchy, so a
+   first-time reader had nothing telling them what to look at first.
+
+   Each area now carries its own surface, so the boundary between two
+   activities is a real edge rather than whitespace. Reuses the existing
+   .card treatment (--card on --line, 8px) rather than inventing a second
+   panel style, so a new area is visually the same kind of object the page
+   already had.
+
+   NO NEW COLOURS. Every value here is an existing custom property. The
+   issue asked for no gradient/neon/glow and the severity, status and --ai
+   colours already carry meaning -- a decorative use of any of them would
+   make a heading look like a finding. */
+.area {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 1.25rem;
+}
+
+.area:last-child {
+  margin-bottom: 0;
+}
+
+/* The head is a band rather than free-floating text, so the eye can find
+   "where am I" without reading. Bottom border only -- a filled bar would
+   compete with the severity chips inside the findings list. */
+.area-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.area-head h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+/* Steps 1 and 2 only. Ask and Propose are deliberately unnumbered -- see
+   the comment in index.html: they are independent activities, and a number
+   would assert an order that does not exist. */
+.area-step {
+  flex: none;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.12rem 0.4rem;
+}
+
+.area-body {
+  padding: 1rem;
+}
+
+/* The upload card is now the whole body of the Configure area, so its own
+   border would be a box inside an identical box. */
+.area-body > .card {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
+
+/* The panes are containers now, not surfaces -- the areas carry the card
+   treatment. Without this the chat pane draws a second border around
+   areas that already have one. */
+.pane-chat {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
 }

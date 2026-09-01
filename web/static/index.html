@@ -28,8 +28,15 @@
       <!-- ============ LEFT PANE: upload + results ============ -->
       <section class="pane pane-results" aria-labelledby="results-heading">
         <!-- ---- Upload ---- -->
+        <!-- ---- AREA 1: Configure (#279) ----
+             Everything you give Netwise before it runs. Three pickers and
+             the button that starts the scan -- one activity, one area. -->
+        <section class="area" id="area-configure" aria-labelledby="area-configure-heading">
+          <div class="area-head">
+            <span class="area-step">Step 1</span><h2 id="area-configure-heading">Configure</h2>
+          </div>
+          <div class="area-body">
         <div class="card upload">
-          <h2>Analyse a config</h2>
           <!-- The vendor list is what we have FIXTURES for, not what the
                engine might manage. Each one named here has a committed
                fixture carrying a deliberate fault, and a test asserting we
@@ -115,6 +122,25 @@
           </button>
         </div>
 
+          </div>
+        </section>
+
+        <!-- ---- AREA 2: Scan results (#279) ----
+             What the scan found, could not find, and could not check.
+
+             THE EXPLAINER IS NOT DIRECTLY UNDER THIS HEADING, AND THAT IS
+             DELIBERATE. #288 moved it down to sit against the tiles it
+             explains, because #219's device filter had pushed it 48px away
+             from them. This restructure keeps that adjacency rather than
+             pulling the paragraph back up under the heading -- the tiles are
+             what it describes, not the section. Its wording is #288's, and a
+             test pins the CLAIM it makes rather than the sentence, so that
+             wording stays the author's to improve. -->
+        <section class="area" id="area-results" aria-labelledby="results-heading">
+          <div class="area-head">
+            <span class="area-step">Step 2</span><h2 id="results-heading">Scan results</h2>
+          </div>
+          <div class="area-body">
         <!-- ---- Coverage summary ----
              Three counts, never merged. "Could not check" is shown even when
              it is zero, because an explicit zero is a stronger statement than
@@ -129,7 +155,6 @@
              of one, which is the distinction the whole contract exists to
              protect. The line below states it in words rather than relying on
              the reader to infer it from three tile colours. -->
-        <h2 id="results-heading">Scan results</h2>
         <!-- ---- Filter by device (#219) ----
              HIDDEN UNTIL A SCAN COVERS MORE THAN ONE DEVICE. A selector
              offering exactly one choice is a control that cannot do
@@ -225,11 +250,23 @@
 
         <!-- ---- The findings themselves, grouped by status ---- -->
         <div id="findings"></div>
+          </div>
+        </section>
       </section>
 
       <!-- ============ RIGHT PANE: chat ============ -->
       <section class="pane pane-chat" aria-labelledby="chat-heading">
-        <h2 id="chat-heading">Ask a question</h2>
+        <!-- ---- AREA 3: Ask (#279) ----
+             DELIBERATELY NOT NUMBERED. Steps 1 and 2 are a sequence -- you
+             cannot review results before you scan. These two are not: asking
+             and proposing are independent activities available in either
+             order, and numbering them would assert an order that does not
+             exist. Structure should encode something true. -->
+        <section class="area" id="area-ask" aria-labelledby="chat-heading">
+          <div class="area-head">
+            <h2 id="chat-heading">Ask a question</h2>
+          </div>
+          <div class="area-body">
         <!-- No model is involved here, in either direction -- the question is
              matched against a closed set of three, and the answer is built from
              Batfish's own result. Saying "a local model" would have been both
@@ -268,9 +305,20 @@
              being suppressed by an unrelated error), so building the
              rendering against that shape now would be building against a
              contract that has moved this week. -->
-        <hr class="pane-divider" />
+          </div>
+        </section>
 
-        <h2 id="propose-heading">Propose a change</h2>
+        <!-- ---- AREA 4: Propose (#279) ----
+             Was separated from "Ask" by a bare <hr>, which is a horizontal
+             line rather than a boundary: nothing about it told a screen
+             reader, or a hurried eye, that a different activity starts
+             here. A section with its own heading does. -->
+        <section class="area" id="area-propose" aria-labelledby="propose-heading">
+          <div class="area-head">
+            <h2 id="propose-heading">Propose a change</h2>
+          </div>
+          <div class="area-body">
+
         <p class="hint">
           Describe one change in plain English and Netwise will write the
           config line, simulate it, and warn you if it opens something.
@@ -289,6 +337,8 @@
           />
           <button type="submit">Propose</button>
         </form>
+          </div>
+        </section>
       </section>
     </main>
 
