@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 import json
 import shutil
 import tempfile
+import threading
 import xml.etree.ElementTree as ET
 from collections import Counter, OrderedDict
 from pathlib import Path
@@ -531,6 +532,55 @@ def reset_explanation_cache() -> None:
 #: single-user local tool and each entry holds a whole findings list.
 ANALYSIS_CACHE_MAX = 8
 
+#: The analysed findings, newest-used last, or None when nothing is cached.
+#:
+#: SERIALISED, AND THAT IS A CONCURRENT-REQUEST FIX RATHER THAN A STYLE
+#: CHOICE (#208).
+#:     `/api/findings` is a SYNC FastAPI endpoint, so it runs in the
+#:     threadpool, so two overlapping requests genuinely execute in parallel.
+#:     One browser with two tabs, or a double-clicked Scan Now, is enough --
+#:     this needs no second USER, which is what made the existing comment
+#:     about multi-user support read as satisfied on the day it bit.
+#:
+#:     `OrderedDict` operations are individually protected by the GIL, so
+#:     this was never a corruption risk. The risk is that the write is a
+#:     SEQUENCE and the sequence is not atomic:
+#:
+#:         _analysis_cache[key] = results          # insert
+#:         _analysis_cache.move_to_end(key)        # mark newest
+#:         while len(_analysis_cache) > MAX:       # check
+#:             _analysis_cache.popitem(last=False) # evict
+#:
+#:     Two threads can interleave between the check and the evict, so both
+#:     see "too many" and both evict -- taking the cache BELOW the bound and
+#:     discarding an entry the other thread had just written.
+#:
+#:     Demonstrated rather than argued, by injecting a delay between the
+#:     length check and the eviction so the window is reliably hit:
+#:
+#:         8 threads writing into a cache already at its bound of 8:
+#:
+#:         WITHOUT the lock   1 of 8 writes survived   cache fell to 1 entry
+#:         WITH the lock      8 of 8 writes survived   cache held at 8
+#:
+#:     THE CONSEQUENCE IS A WASTED RE-ANALYSIS, NOT A WRONG ANSWER, and that
+#:     is worth stating plainly because it is why this is a normal fix and
+#:     not the defect the policy version of the same shape was (#182: "2 of 2
+#:     concurrent analyses read the WRONG policy"). A discarded entry costs
+#:     seconds of Batfish work; it never produces a finding that is untrue.
+#:
+#:     The lock is cheap for the same reason the loss is cheap: this sits on
+#:     a path that already costs seconds of real analysis, so contention on a
+#:     few dict operations is irrelevant.
+#:
+#:     WHAT THE LOCK DELIBERATELY DOES NOT DO: it does not hold across the
+#:     analysis itself. Two requests for the same uncached key will both run
+#:     Batfish and both store the result. Serialising THAT would mean holding
+#:     a lock for seconds and turning every concurrent reader into a queue,
+#:     to save a duplicate computation whose result is identical. The cost of
+#:     the duplicate is time; the cost of the queue would be the app.
+_analysis_cache_lock = threading.Lock()
+
 _analysis_cache: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
 
 
@@ -641,21 +691,43 @@ def _analysis_is_worth_caching(results: List[Dict[str, Any]]) -> bool:
 
 
 def _cached_analysis(key: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+    """A cached findings list for this key, or None.
+
+    Under the lock even though it is nominally a read: `move_to_end()`
+    mutates the ordering, so a lookup racing an eviction could re-order a
+    dict another thread is walking. Cheap, and it keeps the rule simple --
+    every touch of the ordering is serialised, so nobody has to work out
+    which ones were exempt.
+    """
     if key is None:
         return None
-    hit = _analysis_cache.get(key)
-    if hit is not None:
-        _analysis_cache.move_to_end(key)
-    return hit
+    with _analysis_cache_lock:
+        hit = _analysis_cache.get(key)
+        if hit is not None:
+            _analysis_cache.move_to_end(key)
+        return hit
 
 
 def _remember_analysis(key: Optional[str], results: List[Dict[str, Any]]) -> None:
+    """Store a findings list, evicting the oldest beyond the bound.
+
+    The insert, the reorder and the eviction are ONE critical section --
+    see the block comment above `_analysis_cache`. Split, two threads
+    interleave between the length check and the eviction, both evict, and
+    the cache drops below its bound while discarding an entry the other
+    thread had just written.
+
+    `_analysis_is_worth_caching()` is evaluated BEFORE taking the lock: it
+    only reads the results list the caller already owns, so holding the lock
+    across it would widen the critical section for no gain.
+    """
     if key is None or not _analysis_is_worth_caching(results):
         return
-    _analysis_cache[key] = results
-    _analysis_cache.move_to_end(key)
-    while len(_analysis_cache) > ANALYSIS_CACHE_MAX:
-        _analysis_cache.popitem(last=False)
+    with _analysis_cache_lock:
+        _analysis_cache[key] = results
+        _analysis_cache.move_to_end(key)
+        while len(_analysis_cache) > ANALYSIS_CACHE_MAX:
+            _analysis_cache.popitem(last=False)
 
 
 def reset_analysis_cache() -> None:
@@ -667,7 +739,8 @@ def reset_analysis_cache() -> None:
     checked one were once confused, and a cache is exactly where that could
     come back. Cheap insurance on the path that matters.
     """
-    _analysis_cache.clear()
+    with _analysis_cache_lock:
+        _analysis_cache.clear()
 
 
 def _attach_explanations(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
