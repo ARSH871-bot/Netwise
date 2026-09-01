@@ -20,12 +20,17 @@ from web.audit_log import LOGGER_NAME, event
 @pytest.fixture
 def isolated_staging(monkeypatch, tmp_path):
     snapshot = tmp_path / "current"
-    monkeypatch.setattr(main, "CONFIG_ROOT", tmp_path)
-    monkeypatch.setattr(main, "SNAPSHOT_DIR", snapshot)
-    monkeypatch.setattr(main, "CONFIGS_DIR", snapshot / "configs")
-    monkeypatch.setattr(main, "POLICY_PATH", snapshot / "policy.json")
+    monkeypatch.setattr(main, "snapshot_dir", lambda session_id=None: snapshot)
     monkeypatch.setattr(
-        main, "BUSINESS_CONTEXT_PATH", snapshot / "business-context.json"
+        main, "configs_dir", lambda session_id=None: snapshot / "configs"
+    )
+    monkeypatch.setattr(
+        main, "policy_path", lambda session_id=None: snapshot / "policy.json"
+    )
+    monkeypatch.setattr(
+        main,
+        "business_context_path",
+        lambda session_id=None: snapshot / "business-context.json",
     )
     monkeypatch.setattr(main, "_uploaded", False)
 
