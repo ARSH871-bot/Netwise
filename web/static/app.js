@@ -209,7 +209,156 @@ function renderSummary(problems, clean, blind) {
 }
 
 /** Render the whole findings list, grouped by status. */
+/* ------------------------------------------------------------------------ *
+ * Filter by device (#219)
+ *
+ * A view over findings already fetched. Every finding carries `device`, so
+ * nothing here asks the server anything -- there is no second source of
+ * truth about what the scan found.
+ *
+ * THE LAST RENDERED LIST IS KEPT so changing the selector can re-render
+ * without a round trip. It is the findings as the server sent them, never a
+ * filtered copy: filtering a filtered list would narrow it further on every
+ * change and there would be no way back to "all".
+ * ------------------------------------------------------------------------ */
+
+let allFindings = [];
+
+/** Distinct devices in a findings list, in first-seen order. */
+function devicesIn(findings) {
+  const seen = [];
+  findings.forEach((f) => {
+    if (f.device && !seen.includes(f.device)) seen.push(f.device);
+  });
+  return seen;
+}
+
+/** The device currently selected, or "" for all of them. */
+function selectedDevice() {
+  const select = document.getElementById("device-filter");
+  return select ? select.value || "" : "";
+}
+
+/**
+ * Fill the selector, and hide it unless there is a real choice to make.
+ *
+ * HIDDEN AT ONE DEVICE, NOT DISABLED. A disabled control still asks the
+ * reader to notice it and work out why it cannot be used. With one device
+ * there is nothing to choose, and the honest presentation of no choice is
+ * no control -- the same reasoning as not rendering an empty section.
+ *
+ * The chosen device is preserved across re-renders when it is still
+ * present, so a rescan does not silently throw the reader back to "all"
+ * and show them findings they had deliberately filtered away.
+ */
+function updateDeviceFilter(findings) {
+  const row = document.getElementById("device-filter-row");
+  const select = document.getElementById("device-filter");
+  if (!row || !select) return;
+
+  const devices = devicesIn(findings);
+  const previous = select.value || "";
+
+  select.replaceChildren();
+  select.appendChild(el("option", "", `All devices (${findings.length})`)).value = "";
+  devices.forEach((device) => {
+    const count = findings.filter((f) => f.device === device).length;
+    const option = el("option", "", `${device} (${count})`);
+    option.value = device;
+    select.appendChild(option);
+  });
+
+  // Keep the reader's choice only if it still exists in these results.
+  select.value = devices.includes(previous) ? previous : "";
+
+  row.hidden = devices.length < 2;
+
+  // A HIDDEN CONTROL MUST NOT LEAVE A FILTER ON.
+  //     Found by the harness: filter to rtr-us5 on a multi-device scan,
+  //     then rescan a single-device one. The device is still present, so
+  //     the choice was preserved -- while the control hid itself, because
+  //     there is now only one device. The result was an active filter with
+  //     no visible way to clear it, and a "0 finding(s) hidden" notice
+  //     explaining a control the reader cannot see.
+  //
+  //     Harmless in effect, since with one device the filter selects
+  //     everything. Incoherent as a state, and the kind of thing that
+  //     becomes a real bug the moment anything else reads the selector.
+  if (row.hidden) select.value = "";
+}
+
+/** The subset the reader is currently looking at. */
+function visibleFindings() {
+  const device = selectedDevice();
+  return device ? allFindings.filter((f) => f.device === device) : allFindings;
+}
+
+/**
+ * Say what the filter is hiding, and how much of it could not be checked.
+ *
+ * THIS IS THE F-4 PROBLEM ARRIVING THROUGH A VIEW CONTROL.
+ *     Filtering to one device hides findings about the others -- including
+ *     `status="error"` ones. A reader who filters to rtr-us5, sees a green
+ *     summary, and forgets the selector is set has been shown "all clear"
+ *     for a network where a check never ran. The summary tiles are honest
+ *     about what they count; they cannot be honest about what is not in
+ *     front of them.
+ *
+ *     So a filtered view states the hidden count, and states the
+ *     could-not-check part of it separately, because those are the two
+ *     different claims F-4 exists to keep apart. It carries the amber
+ *     "could not check" tokens when a blind spot is among the hidden, and
+ *     the neutral note otherwise.
+ *
+ * Nothing is shown when no filter is active -- there is nothing hidden to
+ * disclose, and a permanent "0 hidden" line is noise that teaches the
+ * reader to skip this element.
+ */
+function renderFilterNotice(device) {
+  const notice = document.getElementById("filter-notice");
+  if (!notice) return;
+
+  notice.replaceChildren();
+  if (!device) {
+    notice.textContent = "";
+    notice.className = "filter-notice";
+    notice.hidden = true;
+    return;
+  }
+
+  const hidden = allFindings.filter((f) => f.device !== device);
+  const blind = hidden.filter((f) => f.status === "error").length;
+
+  let text =
+    `Showing ${device} only. ` +
+    `${hidden.length} finding(s) about other devices are hidden`;
+  text += blind
+    ? `, including ${blind} that could not be checked.`
+    : ".";
+
+  notice.textContent = text;
+  // Amber only when a blind spot is among the hidden. Using it always would
+  // make the colour mean "a filter is on" rather than "something is not
+  // known", which is the distinction it carries everywhere else here.
+  notice.className = blind ? "filter-notice blind" : "filter-notice";
+  notice.hidden = false;
+}
+
+/** Re-render from the stored findings, honouring the selector. */
+function applyDeviceFilter() {
+  const device = selectedDevice();
+  renderFilterNotice(device);
+  renderFindingSections(visibleFindings());
+}
+
 function renderFindings(findings) {
+  allFindings = findings;
+  updateDeviceFilter(findings);
+  renderFilterNotice(selectedDevice());
+  renderFindingSections(visibleFindings());
+}
+
+function renderFindingSections(findings) {
   const container = document.getElementById("findings");
   container.replaceChildren();
 
@@ -1314,6 +1463,12 @@ function setUpReportDownload() {
   });
 }
 
+function setUpDeviceFilter() {
+  const select = document.getElementById("device-filter");
+  if (!select) return;
+  select.addEventListener("change", applyDeviceFilter);
+}
+
 /* ------------------------------------------------------------------------ */
 loadFindings();
 setUpUpload();
@@ -1322,3 +1477,4 @@ setUpBusinessContextUpload();
 setUpChat();
 setUpProposeChange();
 setUpReportDownload();
+setUpDeviceFilter();
