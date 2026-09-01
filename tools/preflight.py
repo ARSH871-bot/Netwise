@@ -335,7 +335,36 @@ def check_batfish_service() -> Result:
 
 
 def check_ollama() -> Result:
-    """OPTIONAL. Absent means degraded explanations, not a broken install."""
+    """OPTIONAL. Absent, or running without the model this product actually
+    calls, both mean degraded explanations rather than a broken install --
+    but they are two different states, and this used to report only the
+    first one (#234).
+
+    THE PORT BEING OPEN IS NOT THE SAME CLAIM AS "THE MODEL EXISTS"
+        Measured: a machine with Ollama installed and running, but with no
+        models built at all, passed this check --
+
+            $ ollama list
+            NAME    ID    SIZE    MODIFIED
+                                          <- empty
+
+            $ python -m tools.preflight
+            [  OK   ] Ollama (optional)
+                       running
+
+        -- because the old check was a TCP connect and nothing more.
+        Meanwhile ai/explain.py calls `ollama.generate(model="netwise-warden",
+        ...)`, which raises `ollama.ResponseError` (HTTP 404) when that model
+        was never built with `ollama create`. So preflight said the machine
+        was ready while every explanation was silently falling back to
+        deterministic text -- the same "the service answered" vs "the thing
+        actually works" conflation F-4 exists to prevent elsewhere, arriving
+        through the setup tool instead of a finding.
+
+        Fixed the same way check_batfish_service() already treats an open
+        port as insufficient: ask Ollama which models it actually has, not
+        just whether something is listening.
+    """
     if not _port_open("localhost", OLLAMA_PORT, timeout=2.0):
         return (
             "Ollama (optional)",
@@ -343,7 +372,48 @@ def check_ollama() -> Result:
             "not running. Everything still works: explanations fall back to "
             "deterministic text, and the whole test suite passes without it.",
         )
-    return ("Ollama (optional)", OK, "running")
+
+    # AN IMPORT ERROR IS NOT AN OLLAMA ERROR, THE SAME REASON
+    # check_batfish_service() SEPARATES THE TWO.
+    try:
+        import ollama
+
+        from ai.explain import MODEL_NAME
+    except ImportError as error:
+        return (
+            "Ollama (optional)",
+            BROKEN,
+            f"could not check which models are built -- Netwise's own code "
+            f"did not import, so this says NOTHING about Ollama: "
+            f"{type(error).__name__}: {str(error)[:120]}. Run from the "
+            f"repository root, and install the dependencies (README step 4).",
+        )
+
+    try:
+        built = ollama.list().models
+    except Exception as error:  # noqa: BLE001 -- report anything, never raise
+        return (
+            "Ollama (optional)",
+            BROKEN,
+            f"port is open but could not list its models: "
+            f"{type(error).__name__}: {str(error)[:120]}",
+        )
+
+    # Ollama reports tagged names ("netwise-warden:latest"); MODEL_NAME is
+    # untagged, the same form ollama.generate() itself accepts and resolves.
+    # Compare on the part before the colon so a tag can never cause a false
+    # MISSING here.
+    names = {(model.model or "").split(":")[0] for model in built}
+    if MODEL_NAME in names:
+        return ("Ollama (optional)", OK, f"running, and '{MODEL_NAME}' is built")
+
+    return (
+        "Ollama (optional)",
+        MISSING,
+        f"running, but the model '{MODEL_NAME}' has not been built yet. "
+        f"Everything still works: explanations fall back to deterministic "
+        f"text. Build it with: ollama create {MODEL_NAME} -f ai/Modelfile",
+    )
 
 
 def check_node() -> Result:

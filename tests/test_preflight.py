@@ -504,3 +504,159 @@ def test_an_import_failure_is_not_reported_as_a_service_failure(monkeypatch):
         "the detail should say the import failed and that this says nothing "
         "about Batfish; got: " + detail
     )
+
+
+# ---------------------------------------------------------------------------
+# check_ollama() actually checks the model, not just the port (#234)
+#
+# THE BUG THIS DEFENDS, which was live on main and had no test
+#     A machine with Ollama running but zero models built passed this check:
+#
+#         $ ollama list
+#         NAME    ID    SIZE    MODIFIED
+#                                       <- empty
+#
+#         $ python -m tools.preflight
+#         [  OK   ] Ollama (optional)
+#                    running
+#
+#     because the old check was a TCP connect and nothing else.
+#     ai/explain.py calls ollama.generate(model="netwise-warden", ...), which
+#     raises ollama.ResponseError (HTTP 404) when that model was never built.
+#     So preflight said the machine was ready while every explanation was
+#     silently degrading to deterministic text -- "the service answered" is
+#     not "the thing works", the same distinction F-4 exists to protect,
+#     arriving through the setup tool instead of a finding.
+#
+# WHY THESE FAKE ollama.list() RATHER THAN RUN A REAL SERVER
+#     Same reasoning as check_batfish_service()'s import-failure test above:
+#     the aggregation and attribution logic is what these tests own, and the
+#     live probe itself was verified by hand against a real Ollama install
+#     with no models built, and again after `ollama create netwise-warden -f
+#     ai/Modelfile`, both matching what's asserted here.
+# ---------------------------------------------------------------------------
+
+
+class _FakeModel:
+    def __init__(self, name):
+        self.model = name
+
+
+class _FakeListResponse:
+    def __init__(self, models):
+        self.models = models
+
+
+def test_ollama_running_with_no_models_is_missing_not_ok(monkeypatch):
+    """The exact bug: the port is open, nothing is built, and the old check
+    called that OK."""
+    monkeypatch.setattr(preflight, "_port_open", lambda *a, **k: True)
+    import ollama
+    monkeypatch.setattr(ollama, "list", lambda: _FakeListResponse([]))
+
+    label, status, detail = preflight.check_ollama()
+    assert label == "Ollama (optional)"
+    assert status == preflight.MISSING
+    assert "netwise-warden" in detail
+    assert "ollama create netwise-warden" in detail, (
+        "the fix instruction should be actionable, not just diagnostic; "
+        "got: " + detail
+    )
+
+
+def test_ollama_running_with_only_an_unrelated_model_is_still_missing(monkeypatch):
+    """Some model existing is not the same claim as OUR model existing."""
+    monkeypatch.setattr(preflight, "_port_open", lambda *a, **k: True)
+    import ollama
+    monkeypatch.setattr(
+        ollama, "list", lambda: _FakeListResponse([_FakeModel("llama3:latest")])
+    )
+
+    label, status, detail = preflight.check_ollama()
+    assert status == preflight.MISSING
+    assert "netwise-warden" in detail
+
+
+def test_ollama_running_with_the_model_built_is_ok(monkeypatch):
+    monkeypatch.setattr(preflight, "_port_open", lambda *a, **k: True)
+    import ollama
+    monkeypatch.setattr(
+        ollama, "list",
+        lambda: _FakeListResponse([_FakeModel("netwise-warden:latest")]),
+    )
+
+    label, status, detail = preflight.check_ollama()
+    assert status == preflight.OK
+    assert "netwise-warden" in detail
+
+
+def test_a_tag_on_the_built_model_name_does_not_cause_a_false_missing(monkeypatch):
+    """Ollama lists models as 'name:tag' (e.g. 'netwise-warden:latest');
+    MODEL_NAME is untagged, the same form ollama.generate() itself accepts.
+    A naive equality check would report MISSING against a machine that is
+    actually fine."""
+    monkeypatch.setattr(preflight, "_port_open", lambda *a, **k: True)
+    import ollama
+    monkeypatch.setattr(
+        ollama, "list",
+        lambda: _FakeListResponse([_FakeModel("netwise-warden:latest")]),
+    )
+
+    _, status, _ = preflight.check_ollama()
+    assert status == preflight.OK
+
+
+def test_ollama_port_closed_is_still_reported_as_missing_not_broken(monkeypatch):
+    """The port-closed path is untouched by this fix -- Ollama simply not
+    running is still MISSING, not BROKEN, and never reaches ollama.list()."""
+    monkeypatch.setattr(preflight, "_port_open", lambda *a, **k: False)
+    import ollama
+
+    def _must_not_be_called():
+        raise AssertionError("ollama.list() called despite the port being closed")
+
+    monkeypatch.setattr(ollama, "list", lambda: _must_not_be_called())
+
+    label, status, detail = preflight.check_ollama()
+    assert status == preflight.MISSING
+    assert "not running" in detail
+
+
+def test_an_import_failure_is_not_reported_as_an_ollama_failure(monkeypatch):
+    """Same shape as check_batfish_service()'s equivalent test above: a
+    broken install must not be blamed on the service it could not check."""
+    monkeypatch.setattr(preflight, "_port_open", lambda *a, **k: True)
+
+    real_import = builtins.__import__
+
+    def _no_ai_explain(name, *args, **kwargs):
+        if name == "ai.explain" or name.startswith("ai.explain."):
+            raise ImportError("No module named 'ai.explain'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _no_ai_explain)
+
+    label, status, detail = preflight.check_ollama()
+    assert label == "Ollama (optional)"
+    assert status == preflight.BROKEN
+
+    lowered = detail.lower()
+    assert "nothing" in lowered or "could not check" in lowered
+    assert "import" in lowered
+
+
+def test_ollama_list_raising_is_broken_not_silently_missing(monkeypatch):
+    """The port answered, so this is not "not running" -- it is a genuine
+    unknown, and BROKEN says so rather than quietly reusing MISSING's
+    wording for a different situation."""
+    monkeypatch.setattr(preflight, "_port_open", lambda *a, **k: True)
+    import ollama
+
+    def _raises():
+        raise ConnectionError("connection reset")
+
+    monkeypatch.setattr(ollama, "list", _raises)
+
+    label, status, detail = preflight.check_ollama()
+    assert status == preflight.BROKEN
+    assert "ConnectionError" in detail
