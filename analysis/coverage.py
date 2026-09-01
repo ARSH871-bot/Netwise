@@ -60,16 +60,32 @@ def summarise(findings: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
         for check, device in sorted(checked)
     ]
 
-    if gaps:
+    if not checked and not gaps:
+        # THE THIRD STATE, AND IT IS NOT COMPLETENESS.
+        #     An empty findings list is not "everything ran and nothing was
+        #     skipped" -- it is "nobody looked". Saying the former under a
+        #     green heading is F-4 arriving one layer up from the findings:
+        #     "we checked and found nothing" and "we could not check" are
+        #     different claims, and an absence of findings is neither.
+        complete = False
+        statement = (
+            "No check reported a result, so this report makes no claim about "
+            "coverage. Nothing here says the configuration was examined."
+        )
+    elif gaps:
+        one = len(gaps) == 1
         statement = (
             f"{len(gaps)} reported check/device blind spot"
-            f"{'' if len(gaps) == 1 else 's'} remain. Findings may be incomplete."
+            f"{'' if one else 's'} {'remains' if one else 'remain'}. "
+            f"Findings may be incomplete."
         )
+        complete = False
     else:
         statement = "Every reported check ran. Nothing was skipped."
+        complete = True
 
     return {
-        "complete": not gaps,
+        "complete": complete,
         "statement": statement,
         "checked": checked_rows,
         "gaps": gaps,

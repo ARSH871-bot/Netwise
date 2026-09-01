@@ -32,7 +32,7 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
-from analysis import report
+from analysis import coverage, report
 from web import main
 
 client = TestClient(main.app)
@@ -260,6 +260,44 @@ def test_coverage_statement_escapes_uploaded_evidence_too():
 
     assert "<script>" not in html
     assert html.count("&lt;script&gt;") >= 3
+
+
+def test_an_empty_findings_list_is_not_a_claim_that_nothing_was_skipped():
+    """F-4, one layer up: an absence of findings is not a clean bill of health.
+
+    "Every reported check ran. Nothing was skipped." under a green heading is
+    the exact sentence a report must not print when NOTHING ran. "We checked
+    and found nothing" and "nobody looked" are different claims, and an empty
+    list is the second one. This asserts the report says so, and -- just as
+    importantly -- that it does not wear the complete/green styling while
+    saying it.
+    """
+    html = report.render_html([])
+
+    assert "Nothing was skipped" not in html, (
+        "an empty findings list produced a completeness claim; nothing ran"
+    )
+    assert "makes no claim about coverage" in html
+    assert 'class="coverage incomplete"' in html, (
+        "the no-data state is rendered in the same green as a clean run"
+    )
+
+    assert coverage.summarise([])["complete"] is False, (
+        "the library-level claim is the one another caller would trust"
+    )
+
+
+def test_a_single_blind_spot_reads_as_one():
+    """The plural branch was tested; the singular one was not.
+
+    That is why "1 ... blind spot remain" reached a client-facing report: the
+    only test of this sentence used two gaps, so the ternary that exists to
+    handle one was never executed. The demo config has exactly one blind spot.
+    """
+    html = report.render_html([PROBLEM, BLIND])
+
+    assert "1 reported check/device blind spot remains" in html
+    assert "blind spot remain." not in html
 
 
 def test_problems_are_ordered_worst_first():

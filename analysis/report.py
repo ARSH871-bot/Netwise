@@ -262,10 +262,6 @@ def _coverage_html(findings: Sequence[Dict[str, Any]]) -> str:
         parts.append(
             f'<p class="meta-line">Checked: {esc(names)}.</p>'
         )
-    else:
-        parts.append(
-            '<p class="meta-line">No checks have reported a result yet.</p>'
-        )
 
     parts.append("</div>")
     return "".join(parts)
@@ -290,12 +286,19 @@ def render_html(findings: Sequence[Dict[str, Any]],
         f'</div>'
     )
 
+    # "Nothing was skipped" is a COVERAGE claim, and it is only true when
+    # something was actually reported. With an empty findings list it says
+    # nobody-looked in the words of everything-ran -- the same F-4 confusion
+    # the coverage box above was fixed for, in a sentence that predates it.
+    # One claim, two places; both now read from the same condition.
     blind = _section_html(
         "Could not check",
         "These checks did not run. Nothing is known about what they cover. "
         "This is not a pass.",
         s["blind"], "blind",
-        "Every check ran. Nothing was skipped.", warn=True)
+        ("Every check ran. Nothing was skipped." if findings
+         else "No check reported a result, so nothing is known either way."),
+        warn=True)
 
     problems = _section_html(
         "Problems found",
