@@ -1,9 +1,14 @@
 <!DOCTYPE html>
 <!--
-  Netwise dashboard -- the two-pane interface.
+  Netwise dashboard -- four areas, laid out in two columns.
 
-  LEFT PANE   config upload, then the findings the analysis produced.
-  RIGHT PANE  a chat panel for plain-English questions about those findings.
+  LEFT COLUMN   Step 1 Configure, then Step 2 Scan results.
+  RIGHT COLUMN  Ask a question, and Propose a change.
+
+  The AREAS are the structure; the columns are only where they sit. Steps 1
+  and 2 are numbered because they are a real sequence -- you cannot review
+  results before you scan. Ask and Propose are not, because they are
+  independent (#279).
 
   This file is only the skeleton. Everything inside #findings and #chat-log is
   built by static/app.js, because it depends on data.
@@ -26,7 +31,22 @@
 
     <main class="panes">
       <!-- ============ LEFT PANE: upload + results ============ -->
-      <section class="pane pane-results" aria-labelledby="results-heading">
+      <!-- A LAYOUT CONTAINER, NOT A LANDMARK (#279, raised by @ARSH871-bot).
+           This was <section aria-labelledby="results-heading">, so a screen
+           reader heard an outer region called "Scan results" that also
+           contained Configure -- and the right column was called "Ask a
+           question" while also containing Propose a change.
+
+           The ids resolved, so nothing was broken. The LABELS were wrong for
+           what they wrapped, which is worse in this PR than it was before it:
+           the whole claim here is that the four areas are the real
+           boundaries. A parent labelled as one of its children contradicts
+           that in the one place the change is meant to fix.
+
+           So the panes are plain columns and the four .area sections are the
+           landmarks -- which is what the CSS comment already said was the
+           model ("the panes are containers now, not surfaces"). -->
+      <div class="pane pane-results">
         <!-- ---- Upload ---- -->
         <!-- ---- AREA 1: Configure (#279) ----
              Everything you give Netwise before it runs. Three pickers and
@@ -252,10 +272,10 @@
         <div id="findings"></div>
           </div>
         </section>
-      </section>
+      </div>
 
       <!-- ============ RIGHT PANE: chat ============ -->
-      <section class="pane pane-chat" aria-labelledby="chat-heading">
+      <div class="pane pane-chat">
         <!-- ---- AREA 3: Ask (#279) ----
              DELIBERATELY NOT NUMBERED. Steps 1 and 2 are a sequence -- you
              cannot review results before you scan. These two are not: asking
@@ -298,13 +318,12 @@
              way that matters most: asking is read-only, and proposing
              produces a config line somebody might paste into a device.
 
-             SHELL ONLY. The response rendering -- how proposed_change,
-             verified and warning actually display -- is deliberately NOT
-             here yet. #183 is still open and its `warning` logic changed
-             once already during review (a proven high-severity opening was
-             being suppressed by an unrelated error), so building the
-             rendering against that shape now would be building against a
-             contract that has moved this week. -->
+             The response rendering landed with #253 once #183 settled. This
+             comment used to say "#183 is still open, so building against
+             that shape would be building against a contract that has moved
+             this week" -- correct when written, and #183 merged on 27
+             August. The caution was right and the reason it gave has
+             expired. -->
           </div>
         </section>
 
@@ -339,7 +358,7 @@
         </form>
           </div>
         </section>
-      </section>
+      </div>
     </main>
 
     <script src="/static/app.js"></script>

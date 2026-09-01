@@ -135,3 +135,64 @@ def test_the_areas_introduce_no_new_colours():
     assert "box-shadow" not in code
     assert not re.search(r"#[0-9a-fA-F]{3,6}\b", code), "a literal colour was introduced"
     assert not re.search(r"\brgba?\(", code), "a literal colour was introduced"
+
+
+# ---------------------------------------------------------------------------
+# The outer columns are layout, not landmarks (raised by @ARSH871-bot on #284)
+# ---------------------------------------------------------------------------
+
+#: index.html with comments stripped. Every check below must run against this
+#: rather than the raw file: the first version of this check matched markup
+#: QUOTED INSIDE A COMMENT explaining the old structure, and reported a
+#: problem that did not exist. Same shape as the colour test above failing on
+#: "#279" in its own header -- a false positive is still a broken test, and
+#: this file has now produced two.
+HTML_NO_COMMENTS = re.sub(r"<!--.*?-->", "", HTML, flags=re.S)
+
+
+def test_the_only_sections_are_the_four_areas():
+    """The columns must not be landmarks competing with the areas.
+
+    They were `<section aria-labelledby="results-heading">` and
+    `<section aria-labelledby="chat-heading">`, so a screen reader heard an
+    outer region called "Scan results" that also contained Configure, and one
+    called "Ask a question" that also contained Propose a change.
+
+    The ids resolved, so nothing was broken -- the LABELS were wrong for what
+    they wrapped. That mattered more in #284 than before it: the whole claim
+    of that change is that the four areas are the real boundaries, and a
+    parent labelled as one of its children contradicts it in exactly the
+    place the change is meant to fix.
+    """
+    assert HTML_NO_COMMENTS.count("<section") == len(AREAS), (
+        "there should be exactly one <section> per area; the columns are "
+        "plain <div> containers"
+    )
+
+
+@pytest.mark.parametrize("column", ["pane-results", "pane-chat"])
+def test_the_columns_are_divs_not_sections(column):
+    assert f'<div class="pane {column}">' in HTML_NO_COMMENTS
+
+
+def test_every_aria_label_points_inside_its_own_element():
+    """A label naming something outside the thing it labels is the bug above.
+
+    Checked structurally rather than by listing the four known-good pairs, so
+    a fifth area added later is covered on the day it lands.
+    """
+    ids = set(re.findall(r'id="([^"]+)"', HTML_NO_COMMENTS))
+    for match in re.finditer(r"<(\w+)[^>]*aria-labelledby=\"([^\"]+)\"[^>]*>", HTML_NO_COMMENTS):
+        tag, target = match.group(1), match.group(2)
+        assert target in ids, f"aria-labelledby={target!r} points at nothing"
+
+        start, depth, end = match.end(), 1, len(HTML_NO_COMMENTS)
+        for inner in re.finditer(rf"</?{tag}\b", HTML_NO_COMMENTS[start:]):
+            depth += -1 if inner.group(0).startswith("</") else 1
+            if depth == 0:
+                end = start + inner.start()
+                break
+
+        assert f'id="{target}"' in HTML_NO_COMMENTS[start:end], (
+            f"<{tag}> is labelled by {target!r}, which is not inside it"
+        )
