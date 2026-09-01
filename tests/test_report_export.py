@@ -201,6 +201,67 @@ def test_could_not_check_is_never_described_as_a_pass():
     assert "This is not a pass" in html
 
 
+def test_report_has_a_first_class_coverage_statement_even_when_complete():
+    """#235: total coverage is a statement, not an omitted section."""
+    html = report.render_html([PROBLEM, CLEAN])
+
+    assert "Coverage and certainty" in html
+    assert "Every reported check ran. Nothing was skipped." in html
+    assert "access control on rtr-us5" in html
+    assert "policy compliance on rtr-us5" in html
+
+
+def test_coverage_statement_names_every_blind_spot_with_reason_and_device():
+    """Removing the what-was-not-checked half must fail this test."""
+    routing = finding(
+        id="RT-000",
+        check="routing",
+        status="error",
+        severity="high",
+        device="core-1",
+        summary="The routing check failed to run",
+        evidence={
+            "detail": "BatfishException: Work terminated abnormally",
+            "source": "analysis/checks/routing.py",
+        },
+    )
+    policy = finding(
+        id="PC-050",
+        check="policy_compliance",
+        status="error",
+        severity="high",
+        device="pfsense-us5",
+        summary="2 policy rules could not be checked",
+        evidence={
+            "detail": "No rule matched the converted device name",
+            "source": "uploaded policy",
+        },
+    )
+
+    html = report.render_html([PROBLEM, routing, policy])
+
+    assert "2 reported check/device blind spots remain" in html
+    assert "routing</strong> on <strong>core-1</strong>" in html
+    assert "The routing check failed to run" in html
+    assert "BatfishException: Work terminated abnormally" in html
+    assert "policy compliance</strong> on <strong>pfsense-us5</strong>" in html
+    assert "2 policy rules could not be checked" in html
+    assert "No rule matched the converted device name" in html
+
+
+def test_coverage_statement_escapes_uploaded_evidence_too():
+    blind = finding(
+        status="error",
+        summary=HOSTILE,
+        evidence={"detail": HOSTILE, "source": HOSTILE},
+    )
+
+    html = report.render_html([blind])
+
+    assert "<script>" not in html
+    assert html.count("&lt;script&gt;") >= 3
+
+
 def test_problems_are_ordered_worst_first():
     low = finding(id="AC-009", severity="low", summary="low one")
     high = finding(id="AC-001", severity="high", summary="high one")

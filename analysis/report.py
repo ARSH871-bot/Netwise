@@ -46,6 +46,8 @@ import io
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
+from analysis import coverage
+
 #: Worst first, matching web/static/app.js. Duplicated deliberately rather
 #: than imported: this module must not depend on the web layer, and a
 #: renderer that silently disagreed with the screen about ordering would be
@@ -137,6 +139,14 @@ line-height:1;display:block;margin-bottom:.2rem}
 h2{font-size:1.08rem;margin:2rem 0 .3rem;padding-bottom:.35rem;border-bottom:2px solid var(--ink)}
 h2.warn{color:var(--warn);border-color:var(--warn)}
 .lede{color:var(--dim);font-size:.88rem;margin:.4rem 0 1rem}
+.coverage{border:1px solid var(--rule);border-radius:6px;padding:.85rem 1rem;
+margin:1rem 0 1.75rem;background:var(--sunk)}
+.coverage.complete{border-color:var(--good);background:var(--good-b)}
+.coverage.incomplete{border-color:var(--warn);background:var(--warn-b)}
+.coverage .statement{font-weight:650;margin:0 0 .35rem}
+.coverage ul{margin:.45rem 0 0;padding-left:1.2rem}
+.coverage li{margin:.25rem 0}
+.coverage .meta-line{font-size:.78rem;color:var(--dim)}
 .f{border:1px solid var(--rule);border-radius:6px;padding:.85rem 1rem;margin-bottom:.6rem;
 page-break-inside:avoid}
 .f.blind{background:var(--warn-b);border-color:var(--warn)}
@@ -202,6 +212,65 @@ def _section_html(title: str, lede: str, items: List[Dict], css_class: str,
     return f'{head}<p class="lede">{html.escape(lede)}</p>{body}'
 
 
+def _coverage_html(findings: Sequence[Dict[str, Any]]) -> str:
+    """The first-class coverage statement (#235), derived from status values.
+
+    It is not a fourth finding section. It is the reading aid that says whether
+    the finding sections are complete, and if not, exactly which blind spots
+    remain. Removing the gap list is the mutation #235 names: the report would
+    still have findings, but no longer name what was not checked.
+    """
+    summary = coverage.summarise(findings)
+    css = "complete" if summary["complete"] else "incomplete"
+    esc = html.escape
+
+    parts = [
+        '<h2>Coverage and certainty</h2>',
+        f'<div class="coverage {css}">',
+        f'<p class="statement">{esc(summary["statement"])}</p>',
+    ]
+
+    if summary["gaps"]:
+        parts.append("<ul>")
+        for gap in summary["gaps"]:
+            check = esc(gap["check"].replace("_", " "))
+            device = esc(gap["device"])
+            reason = esc(gap["summary"])
+            detail = esc(gap["detail"])
+            source = esc(gap["source"])
+            parts.append(
+                "<li>"
+                f"<strong>{check}</strong> on <strong>{device}</strong>: "
+                f"{reason}"
+            )
+            if detail or source:
+                bits = []
+                if detail:
+                    bits.append(detail)
+                if source:
+                    bits.append(f"source: {source}")
+                parts.append(
+                    f'<div class="meta-line">{" · ".join(bits)}</div>'
+                )
+            parts.append("</li>")
+        parts.append("</ul>")
+    elif summary["checked"]:
+        names = ", ".join(
+            f'{item["check"].replace("_", " ")} on {item["device"]}'
+            for item in summary["checked"]
+        )
+        parts.append(
+            f'<p class="meta-line">Checked: {esc(names)}.</p>'
+        )
+    else:
+        parts.append(
+            '<p class="meta-line">No checks have reported a result yet.</p>'
+        )
+
+    parts.append("</div>")
+    return "".join(parts)
+
+
 def render_html(findings: Sequence[Dict[str, Any]],
                 source: Optional[str] = None,
                 generated_at: Optional[str] = None) -> str:
@@ -248,7 +317,7 @@ def render_html(findings: Sequence[Dict[str, Any]],
         f"<h1>Netwise analysis report</h1>"
         f'<p class="meta">{html.escape(subject)} &middot; generated '
         f'{html.escape(when)}</p>'
-        f"{counts}{blind}{problems}{clean}"
+        f"{counts}{_coverage_html(findings)}{blind}{problems}{clean}"
         '<footer>Netwise analyses exported configuration files offline. It '
         'never connects to, scans, or modifies a live network. '
         '&ldquo;Could not check&rdquo; means exactly that: those checks did '
