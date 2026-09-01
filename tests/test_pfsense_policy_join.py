@@ -95,9 +95,18 @@ def _clean_state(tmp_path, monkeypatch):
     """
     snapshot = tmp_path / "current"
     (snapshot / "configs").mkdir(parents=True)
-    monkeypatch.setattr(main, "SNAPSHOT_DIR", snapshot)
-    monkeypatch.setattr(main, "CONFIGS_DIR", snapshot / "configs")
-    monkeypatch.setattr(main, "POLICY_PATH", snapshot / "policy.json")
+    # Patch the FUNCTIONS, not the old module constants. Since #242 storage
+    # is per session, so `configs_dir()` resolves through a ContextVar --
+    # setting a module attribute shadows the compatibility shim and the
+    # redirect silently does nothing, which is a fixture that appears to
+    # isolate and does not.
+    monkeypatch.setattr(main, "snapshot_dir", lambda session_id=None: snapshot)
+    monkeypatch.setattr(
+        main, "configs_dir", lambda session_id=None: snapshot / "configs"
+    )
+    monkeypatch.setattr(
+        main, "policy_path", lambda session_id=None: snapshot / "policy.json"
+    )
     monkeypatch.setattr(main, "_uploaded", False)
     if hasattr(main, "_forget_analysis"):
         main._forget_analysis()
