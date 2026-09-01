@@ -72,9 +72,16 @@ def _clean_state(tmp_path, monkeypatch):
     """
     snapshot = tmp_path / "current"
     (snapshot / "configs").mkdir(parents=True)
-    monkeypatch.setattr(main, "SNAPSHOT_DIR", snapshot)
-    monkeypatch.setattr(main, "CONFIGS_DIR", snapshot / "configs")
-    monkeypatch.setattr(main, "POLICY_PATH", snapshot / "policy.json")
+    # The functions, not the old constants -- see #242. Storage resolves
+    # per session now, so a module attribute would be shadowed and the
+    # redirect would silently do nothing.
+    monkeypatch.setattr(main, "snapshot_dir", lambda session_id=None: snapshot)
+    monkeypatch.setattr(
+        main, "configs_dir", lambda session_id=None: snapshot / "configs"
+    )
+    monkeypatch.setattr(
+        main, "policy_path", lambda session_id=None: snapshot / "policy.json"
+    )
     monkeypatch.setattr(main, "_uploaded", False)
     main._forget_analysis() if hasattr(main, "_forget_analysis") else None
     policy.clear_active_policy()

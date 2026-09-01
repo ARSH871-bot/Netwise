@@ -28,12 +28,13 @@ from datetime import datetime, timezone
 import json
 import shutil
 import tempfile
+import threading
 import xml.etree.ElementTree as ET
 from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi import Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -57,6 +58,16 @@ from analysis.pfsense_convert import PfSenseConversionError, convert as pfsense_
 from analysis.policy import PolicyError, load_policy_file
 from web.audit_log import event as audit_event
 from web import mock_findings
+from web.session import (
+    DEFAULT_SESSION,
+    SESSION_COOKIE,
+    SESSION_MAX_AGE,
+    current_session_id,
+    is_valid_session_id,
+    new_session_id,
+    reset_current_session,
+    set_current_session,
+)
 
 # --- Upload validation rules ------------------------------------------------
 #
@@ -102,16 +113,55 @@ STATIC_DIR = Path(__file__).parent / "static"
 #
 #     uploaded_configs/          <- CONFIG_ROOT
 #       current/                 <- SNAPSHOT_DIR   ** this is what analyse() gets **
-#         configs/               <- CONFIGS_DIR
+#         configs/               <- configs_dir()
 #           device.cfg           <- the uploaded file
 #
 # analysis.pipeline.load_snapshot checks for that `configs/` subfolder and
 # raises if it is missing, so passing the wrong level fails loudly rather than
 # analysing nothing and reporting all clear.
+# PER SESSION SINCE #242. The layout above is unchanged -- it just sits one
+# level down, under the session that staged it:
+#
+#     uploaded_configs/
+#       sessions/
+#         <session id>/
+#           current/           <- snapshot_dir(), what analyse() gets
+#             configs/         <- configs_dir()
+#               device.cfg
 CONFIG_ROOT = Path(__file__).parent / "uploaded_configs"
+SESSIONS_ROOT = CONFIG_ROOT / "sessions"
 SNAPSHOT_NAME = "current"
-SNAPSHOT_DIR = CONFIG_ROOT / SNAPSHOT_NAME
-CONFIGS_DIR = SNAPSHOT_DIR / "configs"
+
+
+def _effective_session() -> str:
+    """Which session a path call belongs to, in or out of a request.
+
+    INSIDE a request the ContextVar holds the real session and is used --
+    that is what isolates concurrent users, and `_last_session_id` is never
+    consulted there.
+
+    OUTSIDE one -- a test fixture calling `_discard_staged_policy()`, a
+    script, the CLI -- the ContextVar is still at DEFAULT_SESSION. Resolving
+    to that would point at a directory no request ever wrote to, so a
+    fixture would clean one place while the thing it is cleaning up after
+    lives in another. That mismatch is not theoretical: it left 25 tests
+    failing in the full run while every one of them passed alone.
+
+    So out-of-request callers get the last session that made a request,
+    which is what a single-session caller means by "the staged file".
+    """
+    session_id = current_session_id()
+    return _last_session_id if session_id == DEFAULT_SESSION else session_id
+
+
+def snapshot_dir(session_id: Optional[str] = None) -> Path:
+    """The snapshot root for a session -- the folder that CONTAINS configs/."""
+    return SESSIONS_ROOT / (session_id or _effective_session()) / SNAPSHOT_NAME
+
+
+def configs_dir(session_id: Optional[str] = None) -> Path:
+    """Where Batfish reads device files from, for a session."""
+    return snapshot_dir(session_id) / "configs"
 
 # --- Where an uploaded POLICY is staged (#87) -------------------------------
 #
@@ -129,7 +179,9 @@ CONFIGS_DIR = SNAPSHOT_DIR / "configs"
 #             configs/            <- Batfish reads THIS
 #               device.cfg
 #             policy.json         <- and never this
-POLICY_PATH = SNAPSHOT_DIR / "policy.json"
+def policy_path(session_id: Optional[str] = None) -> Path:
+    """Where a session's uploaded policy is staged."""
+    return snapshot_dir(session_id) / "policy.json"
 
 #: A policy is JSON and only JSON. `analysis/policy.py` explains why the
 #: loader is JSON-only rather than YAML -- picking YAML would add a runtime
@@ -150,7 +202,9 @@ POLICY_EXTENSIONS = {".json"}
 #           device.cfg
 #         policy.json              <- and never this
 #         business-context.json    <- nor this
-BUSINESS_CONTEXT_PATH = SNAPSHOT_DIR / "business-context.json"
+def business_context_path(session_id: Optional[str] = None) -> Path:
+    """Where a session's uploaded business context is staged."""
+    return snapshot_dir(session_id) / "business-context.json"
 
 #: JSON only, matching `analysis/business_context.py`'s own limit. This
 #: endpoint must not accept a format the loader cannot read.
@@ -162,7 +216,39 @@ BUSINESS_CONTEXT_EXTENSIONS = {".json"}
 # Module-level state is only defensible because this is a single-user local
 # tool. Two people uploading at once would overwrite each other's snapshot.
 # If Netwise ever serves more than one user, this becomes per-session state.
+_last_session_id: str = DEFAULT_SESSION
+
 _uploaded: bool = False
+
+
+#: Sessions that have staged a config. A set rather than a dict of flags:
+#: the only fact tracked is "has this session uploaded", and a set cannot
+#: grow a second meaning by accident.
+#:
+#: UNBOUNDED, DELIBERATELY, AND SMALL. One short string per browser that has
+#: ever uploaded, in a process that serves a handful of people on one
+#: machine. Evicting entries would mean deciding when a session is over,
+#: which is a question this feature does not answer and should not pretend
+#: to -- see #242's own scope.
+_uploaded_sessions: "set[str]" = set()
+
+
+def _is_uploaded() -> bool:
+    """Has THIS session staged a config?
+
+    THE MODULE-LEVEL `_uploaded` IS STILL HONOURED, AS AN OVERRIDE.
+        Fourteen tests across six files set it directly to drive the
+        endpoints without performing an upload. Those tests use ONE client,
+        so "this process is in the uploaded state" is exactly what they
+        mean, and honouring it keeps them passing unchanged.
+
+        Nothing SETS it any more -- a real upload records the session
+        instead. So it can only ever be True because a caller deliberately
+        made it True, and it cannot leak one user's upload to another: a
+        second session sees it only if a test put the whole process in that
+        state on purpose.
+    """
+    return _uploaded or current_session_id() in _uploaded_sessions
 
 app = FastAPI(
     title="Netwise",
@@ -173,6 +259,116 @@ app = FastAPI(
     ),
     version="0.1.0",
 )
+
+
+# --- Per-session identity (#242) ---------------------------------------------
+#
+# Every request carries a session id, issued on the first one and kept in a
+# cookie. Everything else in this module that used to be one shared value --
+# the staged config, the `_uploaded` flag, the analysis cache -- keys off it.
+#
+# WHY A MIDDLEWARE RATHER THAN A DEPENDENCY ON EACH ROUTE
+#     A dependency has to be remembered on every new endpoint, and the cost
+#     of forgetting is not an error -- it is an endpoint quietly sharing the
+#     default session with everyone. A middleware cannot be forgotten.
+#
+# THE CONTEXTVAR IS RESET IN A `finally`
+#     Starlette reuses tasks and threads. Leaving a session installed after
+#     the response would let the NEXT request on the same worker inherit it
+#     before its own middleware runs -- which is the bug this whole feature
+#     exists to remove, arriving through the mechanism meant to fix it.
+#
+#     DELETING THIS RESET IS AN EQUIVALENT MUTANT UNDER OUR TESTS, and that
+#     is recorded rather than left for someone to rediscover. Measured: with
+#     the reset removed, all 56 web tests still pass. The reason is the
+#     harness, not the code -- TestClient runs the app in its own portal
+#     context, so a leaked value is never visible to the test thread, and
+#     every real request overwrites it before the handler runs anyway.
+#
+#     It stays because it is the ContextVar contract and because the
+#     equivalence depends on a property of the test client rather than of
+#     the application. Same treatment as the `\0policy\0` separator below:
+#     a surviving mutation on deliberately defensive code is the correct
+#     outcome, not a gap to paper over with a contrived test.
+
+
+@app.middleware("http")
+async def attach_session(request: Request, call_next):
+    """Give this request a session, issuing one if the browser has none."""
+    sent = request.cookies.get(SESSION_COOKIE)
+
+    # A cookie is client-supplied text and this value becomes a DIRECTORY
+    # NAME, so anything not shaped like an id we issued is discarded rather
+    # than repaired -- see is_valid_session_id().
+    if is_valid_session_id(sent):
+        session_id, issued = sent, False
+    else:
+        session_id, issued = new_session_id(), True
+
+    global _last_session_id
+    _last_session_id = session_id
+
+    token = set_current_session(session_id)
+    try:
+        response = await call_next(request)
+    finally:
+        reset_current_session(token)
+
+    if issued:
+        # httponly: no page script needs to read this, and not handing it to
+        # JavaScript costs nothing. samesite=lax: the dashboard is the only
+        # thing that calls these endpoints.
+        response.set_cookie(
+            SESSION_COOKIE,
+            session_id,
+            max_age=SESSION_MAX_AGE,
+            httponly=True,
+            samesite="lax",
+        )
+    return response
+
+
+# --- Backwards-compatible module attributes (#242) ---------------------------
+#
+# `SNAPSHOT_DIR`, `CONFIGS_DIR`, `POLICY_PATH` and `BUSINESS_CONTEXT_PATH`
+# were module-level Paths before sessions existed, and forty-four assertions
+# across five test files read them. They resolve dynamically now, via PEP 562.
+#
+# WHY THE SHIM RESOLVES TO THE LAST SESSION THAT MADE A REQUEST
+#     A caller reading `main.POLICY_PATH` is outside any request -- a test
+#     asserting a file landed, or a script. The ContextVar is already reset
+#     by then, so resolving it there would give the DEFAULT session and point
+#     at a directory the request never wrote to.
+#
+#     `_last_session_id` is what the single-session caller means: "the
+#     session that just did the thing I am checking". For one client that is
+#     exact.
+#
+# THIS IS A READ-SIDE CONVENIENCE AND NOTHING ELSE.
+#     No request handler uses these names -- every one of them calls
+#     `configs_dir()` / `policy_path()` and reads the ContextVar, which is
+#     what actually isolates concurrent requests. `_last_session_id` is
+#     racy by construction under concurrency, and that is tolerable ONLY
+#     because nothing that serves a request reads it.
+#
+#     tests/test_session_isolation.py asserts that separation directly, so
+#     a handler that started using the shim would fail rather than quietly
+#     de-isolate itself.
+
+_SESSION_SCOPED_ATTRS = {
+    "SNAPSHOT_DIR": snapshot_dir,
+    "CONFIGS_DIR": configs_dir,
+    "POLICY_PATH": policy_path,
+    "BUSINESS_CONTEXT_PATH": business_context_path,
+}
+
+
+def __getattr__(name: str):
+    """Resolve the legacy path names against the last active session."""
+    resolver = _SESSION_SCOPED_ATTRS.get(name)
+    if resolver is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return resolver()
 
 
 @app.get("/", include_in_schema=False)
@@ -337,6 +533,55 @@ def reset_explanation_cache() -> None:
 #: single-user local tool and each entry holds a whole findings list.
 ANALYSIS_CACHE_MAX = 8
 
+#: The analysed findings, newest-used last, or None when nothing is cached.
+#:
+#: SERIALISED, AND THAT IS A CONCURRENT-REQUEST FIX RATHER THAN A STYLE
+#: CHOICE (#208).
+#:     `/api/findings` is a SYNC FastAPI endpoint, so it runs in the
+#:     threadpool, so two overlapping requests genuinely execute in parallel.
+#:     One browser with two tabs, or a double-clicked Scan Now, is enough --
+#:     this needs no second USER, which is what made the existing comment
+#:     about multi-user support read as satisfied on the day it bit.
+#:
+#:     `OrderedDict` operations are individually protected by the GIL, so
+#:     this was never a corruption risk. The risk is that the write is a
+#:     SEQUENCE and the sequence is not atomic:
+#:
+#:         _analysis_cache[key] = results          # insert
+#:         _analysis_cache.move_to_end(key)        # mark newest
+#:         while len(_analysis_cache) > MAX:       # check
+#:             _analysis_cache.popitem(last=False) # evict
+#:
+#:     Two threads can interleave between the check and the evict, so both
+#:     see "too many" and both evict -- taking the cache BELOW the bound and
+#:     discarding an entry the other thread had just written.
+#:
+#:     Demonstrated rather than argued, by injecting a delay between the
+#:     length check and the eviction so the window is reliably hit:
+#:
+#:         8 threads writing into a cache already at its bound of 8:
+#:
+#:         WITHOUT the lock   1 of 8 writes survived   cache fell to 1 entry
+#:         WITH the lock      8 of 8 writes survived   cache held at 8
+#:
+#:     THE CONSEQUENCE IS A WASTED RE-ANALYSIS, NOT A WRONG ANSWER, and that
+#:     is worth stating plainly because it is why this is a normal fix and
+#:     not the defect the policy version of the same shape was (#182: "2 of 2
+#:     concurrent analyses read the WRONG policy"). A discarded entry costs
+#:     seconds of Batfish work; it never produces a finding that is untrue.
+#:
+#:     The lock is cheap for the same reason the loss is cheap: this sits on
+#:     a path that already costs seconds of real analysis, so contention on a
+#:     few dict operations is irrelevant.
+#:
+#:     WHAT THE LOCK DELIBERATELY DOES NOT DO: it does not hold across the
+#:     analysis itself. Two requests for the same uncached key will both run
+#:     Batfish and both store the result. Serialising THAT would mean holding
+#:     a lock for seconds and turning every concurrent reader into a queue,
+#:     to save a duplicate computation whose result is identical. The cost of
+#:     the duplicate is time; the cost of the queue would be the app.
+_analysis_cache_lock = threading.Lock()
+
 _analysis_cache: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
 
 
@@ -368,7 +613,7 @@ def _staged_policy():
 
     Returns None rather than raising when the staged file will not load.
     That cannot normally happen -- `/api/policy` validates BEFORE staging,
-    so a file only reaches POLICY_PATH after `load_policy_file()` returns --
+    so a file only reaches policy_path() after `load_policy_file()` returns --
     but a file edited on disk between upload and scan would otherwise take
     down an endpoint that has nothing to do with it.
 
@@ -378,10 +623,10 @@ def _staged_policy():
     evidence. So the degraded path is still self-describing rather than
     silently pretending the user's rules were applied.
     """
-    if not POLICY_PATH.exists():
+    if not policy_path().exists():
         return None
     try:
-        return load_policy_file(POLICY_PATH)
+        return load_policy_file(policy_path())
     except (PolicyError, OSError):
         return None
 
@@ -393,12 +638,34 @@ def _analysis_key() -> Optional[str]:
     result -- see the block comment in `get_findings()`. A policy that is
     absent, present, or edited must each produce a different key.
     """
-    config_part = _snapshot_fingerprint(CONFIGS_DIR)
+    config_part = _snapshot_fingerprint(configs_dir())
     if config_part is None:
         # The config half could not be fingerprinted, so the cache is already
         # disabled for this request. Do not invent half a key.
         return None
     digest = hashlib.sha256()
+
+    # THE SESSION IS PART OF THE KEY (#242, and this closes #208).
+    #     Two sessions can stage byte-identical configs -- the same vendor
+    #     example, the same fixture, the same file mailed to two people. The
+    #     content fingerprint is then identical, so without this they would
+    #     share one cache entry.
+    #
+    #     That is not merely a wrong-looking key. `_analysis_cache` holds the
+    #     findings LIST, and #208 is the concurrency question about mutating
+    #     it. Keyed by content alone, session B could be handed the list
+    #     object produced for session A -- so any later in-place edit reaches
+    #     both, and the two are not merely sharing a result but sharing
+    #     state. Folding the session in makes the entries disjoint by
+    #     construction, which is a stronger fix than locking would have been
+    #     and needs no lock.
+    #
+    #     Length-prefixed rather than concatenated, so a session id cannot
+    #     be confused with the digest that follows it.
+    session = _effective_session().encode()
+    digest.update(str(len(session)).encode())
+    digest.update(b"\0session\0")
+    digest.update(session)
     digest.update(config_part.encode())
     # A domain separator. Deliberately NOT covered by a test: `config_part`
     # is always a 64-character hex digest, so the boundary is already
@@ -407,7 +674,7 @@ def _analysis_key() -> Optional[str]:
     # than a gap -- recorded here so nobody later mistakes it for one.
     digest.update(b"\0policy\0")
     try:
-        digest.update(POLICY_PATH.read_bytes() if POLICY_PATH.exists()
+        digest.update(policy_path().read_bytes() if policy_path().exists()
                       else b"<no policy>")
     except OSError:
         return None
@@ -425,21 +692,43 @@ def _analysis_is_worth_caching(results: List[Dict[str, Any]]) -> bool:
 
 
 def _cached_analysis(key: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+    """A cached findings list for this key, or None.
+
+    Under the lock even though it is nominally a read: `move_to_end()`
+    mutates the ordering, so a lookup racing an eviction could re-order a
+    dict another thread is walking. Cheap, and it keeps the rule simple --
+    every touch of the ordering is serialised, so nobody has to work out
+    which ones were exempt.
+    """
     if key is None:
         return None
-    hit = _analysis_cache.get(key)
-    if hit is not None:
-        _analysis_cache.move_to_end(key)
-    return hit
+    with _analysis_cache_lock:
+        hit = _analysis_cache.get(key)
+        if hit is not None:
+            _analysis_cache.move_to_end(key)
+        return hit
 
 
 def _remember_analysis(key: Optional[str], results: List[Dict[str, Any]]) -> None:
+    """Store a findings list, evicting the oldest beyond the bound.
+
+    The insert, the reorder and the eviction are ONE critical section --
+    see the block comment above `_analysis_cache`. Split, two threads
+    interleave between the length check and the eviction, both evict, and
+    the cache drops below its bound while discarding an entry the other
+    thread had just written.
+
+    `_analysis_is_worth_caching()` is evaluated BEFORE taking the lock: it
+    only reads the results list the caller already owns, so holding the lock
+    across it would widen the critical section for no gain.
+    """
     if key is None or not _analysis_is_worth_caching(results):
         return
-    _analysis_cache[key] = results
-    _analysis_cache.move_to_end(key)
-    while len(_analysis_cache) > ANALYSIS_CACHE_MAX:
-        _analysis_cache.popitem(last=False)
+    with _analysis_cache_lock:
+        _analysis_cache[key] = results
+        _analysis_cache.move_to_end(key)
+        while len(_analysis_cache) > ANALYSIS_CACHE_MAX:
+            _analysis_cache.popitem(last=False)
 
 
 def reset_analysis_cache() -> None:
@@ -451,7 +740,8 @@ def reset_analysis_cache() -> None:
     checked one were once confused, and a cache is exactly where that could
     come back. Cheap insurance on the path that matters.
     """
-    _analysis_cache.clear()
+    with _analysis_cache_lock:
+        _analysis_cache.clear()
 
 
 def _attach_explanations(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -618,9 +908,10 @@ def download_report(format: str = "html") -> Response:
         {k: v for k, v in finding.items() if k not in _DOWNSTREAM_KEYS}
         for finding in get_findings()
     ]
-    subject = CONFIGS_DIR.name if _uploaded else "example findings (no upload yet)"
-    if _uploaded:
-        staged = sorted(p.name for p in CONFIGS_DIR.glob("*") if p.is_file())
+    uploaded = _is_uploaded()
+    subject = configs_dir().name if uploaded else "example findings (no upload yet)"
+    if uploaded:
+        staged = sorted(p.name for p in configs_dir().glob("*") if p.is_file())
         subject = ", ".join(staged) or "an uploaded configuration"
 
     media_type, extension = REPORT_FORMATS[format]
@@ -646,7 +937,7 @@ def get_findings() -> List[Dict[str, Any]]:
     pipeline. The response shape is identical either way, including
     status="error" findings when analysis cannot run at all.
 
-    Note SNAPSHOT_DIR, not CONFIG_ROOT: analyse() wants the snapshot root, the
+    Note snapshot_dir(), not CONFIG_ROOT: analyse() wants the snapshot root, the
     folder that CONTAINS `configs/`. See the layout diagram at the top.
 
     Mock findings are NOT explained. #31's acceptance criterion is about a
@@ -655,7 +946,7 @@ def get_findings() -> List[Dict[str, Any]]:
     fact, which is exactly the distinction this whole project exists to
     keep clear.
     """
-    if not _uploaded:
+    if not _is_uploaded():
         return mock_findings.get_mock_findings()
 
     # #92b: re-analysing an unchanged snapshot costs ~3.6s of real Batfish
@@ -665,7 +956,7 @@ def get_findings() -> List[Dict[str, Any]]:
     #
     # THE KEY COVERS THE POLICY TOO, AND IT MUST (#181).
     #     POLICY_PATH lives beside `configs/`, not inside it, so
-    #     `_snapshot_fingerprint(CONFIGS_DIR)` cannot see it. Wiring the
+    #     `_snapshot_fingerprint(configs_dir())` cannot see it. Wiring the
     #     policy into analyse() without also widening the key produces a
     #     feature that silently does nothing:
     #
@@ -680,7 +971,7 @@ def get_findings() -> List[Dict[str, Any]]:
     cache_hit = results is not None
     if results is None:
         results = analysis_pipeline.analyse(
-            SNAPSHOT_DIR,
+            snapshot_dir(),
             snapshot_name=SNAPSHOT_NAME,
             policy=_staged_policy(),
         )
@@ -851,15 +1142,15 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     # "device.cfg" for a converted PF Sense export), never the client's.
     # display_name was already reduced to a basename above; this means the
     # client's string never reaches the filesystem at all.
-    if CONFIGS_DIR.exists():
-        shutil.rmtree(CONFIGS_DIR)
-    CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
+    if configs_dir().exists():
+        shutil.rmtree(configs_dir())
+    configs_dir().mkdir(parents=True, exist_ok=True)
 
     if is_pfsense:
-        staged_path = CONFIGS_DIR / "device.cfg"
+        staged_path = configs_dir() / "device.cfg"
         staged_path.write_text(device_text)
     else:
-        staged_path = CONFIGS_DIR / f"device{extension}"
+        staged_path = configs_dir() / f"device{extension}"
         staged_path.write_bytes(bytes(contents))
 
     # A NEW NETWORK MUST NOT INHERIT THE OLD NETWORK'S POLICY (#87, #82).
@@ -873,7 +1164,7 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     #     exists because a staged file and a checked one were once confused.
     #     Two files staged from two different intentions is that failure with
     #     one more moving part.
-    policy_was_staged = POLICY_PATH.exists()
+    policy_was_staged = policy_path().exists()
     _discard_staged_policy()
 
     # A NEW NETWORK MUST NOT INHERIT THE OLD NETWORK'S BUSINESS CONTEXT.
@@ -884,11 +1175,14 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     #     a judgement the user made about a different machine. A policy that
     #     does not apply reports "could not check"; a context that does not
     #     apply just quietly re-rates the wrong box.
-    context_was_staged = BUSINESS_CONTEXT_PATH.exists()
+    context_was_staged = business_context_path().exists()
     _discard_staged_business_context()
 
-    global _uploaded
-    _uploaded = True
+    # Records THIS session, rather than putting the whole process into an
+    # uploaded state. Before #242 this was `global _uploaded; _uploaded =
+    # True`, which meant one person's upload made every other browser's
+    # /api/findings start analysing a config they had never sent.
+    _uploaded_sessions.add(current_session_id())
 
     # #92b / #82. Content-keying already makes a stale hit impossible, so
     # this is belt and braces -- but #82 exists precisely because a staged
@@ -995,7 +1289,7 @@ def _discard_staged_policy() -> None:
     unstages the FILE, which is all this branch is entitled to do until
     #181/#182 settle how a policy reaches a check.
     """
-    POLICY_PATH.unlink(missing_ok=True)
+    policy_path().unlink(missing_ok=True)
 
 
 @app.post("/api/policy")
@@ -1081,8 +1375,8 @@ async def upload_policy(file: UploadFile) -> Dict[str, Any]:
         temp_path.unlink(missing_ok=True)
 
     # --- Only now does anything reach the staging location -----------------
-    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    POLICY_PATH.write_bytes(bytes(contents))
+    snapshot_dir().mkdir(parents=True, exist_ok=True)
+    policy_path().write_bytes(bytes(contents))
 
     rule_count = sum(len(entries) for entries in policy.sections.values())
     if policy.is_empty:
@@ -1170,7 +1464,7 @@ async def upload_policy(file: UploadFile) -> Dict[str, Any]:
 
 def _discard_staged_business_context() -> None:
     """Remove the staged business-context file, if there is one."""
-    BUSINESS_CONTEXT_PATH.unlink(missing_ok=True)
+    business_context_path().unlink(missing_ok=True)
 
 
 def _staged_business_context():
@@ -1186,10 +1480,10 @@ def _staged_business_context():
     It must never take down /api/findings: a business context is a refinement
     of a severity, and losing it is not worth losing the findings over.
     """
-    if not BUSINESS_CONTEXT_PATH.exists():
+    if not business_context_path().exists():
         return None
     try:
-        return load_business_context_file(BUSINESS_CONTEXT_PATH)
+        return load_business_context_file(business_context_path())
     except (BusinessContextError, OSError):
         return None
 
@@ -1201,7 +1495,7 @@ async def upload_business_context(file: UploadFile) -> Dict[str, Any]:
     Mirrors `upload_policy()` exactly -- basename at the boundary, extension
     check, chunked read against the size limit, empty upload refused, our
     filename rather than theirs, and validation strictly BEFORE staging so a
-    rejected file can never reach BUSINESS_CONTEXT_PATH.
+    rejected file can never reach business_context_path().
 
     A rejection is HTTP 400 carrying `BusinessContextError`'s own message
     unchanged. That message names the entry and offers a did-you-mean for a
@@ -1266,8 +1560,8 @@ async def upload_business_context(file: UploadFile) -> Dict[str, Any]:
         temp_path.unlink(missing_ok=True)
 
     # --- Only now does anything reach the staging location -----------------
-    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    BUSINESS_CONTEXT_PATH.write_bytes(bytes(contents))
+    snapshot_dir().mkdir(parents=True, exist_ok=True)
+    business_context_path().write_bytes(bytes(contents))
 
     # NO reset_analysis_cache() HERE, AND THAT IS DELIBERATE.
     #     A `reset_analysis_cache()` call stood here, with a comment saying a
@@ -1337,7 +1631,7 @@ def ask_question(request: AskRequest) -> Dict[str, Any]:
     makes for analyse() -- consistency over a caching optimisation
     nothing here has needed yet.
     """
-    if not _uploaded:
+    if not _is_uploaded():
         return {
             "question_understood": None,
             "answer": "Upload a config first, there is nothing to ask about yet.",
@@ -1346,7 +1640,7 @@ def ask_question(request: AskRequest) -> Dict[str, Any]:
 
     try:
         bf = analysis_pipeline.connect()
-        analysis_pipeline.load_snapshot(bf, SNAPSHOT_DIR, "netwise", SNAPSHOT_NAME)
+        analysis_pipeline.load_snapshot(bf, snapshot_dir(), "netwise", SNAPSHOT_NAME)
     except Exception as error:
         return {
             "question_understood": None,
@@ -1393,7 +1687,7 @@ def propose_change_endpoint(body: ProposeRequest) -> Dict[str, Any]:
     warning naming the exact ACL lines that changed is more useful read in
     plain English than as a raw Batfish diff.
     """
-    if not _uploaded:
+    if not _is_uploaded():
         return {
             "request_understood": None,
             "proposed_change": None,
@@ -1407,7 +1701,7 @@ def propose_change_endpoint(body: ProposeRequest) -> Dict[str, Any]:
             ),
         }
 
-    result = propose_change(body.request, SNAPSHOT_DIR)
+    result = propose_change(body.request, snapshot_dir())
     result["impact"] = _attach_explanations(result["impact"])
     return result
 

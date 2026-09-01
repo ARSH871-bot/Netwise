@@ -944,6 +944,24 @@ body {
   color: var(--ink-soft);
 }
 
+/* --- Filter by device (#219) --------------------------------------------
+   QUIET BY DESIGN. This is a view control, not an action -- it changes what
+   you are looking at and never what the analysis found. So it reads as a
+   label with a selector rather than as a button competing with Scan Now.
+
+   `[hidden]` is honoured explicitly because `display: flex` below would
+   otherwise beat the attribute's default `display: none`, and the control
+   would stay visible on a single-device scan -- the one case it is meant to
+   disappear for. */
+.device-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.9rem 0 0.2rem;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
 .report-link {
   font: inherit;
   font-size: 0.82rem;
@@ -971,4 +989,46 @@ body {
 
 #report-hint {
   margin-top: 0.35rem;
+}
+
+.device-filter[hidden] {
+  display: none;
+}
+
+.device-filter select {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper, #fff);
+  color: var(--ink);
+}
+
+/* --- What the device filter is hiding (#219) -----------------------------
+   The summary tiles count what is in front of the reader. They cannot count
+   what a filter has removed, so this says it in words.
+
+   Amber ONLY when a could-not-check finding is among the hidden. If the
+   notice were always amber the colour would come to mean "a filter is on"
+   rather than "something is not known", which is the meaning it carries
+   everywhere else in this file. */
+.filter-notice {
+  margin: 0.5rem 0 0;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.82rem;
+  border-radius: 6px;
+  background: var(--sunk, #f4f5f7);
+  color: var(--ink-soft);
+}
+
+.filter-notice[hidden] {
+  display: none;
+}
+
+.filter-notice.blind {
+  background: var(--blind-fill);
+  color: var(--blind-ink);
+  border: 1px solid var(--blind);
+  font-weight: 600;
 }

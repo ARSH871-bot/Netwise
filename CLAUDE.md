@@ -301,24 +301,55 @@ them and they describe nobody's real network. Real configs stay in the ignored
 in `CHECKS`. See `docs/design/pipeline-feature-shapes.md`.
 
 CI (`.github/workflows/tests.yml`) runs the suite on every pull request, on
-Python 3.12 and 3.13. **It does not block a merge today, and that is now a
-choice rather than a limitation.** Branch protection needs GitHub Pro or a
-public repo — and this repository is public, so every setting is available to
-us, free. Measured 27 August:
+Python 3.12 and 3.13. **It does not block a merge today.** Branch protection
+needs GitHub Pro or a public repo, so whether it is a *choice* or a
+*limitation* depends on the repository's visibility at the time — and that has
+changed twice.
+
+**Do not read visibility from this file. Ask the API:**
+
+```bash
+gh api repos/ARSH871-bot/Netwise --jq '.private, .visibility'
+gh api repos/ARSH871-bot/Netwise/branches/main/protection
+```
+
+Two dated measurements, kept as history rather than as a current claim:
 
 ```
-private    : False
-visibility : public
-GET /repos/ARSH871-bot/Netwise/branches/main/protection
-   -> {"message":"Branch not protected"}
+27 August    private: false   visibility: public
+             protection -> {"message":"Branch not protected"}
+             i.e. available and simply not switched on
+
+31 August    private: true    visibility: private   (deliberate, temporary)
+             protection -> 403 "Upgrade to GitHub Pro or make this
+             repository public to enable this feature"
 ```
 
-So a red cross is a signal rather than a gate **because nobody has turned the
-gate on**, not because we cannot. What to enable is #245, and the measurement
-there is worth reading before assuming the answer is "all of it": across 45
-PRs merged since 20 August, requiring a review would have blocked **none**,
-and `dismiss_stale_reviews` would **contradict** M-2 rule 2 by voiding an
-approval on a merge-only push.
+**The present-tense sentence that used to sit here — "this repository is
+public, so every setting is available to us, free" — was true when #246 wrote
+it and false four days later.** Nobody made a mistake; the world moved. The
+lesson is not "check harder", it is that **a fact which can change underneath a
+document should not be stated in the present tense in one.** The dated block
+above degrades into history; the sentence degraded into a falsehood.
+
+A red cross is therefore a signal rather than a gate. **Why** it is not a gate
+depends on the visibility above: on 27 August it was available and switched
+off; on 31 August it is unavailable. #245 is the decision about what to enable,
+and it can only be *acted on* while the repository is public — so it is
+paused rather than answered whenever it is not.
+
+The measurement on #245 is worth reading before assuming the answer is "all of
+it": across 45 PRs merged since 20 August, requiring a review would have
+blocked **none**, and `dismiss_stale_reviews` would **contradict** M-2 rule 2
+by voiding an approval on a merge-only push.
+
+> **M-2 IS CITED HERE AS SETTLED AND IS NOT.** Read from `CONTRIBUTING.md`'s
+> own table on 31 August: `Shubham ✅, Arsh ⬜, Ankeet ⬜, Samika ⬜` — **one of
+> four**, with #252 taking it to two once merged. The argument above about
+> `dismiss_stale_reviews` still holds on its merits, but it leans on an
+> amendment three of us have not signed, and this project has been quoting
+> M-2's three rules in reviews and merges all week. Same shape as A-2 below,
+> caught the same day. Deciding it is #252's thread.
 
 ## 7c. Asking questions (US-11) — the other direction, and why it refuses
 
@@ -457,7 +488,7 @@ format, to the screen. This replaced the earlier engine/frontend split.
 | **Shubham** | Policy-compliance + change-impact analysis |
 | **Samika** | Risk prioritisation + the interface + secure upload |
 
-## 11. Status — last updated 2026-08-28
+## 11. Status — last updated 2026-08-31
 
 > **⚠️ This section goes stale faster than anything else in the file.** It has
 > been wrong about `main` repeatedly, in both directions — claiming work that
@@ -517,6 +548,32 @@ batch only after the combination was tested locally: each had a green tick
 earned against a different `main`, which is precisely the §5a rule 3a case
 that produced two red `main`s in two days.
 
+**Twelve more landed between 28 and 31 August**, taking `main` from 702 to 987
+tests: #246, #251, #181, #233, #253, #257 (28th), then #254, #202, #259, #248,
+#260, #261 (30th). Seven were Arsh's, three Shubham's, two Samika's. Each batch
+was merged only after the *combination* was tested locally, and that mattered
+twice: #254 landed mid-session and moved `main` under a batch that had been
+tested against the commit before it — so the remaining PRs were re-tested on
+the new `main` before merging, because #254 touched `web/main.py` and so did
+#260.
+
+**Two lessons from that stretch are worth more than the merges.**
+
+*A test can pin a lie in place.* #260 fixed a message that told the user their
+policy was "not yet applied" while the next click applied it — #181 had landed
+that morning and the sentence did not move. It survived because **two tests
+asserted the false wording**, and one of them compared a harness to its own
+fixture, so it would have passed against a frontend that ignored the server
+entirely. The mechanism that should have objected was holding it in place.
+
+*A generated document goes stale from the merge queue, not from neglect.*
+#202's `docs/traceability.md` landed claiming 833 tests; `main` collected 995
+the same evening. Nobody forgot — four PRs merged between the regeneration and
+the merge button. The CI check proposed for it ("fail if it differs on anything
+but the SHA line") would be **permanently red**, because every feature row
+carries per-file test counts. Tracked as **#267**, with four options and none
+of them free.
+
 **Releases exist now**, for the first time. `v0.1.0`, `v0.2.0` and `v0.3.0` were
 tagged retroactively on 13 August, each on the last commit of that sprint's
 *work* per `CONTRIBUTING.md` §5b, verified with the ancestry check the section
@@ -545,6 +602,8 @@ project's recurring failure family arriving through process rather than code.
 | **The AI byline tells the truth** | Samika | Done (#109, closed) — `app.js` branches on `explanation_source === "model"`, and `style.css` gives fallback text its own byline, *"Plain-English summary"*, in neutral grey rather than the violet reserved for model output. Written `=== "model"` so an absent or unexpected value claims LESS, never more |
 | **Findings that can leave the screen** | Arsh | Done (#233, merged 28 August) — `analysis/report.py`, `/api/report?format=html\|csv`. Pure function, no web import; "could not check" is rendered FIRST and is present even when empty |
 | **Propose-a-change, on screen** | Samika | Done (#253, merged 28 August) — the propose pane calls `/api/propose`. Grammar is `block <src> to <dst> on <proto>/<port> on <device>`; anything else is refused with a reason rather than guessed |
+| **Business-context risk scoring** | Samika | Done (#254, merged 30 August) — `analysis/business_context.py`, `/api/business-context`, tiers `critical`/`important`/`standard`. Marking a device critical escalates its findings: measured on `rtr-us5-insecure`, `{high: 4, medium: 1}` → `{high: 5}`. An **unknown key is an error, never ignored** — silently dropping a key the user set is F-4 arriving through the input rather than the output |
+| **A check says when it ignored your policy** | Shubham | Done (#261, merged 30 August, closing #196) — supply rules for a check that does not read a policy and you now get `AC-005 [error] "1 supplied rule(s) for this check were not read"` instead of our device names in a message about your rules. It does not make those checks read the policy; it stops them lying about why they did not |
 | Test suite | team | Needs neither Batfish nor Ollama. For the count, run it — a number written here rots the next time anyone adds a test |
 
 **All five features are now on `main` together**, which first became true on
@@ -555,7 +614,7 @@ project's recurring failure family arriving through process rather than code.
 | Piece | Owner | Note |
 |---|---|---|
 | **A way for the user to state their own policy** | unassigned | **Still the biggest gap, but no longer total** (#87). `policy_compliance` reads a user policy since #181 (28 August); `access_control` and `routing` do not, so two of three checks remain hardcoded to our fixtures. See below for the measurement |
-| **Two of three checks ignore a user policy** | unassigned | The remainder of #87. `access_control` and `routing` still name `rtr-us5` and `rtr-hq`/`rtr-branch` regardless of what the user supplies |
+| **Two of three checks ignore a user policy** | unassigned | The remainder of #87. `access_control` and `routing` still name `rtr-us5` and `rtr-hq`/`rtr-branch` regardless of what the user supplies. **Since #261 they say so** — `AC-005 [error] "1 supplied rule(s) for this check were not read"` — which makes the gap visible rather than smaller. Being told you are not covered is not the same as being covered |
 
 **The policy is ours, not the user's — but one check now takes theirs.**
 `access_control` and `policy_compliance` name `rtr-us5`; `routing` names
@@ -619,6 +678,30 @@ block — this paragraph exists because the stale 20 was nearly copied onward
 into `README.md` from here.
 
 **Policy-driven detections on a network that is not ours: 3 → 8.**
+
+**And the client's own vendor now produces a real finding, which it never had
+before (#216, closed 31 August).** A converted PF Sense export used to report
+three "could not check" cards and nothing else, because our rules name
+`rtr-us5` and the converter emits `pfsense-us5` — those never meet. Measured
+end to end through the real endpoints against real Batfish:
+
+```
+PF Sense, no policy of the user's own     3 could-not-check, 0 findings
+PF Sense, a policy naming pfsense-us5     2 could-not-check, 1 finding
+
+PC-001  found  high  The LAN can reach the internal server
+        device     pfsense-us5
+        detail     Flow start=pfsense-us5 [10.10.10.0:49152->10.20.0.5:443
+                   TCP (SYN)] is permitted but policy requires it to be DENIED
+        explained  yes (model)
+```
+
+**Nothing in the suite protected that join.** Of the six test modules
+mentioning PF Sense, zero mentioned a policy; of the policy modules, zero
+mentioned PF Sense. Both halves were tested and the join between them was not,
+so a change to the converter's device naming would have returned the client's
+firewall to producing nothing with every test still green.
+`tests/test_pfsense_policy_join.py` pins it.
 
 **What is still missing.** `access_control` and `routing` still ignore a
 supplied policy. So the gap is narrowed for one check, not closed.
@@ -711,11 +794,33 @@ Nothing in Layer 1 or 2 is now unjoined. What remains is features, not plumbing.
   because "agreed" should be a fact anyone can check rather than something
   inferred from a merge. This closes the last outstanding piece of the shapes
   decision.
-- **F-1 amendment A-2 — RATIFIED by all four** (#102, raised and written by
-  Shubham on day 1 of Sprint 4). `change_impact` moves from the `PC-` prefix to
-  its own **`CH-`**, so `id` uniqueness *across* checks is now structural rather
-  than a convention split over two documents. Done before the code existed, so
-  no finding changed id — free now, a migration later.
+- **F-1 amendment A-2 — agreed by THREE of four, not ratified** (#102, raised
+  and written by Shubham on day 1 of Sprint 4). `change_impact` moves from the
+  `PC-` prefix to its own **`CH-`**, so `id` uniqueness *across* checks is now
+  structural rather than a convention split over two documents. Done before the
+  code existed, so no finding changed id — free now, a migration later.
+
+  **This entry said "RATIFIED by all four" until 31 August, and it was wrong.**
+  Read from the authoritative file rather than remembered:
+
+  ```
+  docs/finding-format.md, A-2 table
+      Shubham  ✅    Arsh  ✅    Samika  ✅    Ankeet  ⬜      3 of 4
+  ```
+
+  §7a of this file says `docs/finding-format.md` is authoritative, so this copy
+  was the wrong one — and it is the copy people read for status. **A false
+  claim about a CONTRACT RATIFICATION is the worst place this project's
+  recurring fault has landed**: it sits under "Settled — do not reopen without
+  the team", which is precisely the heading that stops anyone checking.
+
+  Worse, it is the same failure A-2's own note in `finding-format.md` regrets.
+  That note records that A-2's *code* merged on 13 August while the table was
+  incomplete; this entry then reported the table as complete. One document out,
+  and the regret became the claim.
+
+  **Ankeet's tick is still outstanding**, and nothing notified him — which is
+  #231. The code has been on `main` since 13 August regardless.
 
   **The duplicate-`id` guard stays, and deleting it would be a mistake.** A
   distinct prefix removes that particular pair; uniqueness *within* one check is
