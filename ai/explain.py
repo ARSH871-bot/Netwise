@@ -15,6 +15,12 @@ WHAT THIS DOES
     absent. explain() is unchanged and still the right choice for a caller
     that only wants the text.
 
+    remediate_with_source(finding: dict) -> Optional[tuple[str, str]]
+    A DIFFERENT question -- not "what does this finding mean" but "what
+    would fix it" (#221). Deliberately narrower than explain(): it never
+    calls the model, and returns None rather than a fallback string when it
+    has nothing confident to say. See section 1d below for why.
+
 TWO DIFFERENT KINDS OF MISTAKE, TWO DIFFERENT FIXES
     Testing against real findings from the pipeline (see ai/Modelfile's
     commit history) turned up two genuinely different failure modes, and
@@ -302,6 +308,172 @@ def _compute_expected_actual_outcome(detail: str) -> Optional[str]:
         f"requires {expected}. The device configuration is what disagrees "
         f"with the requirement, not the requirement itself."
     )
+
+
+# ------------------------------------------------------------------------------
+# 1d. Deterministic remediation text (#221)
+#
+# A DIFFERENT QUESTION FROM SECTIONS 1a-1c ABOVE
+#     Those three compute what a finding MEANS, to correct the model's
+#     wording before it speaks. This computes what would FIX it, and never
+#     goes near the model at all -- ai/Modelfile rule 6 explicitly forbids
+#     recommending a fix "unless the evidence itself states what would
+#     resolve it," and that is exactly the boundary kept here: every string
+#     below is built only from a regex-captured piece of evidence.detail
+#     that the check itself already produced, never invented or inferred.
+#
+# WHY THIS IS A SEPARATE FUNCTION FAMILY, NOT MORE ARGUMENTS TO explain()
+#     Remediation and explanation are different claims ("here is what is
+#     wrong" vs. "here is what to change") and #109/#236 already established
+#     that this project keeps different claims honestly separate rather than
+#     blending them under one byline. See web/main.py's _attach_remediation()
+#     and web/static/app.js's remediation render branch for the other two
+#     places this same separation is kept.
+#
+# COVERAGE, MEASURED NOT ASSUMED
+#     Checked against this project's own fixtures before writing this:
+#
+#         rtr-us5-insecure: 4/5 found-status findings match a known shape
+#         rtr-us5-messy:    5/6 found-status findings match a known shape
+#
+#     The misses are informative, not a gap to force-fix. A GUARANTEES/
+#     searchFilters proof (access_control's "Example permitted flow: ...")
+#     has no single "decided by" line to name -- it proves a property over a
+#     whole space of traffic, not one flow's fate. An undefined-reference
+#     finding ("the structure 'acl_guest_in' is never defined") needs a
+#     different kind of guidance entirely ("define the missing structure",
+#     not "change this rule"). Both correctly return None below rather than
+#     stretching a shape to cover them.
+# ------------------------------------------------------------------------------
+
+# Deliberately a SEPARATE pattern from _POLICY_DETAIL_PATTERN above, rather
+# than adding a capturing group to it. That pattern is already relied on by
+# _compute_policy_outcome() and its own tests; giving remediation its own
+# pattern means neither function's correctness depends on the other's shape
+# staying exactly as it is today.
+#
+# Captures the deciding line up to whichever comes first: a trailing
+# "(N example flows matched)" note (policy_compliance.py appends this when
+# more than one flow matches the same line) or a "[Rules checked: ...]"
+# provenance note (added when a user policy is supplied), or end of string.
+# Verified against real evidence.detail carrying both suffixes separately --
+# without this, a two-flow finding named the rule as
+# "permit ip any any (2 example flows matched)", folding a flow COUNT into
+# what is supposed to be a copyable RULE.
+_POLICY_REMEDIATION_PATTERN = re.compile(
+    r"is (?P<wrong>permitted|denied) but policy requires it to be "
+    r"(?P<required>DENIED|PERMITTED)\. Decided by: (?P<deciding>.+?)"
+    r"(?:\s*\(\d+ example flows? matched\)|\s*\[|$)"
+)
+
+# Same reasoning: a separate pattern from _EXPECTED_ACTUAL_DETAIL_PATTERN,
+# capturing the deciding line this shape's own function does not need.
+_EXPECTED_ACTUAL_REMEDIATION_PATTERN = re.compile(
+    r"Expected (?P<expected>PERMIT|DENY) but got (?P<actual>PERMIT|DENY), "
+    r"decided by: (?P<deciding>.+?)(?:\s*\[|$)"
+)
+
+
+def _remediate_dead_rule(detail: str) -> Optional[str]:
+    """Which line to change, for a dead-ACL-rule finding, or None.
+
+    Reuses _DEAD_RULE_DETAIL_PATTERN exactly -- same match, same ambiguity
+    guard (multiple disagreeing blocking lines means "do not name one",
+    same as _compute_dead_rule_outcome()) -- because the "blocking" group it
+    already captures is exactly the line remediation needs to name. Two
+    functions reading one pattern is not duplication; writing a second,
+    subtly different pattern for the same text would be.
+    """
+    match = _DEAD_RULE_DETAIL_PATTERN.search(detail)
+    if not match:
+        return None
+
+    blocking_lines = [line.strip() for line in match.group("blocking").split(",")]
+    if len(blocking_lines) != 1:
+        # Same guard as _compute_dead_rule_outcome(): more than one blocking
+        # line means there is no single line to point at as THE fix.
+        return None
+
+    return (
+        f"Reorder or remove the rule that shadows it: `{blocking_lines[0]}` is "
+        f"evaluated first and decides this traffic instead. Moving the "
+        f"unreachable line above it, or removing the shadowing rule if it is "
+        f"no longer needed, would let the unreachable line's own action "
+        f"take effect."
+    )
+
+
+def _remediate_policy_mismatch(detail: str) -> Optional[str]:
+    """Which side to change, for a policy_compliance finding, or None."""
+    match = _POLICY_REMEDIATION_PATTERN.search(detail)
+    if not match:
+        return None
+
+    required = match.group("required")
+    deciding = match.group("deciding").strip()
+    return (
+        f"Change the device's configuration, not the policy: the rule "
+        f"`{deciding}` is what is deciding this traffic today, and the "
+        f"written policy already says it should be {required}. Adjusting or "
+        f"removing that rule so the device agrees with the policy is the fix "
+        f"-- the policy is not what needs to change here."
+    )
+
+
+def _remediate_expected_actual(detail: str) -> Optional[str]:
+    """Which line to change, for an access_control policy-statement
+    finding, or None."""
+    match = _EXPECTED_ACTUAL_REMEDIATION_PATTERN.search(detail)
+    if not match:
+        return None
+
+    expected = match.group("expected")
+    deciding = match.group("deciding").strip()
+    return (
+        f"The rule `{deciding}` is what decides this today. Changing it so "
+        f"the outcome is {expected} instead -- reordering it relative to "
+        f"other rules, or editing its action -- is what this statement "
+        f"needs to hold."
+    )
+
+
+def remediate_with_source(finding: Dict[str, Any]) -> Optional["tuple[str, str]"]:
+    """(text, "deterministic") if a known evidence shape matched, else None.
+
+    DELIBERATELY None, NOT A FALLBACK STRING
+        explain() always has something to say -- worst case, the finding's
+        own summary and detail, restated (_fallback_plain_restatement()).
+        There is no equivalent honest fallback for remediation: "we do not
+        know what to tell you to change" is not useful prose, and inventing
+        one would be a guess dressed as guidance. So the three shapes below
+        either match exactly or this returns None, and the caller (see
+        web/main.py's _attach_remediation()) shows a plain "no mechanical
+        remediation available" state rather than manufacturing text.
+
+    "deterministic" AS THE SOURCE LABEL, NOT "model"/"fallback"
+        Those two values describe explain()'s two paths -- a model spoke, or
+        a template did when it could not. Neither describes this: no model
+        is ever consulted here, by design (see the section-1d banner
+        comment above), so the label says so plainly rather than reusing a
+        vocabulary built for a different distinction.
+
+    Never raises. Each of the three shape-functions below either matches an
+    exact regex or returns None; there is no code path that can throw on a
+    malformed `finding`, same guarantee `_evidence_detail()` already gives
+    the rest of this module.
+    """
+    detail = _evidence_detail(finding)
+    if not detail:
+        return None
+
+    text = (
+        _remediate_dead_rule(detail)
+        or _remediate_policy_mismatch(detail)
+        or _remediate_expected_actual(detail)
+    )
+    if text is None:
+        return None
+    return (text, "deterministic")
 
 
 # ------------------------------------------------------------------------------

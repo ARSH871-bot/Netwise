@@ -40,7 +40,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from ai.explain import explain_with_source
+from ai.explain import explain_with_source, remediate_with_source
 from ai.propose import propose_change
 from ai.query import answer_question
 from analysis import findings, pipeline as analysis_pipeline, report
@@ -429,7 +429,12 @@ _explanation_cache: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
 #: Everything else in the dict participates, including fields F-1 does not
 #: have yet -- a narrower allow-list would silently stop distinguishing
 #: findings the day the contract is amended.
-_DOWNSTREAM_KEYS = ("explanation", "explanation_source")
+#:
+#: "remediation"/"remediation_source" (#221) are here too, even though
+#: _attach_remediation() has no cache of its own to key -- this list is also
+#: what download_report() strips before rendering (see the block comment
+#: above REPORT_FORMATS), and that exclusion applies to both pairs equally.
+_DOWNSTREAM_KEYS = ("explanation", "explanation_source", "remediation", "remediation_source")
 
 
 def _finding_fingerprint(finding: Dict[str, Any]) -> str:
@@ -844,6 +849,67 @@ def _attach_explanations(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return attached
 
 
+def _attach_remediation(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Attach deterministic remediation text to every status="found"
+    finding whose evidence matches a known shape (#221).
+
+    SAME SHAPE AS _attach_explanations() ABOVE, ON PURPOSE, WITH ONE
+    DELIBERATE DIFFERENCE
+        "remediation" and "remediation_source" are extra keys added
+        downstream of F-1 validation, exactly like "explanation" and
+        "explanation_source" -- same reasoning, same CLAUDE.md section 7a
+        constraint on the contract itself. Only status="found" findings get
+        one, for the same reason: "none" has nothing to remediate, "error"
+        has no real Batfish output to ground anything in. Each finding is
+        shallow-copied before the key is added and a new list is returned,
+        so the cached analyse() result this function may be called against
+        is never mutated -- see #92b's note on _attach_explanations() for
+        why that stopped being optional the moment a cache existed.
+
+        The difference: NO CACHE. _attach_explanations() caches because a
+        MODEL call is slow enough to be worth avoiding twice
+        (ai/explain.py's own docstring measures this). remediate_with_source()
+        never calls the model -- it is regex matching over a string, on the
+        order of microseconds -- so a cache here would add a second piece of
+        state to reason about for a computation cheap enough to just repeat.
+        If that assumption ever stops holding (a future remediation shape
+        that IS expensive to compute), add one then, mirroring
+        _finding_fingerprint()/_cached_explanation()/_remember_explanation()
+        exactly rather than inventing a second scheme.
+
+    remediate_with_source() ALREADY RETURNS None RATHER THAN RAISING when no
+    shape matches or `finding` is malformed (see its own docstring) -- the
+    try/except here is the same defence-in-depth _attach_explanations()
+    keeps at this boundary, not the only thing standing between a bad
+    finding and a broken response.
+
+    NOT INCLUDED IN THE DOWNLOADED REPORT, MATCHING "explanation"'S OWN
+    CURRENT TREATMENT.
+        Both remediation keys stay in `_DOWNSTREAM_KEYS`, so download_report()
+        strips them the same way it already strips "explanation" and
+        "explanation_source". Not an oversight: "explanation" itself is not
+        in the report yet either, and that is a deliberate, still-open
+        decision (see the block comment above REPORT_FORMATS). Putting
+        remediation in the report before explanation is means picking a
+        different answer to the same open question inside an unrelated PR.
+        If remediation belongs in the report, that is worth its own decision
+        -- alongside explanation's, not ahead of it.
+    """
+    attached: List[Dict[str, Any]] = []
+    for original in results:
+        finding = dict(original)
+        attached.append(finding)
+        if finding.get("status") != "found":
+            continue
+        try:
+            result = remediate_with_source(finding)
+            if result is not None:
+                finding["remediation"], finding["remediation_source"] = result
+        except Exception:
+            pass
+    return attached
+
+
 # --- The report download -----------------------------------------------------
 #
 # WHY IT REUSES get_findings() RATHER THAN CALLING analyse() ITSELF
@@ -989,10 +1055,10 @@ def get_findings() -> List[Dict[str, Any]]:
     if context is not None:
         results = sort_findings(apply_business_context(results, context))
 
-    # _attach_explanations() copies rather than mutating, so the list held in
-    # the cache never acquires the two extra keys. That is not incidental --
-    # it is the condition this module's own docstring set for caching here.
-    return _attach_explanations(results)
+    # Both copy rather than mutate, so the list held in the cache never
+    # acquires either pair of extra keys. That is not incidental -- it is
+    # the condition this module's own docstring set for caching here.
+    return _attach_remediation(_attach_explanations(results))
 
 
 @app.post("/api/upload")
