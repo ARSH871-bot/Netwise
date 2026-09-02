@@ -98,10 +98,40 @@ def test_the_f4_explainer_survives_the_reorganisation():
     himself asked for, and the paragraph is easy to lose when a column is
     broken into cards.
     """
-    assert 'id="results-explainer"' in HTML
-    for phrase in ("Three separate counts, not one total.",
-                   "Could not check", "is not a pass"):
-        assert phrase in HTML, f"the explainer lost {phrase!r}"
+    assert 'id="results-explainer"' in HTML, "the explainer is gone"
+
+    explainer = HTML[HTML.index('id="results-explainer"'):]
+    explainer = explainer[:explainer.index("</p>")]
+    # Collapse whitespace and drop tags before matching. The source wraps at
+    # 79 columns and puts <strong> mid-phrase, so "checked, nothing found"
+    # appears as "checked, nothing\n          found</strong>" -- a substring
+    # check against the raw file fails on formatting rather than on content,
+    # which is a test failing for a reason that has nothing to do with what
+    # it is testing.
+    explainer = re.sub(r"<[^>]+>", "", explainer)
+    explainer = " ".join(explainer.split()).lower()
+
+    # WHAT IS PINNED IS THE CLAIM, NOT THE SENTENCE.
+    #
+    # This asserted the exact string "Three separate counts, not one total."
+    # until #288 improved that wording to "Three independent counts. They are
+    # not shares of one total and do not need to add up." -- which answers a
+    # question the original did not, and which my test would have blocked.
+    #
+    # Pinning a literal copy of prose is the same mistake as #194 (a guard
+    # matched a wording; rewording it silently stopped the guard matching) and
+    # #205 (a test held a copy of that wording and kept passing while proving
+    # nothing). A test that forbids an improvement is worse than no test.
+    #
+    # So: the three states must be named and the "not a pass" claim must be
+    # made. How they are phrased is the author's, and should be.
+    for claim in ("problems found", "nothing found", "could not check"):
+        assert claim in explainer, f"the explainer stopped naming {claim!r}"
+
+    assert "not a pass" in explainer, (
+        "the explainer must still say a could-not-check is not a pass -- that "
+        "is the F-4 distinction, not a turn of phrase"
+    )
 
 
 def test_the_results_heading_id_is_preserved_exactly_once():
