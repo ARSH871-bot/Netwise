@@ -130,13 +130,6 @@
              protect. The line below states it in words rather than relying on
              the reader to infer it from three tile colours. -->
         <h2 id="results-heading">Scan results</h2>
-        <p class="hint" id="results-explainer">
-          Three separate counts, not one total.
-          <strong>Problems found</strong> and <strong>checked, nothing
-          found</strong> are both results — the check ran either way.
-          <strong>Could not check</strong> is not a pass: those checks did not
-          run, so nothing is known about what they cover.
-        </p>
         <!-- ---- Filter by device (#219) ----
              HIDDEN UNTIL A SCAN COVERS MORE THAN ONE DEVICE. A selector
              offering exactly one choice is a control that cannot do
@@ -156,6 +149,33 @@
         </div>
 
         <p id="filter-notice" class="filter-notice" role="status" hidden></p>
+
+        <!-- ---- What the three tiles mean ---- #203, moved by #219
+             DIRECTLY ABOVE THE TILES, AND THAT POSITION IS THE POINT.
+             #203 added this because the client said the heading misled him.
+             It sat next to the tiles until #219 put the device filter
+             between them, which pushed the explanation 48px away from the
+             thing it explains and left a control in the gap. An explainer a
+             reader has to associate with something further down is an
+             explainer they skip.
+
+             It also now answers the question the first version did not: the
+             counts are INDEPENDENT. Somebody reading "5 / 0 / 1" reasonably
+             tries to make them add up to something, and there is nothing for
+             them to add up to. A config built to be insecure showing mostly
+             problems and no clean results is the expected shape, not a
+             failure of the scan -- and every fixture in this project is
+             built that way. -->
+        <p class="hint" id="results-explainer">
+          <strong>Three independent counts.</strong> They are not shares of one
+          total and do not need to add up.
+          <strong>Problems found</strong> and <strong>checked, nothing
+          found</strong> are both results — the check ran either way.
+          <strong>Could not check</strong> is not a pass: those checks did not
+          run, so nothing is known about what they cover. A config that is
+          deliberately insecure will show mostly problems and little or no
+          clean — that is the expected shape, not a fault in the scan.
+        </p>
 
         <div id="summary" class="summary" aria-live="polite"></div>
 
