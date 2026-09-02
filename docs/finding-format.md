@@ -345,10 +345,27 @@ two incidents above are the argument, and both were in code with tests.
 | **Shubham** | Raised it; #238 is blocked on it and `policy_compliance` would populate it first | ✅ |
 | **Arsh** | Owns `analysis/findings.py`, where the optional field is validated, and `access_control` would be a second producer | ⬜ |
 | **Ankeet** | The AI layer reads `evidence.detail`, which this deliberately does not touch — his sign-off is the check on that claim | ⬜ |
-| **Samika** | `risk` reads every finding and the dashboard renders them; an unrendered new field is hers to decide about | ⬜ |
+| **Samika** | `risk` reads every finding and the dashboard renders them; an unrendered new field is hers to decide about | ✅ |
 
-> **NOT RATIFIED — one of four.** Merging this PR means the wording is worth
+> **NOT RATIFIED — two of four.** Merging this PR means the wording is worth
 > having. It does **not** mean the amendment is agreed, and **no code may
 > populate or read `subject` until this table is full.** A-2 merged at two of
 > four with its code already on `main`, and this file spends two paragraphs
-> on why that was wrong. #238 waits.
+> on why that was wrong. #238 waits on @ARSH871-bot and @patelankeet2.
+>
+> **Samika's tick is dated 31 August, not today.** She posted *"Signing.
+> Clean and genuinely optional -- doesn't touch evidence.detail, doesn't add
+> severity or new vocabulary"* on #269 at 03:16 that morning; the PR merged
+> at 03:54, thirty-eight minutes later, with her row still ⬜. The agreement
+> existed the whole time and lived only in a comment.
+>
+> That is this file's own recurring lesson happening to this file: an
+> approval and a tick are two records of one fact, kept in different places,
+> updated by different people. A-2's note draws exactly that conclusion from
+> Ankeet's row sitting blank for seventeen days after he had confirmed on
+> #102 — and the same thing was already true here, two sections down, while
+> that paragraph was being written.
+>
+> Recorded rather than backdated silently: the tick goes in now, the date it
+> was actually given is stated, and the gap is left visible because the gap
+> is the finding.

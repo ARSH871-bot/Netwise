@@ -655,12 +655,11 @@ together.
 | **Shubham** | M-1 is his; this corrects his own justification, and two of the three measurements above are approvals of his that went stale unnoticed | ✅ |
 | **Arsh** | Wrote #241's re-request rule, which this is the reciprocal of; stopped on #213 rather than trusting a fresh-looking approval | ✅ |
 | **Ankeet** | Reviews under it, and #211 is the case where a stale tick sat over his branch | ✅ |
-| **Samika** | Bound equally; owns the dashboard PRs most often reviewed then fixed | ⬜ |
+| **Samika** | Bound equally; owns the dashboard PRs most often reviewed then fixed | ✅ |
 
-> **NOT RATIFIED. Three of four** — Shubham, Ankeet (#252), Arsh. Waiting on
-> @SamikaPerera. Do not treat the wording above as agreed because this merged
-> — that is exactly the A-2 mistake M-1's own record spends two paragraphs on,
-> and it would be the fifth instance of the family.
+> **RATIFIED — four of four**, as of 2 September. Shubham, Ankeet (#252),
+> Arsh, and Samika. M-2's three rules are now the agreed definition of
+> "current" that M-1 left undefined, and may be relied on.
 >
 > **This line said "One of four" until 31 August**, two ticks after it stopped
 > being true. #252 added Ankeet's and did not touch the count. A stale number
@@ -668,6 +667,16 @@ together.
 > reason a count and a table should not both exist, and the table is the one
 > that cannot drift. Left corrected rather than deleted because the count is
 > what a reader checks first.
+>
+> **Samika signed last, having already been following it for a week**, which
+> is worth recording because it is the wrong order. On #254 she re-requested
+> review rather than merging on two approvals that predated a commit she had
+> pushed — rule 1, applied to her own PR, at her own cost — and wrote on the
+> PR that she was "not claiming it binds me, following it because I cannot
+> see a good argument for the other side." Behaving as though an unratified
+> rule were binding is how a rule quietly becomes custom without anyone
+> agreeing to it, which is the failure this table exists to prevent. The tick
+> should have come first.
 
 ### When this applies
 

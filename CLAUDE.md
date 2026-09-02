@@ -343,23 +343,22 @@ it": across 45 PRs merged since 20 August, requiring a review would have
 blocked **none**, and `dismiss_stale_reviews` would **contradict** M-2 rule 2
 by voiding an approval on a merge-only push.
 
-> **M-2 IS CITED HERE AS SETTLED AND IS NOT — but it is close now.** Read from
-> `CONTRIBUTING.md`'s own table, **1 September**:
+> **M-2 WAS CITED HERE AS SETTLED BEFORE IT WAS.** Read from
+> `CONTRIBUTING.md`'s own table, 31 August: `Shubham ✅, Arsh ⬜, Ankeet ⬜,
+> Samika ⬜` — one of four, while this project had been quoting M-2's three
+> rules in reviews and merges all week. The argument above about
+> `dismiss_stale_reviews` held on its merits throughout, but it leaned on an
+> amendment three of us had not signed. Same shape as A-2 below, caught the
+> same day.
 >
-> ```
-> Shubham ✅    Arsh ✅    Ankeet ✅    Samika ⬜        3 of 4
-> ```
+> By 1 September the table read `Shubham ✅, Arsh ✅, Ankeet ✅, Samika ⬜` —
+> three of four, Samika's tick the only one outstanding.
 >
-> This block said **one of four** as of 31 August. Two ticks arrived the next
-> day. The argument above about `dismiss_stale_reviews` still holds on its
-> merits, and it now leans on an amendment one of us has not signed rather than
-> three. **Samika's tick is the last one.** Same shape as A-2 below — which
-> reached four the same day, so this is the remaining instance, not the pattern
-> repeating. Deciding it is #252's thread.
->
-> The date above is load-bearing. A signature count is exactly the kind of fact
-> §11 warns about: it changes underneath the document, so it is written as a
-> dated reading rather than a present-tense claim.
+> **Now ratified — four of four, 2 September** (Shubham, Ankeet #252, Arsh,
+> Samika). The citation above is legitimate. The gap is left recorded rather
+> than deleted, because a rule being followed for a week before anyone agreed
+> to it is how custom quietly replaces consent, and that is worth one
+> paragraph even after it resolves.
 
 ## 7c. Asking questions (US-11) — the other direction, and why it refuses
 
