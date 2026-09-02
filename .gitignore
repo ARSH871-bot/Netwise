@@ -33,6 +33,15 @@ snapshots/
 # Anchored to web/ because that is the only place the app writes.
 /web/uploaded_configs/
 
+# Assessment feedback and marked drafts. These carry student IDs, a marker's
+# written assessment of an individual, and cover sheets belonging to different
+# team members. They are correspondence about people, not project artefacts.
+#
+# The deciding fact is that this repository was PUBLIC until 31 August and the
+# visibility has already changed twice. A file that is only safe while a
+# setting stays where it is should not be tracked at all.
+/docs/Feedback/
+
 # Codex/session scratch space. This sits inside the repo root and is exactly
 # where temporary briefs, probes, and copied examples land while working. Keep
 # it out of git by default for the same reason /configs/ is ignored: a real
