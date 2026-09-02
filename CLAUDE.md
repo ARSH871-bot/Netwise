@@ -343,13 +343,23 @@ it": across 45 PRs merged since 20 August, requiring a review would have
 blocked **none**, and `dismiss_stale_reviews` would **contradict** M-2 rule 2
 by voiding an approval on a merge-only push.
 
-> **M-2 IS CITED HERE AS SETTLED AND IS NOT.** Read from `CONTRIBUTING.md`'s
-> own table on 31 August: `Shubham ✅, Arsh ⬜, Ankeet ⬜, Samika ⬜` — **one of
-> four**, with #252 taking it to two once merged. The argument above about
-> `dismiss_stale_reviews` still holds on its merits, but it leans on an
-> amendment three of us have not signed, and this project has been quoting
-> M-2's three rules in reviews and merges all week. Same shape as A-2 below,
-> caught the same day. Deciding it is #252's thread.
+> **M-2 IS CITED HERE AS SETTLED AND IS NOT — but it is close now.** Read from
+> `CONTRIBUTING.md`'s own table, **1 September**:
+>
+> ```
+> Shubham ✅    Arsh ✅    Ankeet ✅    Samika ⬜        3 of 4
+> ```
+>
+> This block said **one of four** as of 31 August. Two ticks arrived the next
+> day. The argument above about `dismiss_stale_reviews` still holds on its
+> merits, and it now leans on an amendment one of us has not signed rather than
+> three. **Samika's tick is the last one.** Same shape as A-2 below — which
+> reached four the same day, so this is the remaining instance, not the pattern
+> repeating. Deciding it is #252's thread.
+>
+> The date above is load-bearing. A signature count is exactly the kind of fact
+> §11 warns about: it changes underneath the document, so it is written as a
+> dated reading rather than a present-tense claim.
 
 ## 7c. Asking questions (US-11) — the other direction, and why it refuses
 
@@ -798,19 +808,27 @@ Nothing in Layer 1 or 2 is now unjoined. What remains is features, not plumbing.
   because "agreed" should be a fact anyone can check rather than something
   inferred from a merge. This closes the last outstanding piece of the shapes
   decision.
-- **F-1 amendment A-2 — agreed by THREE of four, not ratified** (#102, raised
+- **F-1 amendment A-2 — RATIFIED by all four, 1 September** (#102, raised
   and written by Shubham on day 1 of Sprint 4). `change_impact` moves from the
   `PC-` prefix to its own **`CH-`**, so `id` uniqueness *across* checks is now
   structural rather than a convention split over two documents. Done before the
   code existed, so no finding changed id — free now, a migration later.
 
-  **This entry said "RATIFIED by all four" until 31 August, and it was wrong.**
-  Read from the authoritative file rather than remembered:
+  **Ankeet signed on 1 September (#278), and the table is now complete.** Read
+  from the authoritative file rather than remembered:
 
   ```
-  docs/finding-format.md, A-2 table
-      Shubham  ✅    Arsh  ✅    Samika  ✅    Ankeet  ⬜      3 of 4
+  docs/finding-format.md, A-2 table          read 1 September
+      Shubham  ✅    Arsh  ✅    Samika  ✅    Ankeet  ✅      4 of 4
   ```
+
+  **This entry has now been wrong in BOTH directions, which is the part worth
+  keeping.** It claimed "RATIFIED by all four" while the table said 3 of 4
+  (caught 31 August), and it then claimed "THREE of four, not ratified" for a
+  day after the fourth tick landed. Overclaiming and underclaiming are the same
+  defect: a copy of a fact that does not move when the fact does. The first
+  could have caused someone to build on an unratified contract; the second
+  could have caused someone to reopen a settled one.
 
   §7a of this file says `docs/finding-format.md` is authoritative, so this copy
   was the wrong one — and it is the copy people read for status. **A false
@@ -823,8 +841,10 @@ Nothing in Layer 1 or 2 is now unjoined. What remains is features, not plumbing.
   incomplete; this entry then reported the table as complete. One document out,
   and the regret became the claim.
 
-  **Ankeet's tick is still outstanding**, and nothing notified him — which is
-  #231. The code has been on `main` since 13 August regardless.
+  **Nothing notified Ankeet for eighteen days** — that was #231, now closed by
+  #241, which put the re-request rule in `docs/work-distribution.md`. The code
+  has been on `main` since 13 August regardless, which is why the gap was
+  invisible: nothing was broken, only unagreed.
 
   **The duplicate-`id` guard stays, and deleting it would be a mistake.** A
   distinct prefix removes that particular pair; uniqueness *within* one check is
