@@ -293,6 +293,22 @@ body {
   color: var(--ink-soft);
 }
 
+/* The one-line definition under each tile's label.
+   A step below `.label` in size so the reading order is count -> label ->
+   definition, and muted like every other explanatory line on this page
+   (`.hint`, `.finding-meta`). It is a definition, not a warning: making it
+   louder would compete with the number it is describing.
+
+   NOT colour-dependent. The blind tile's amber border is a signal, but its
+   caption says "did not run -- nothing is known" in words, so the claim
+   survives greyscale, a printed page, and a screen reader. */
+.tile .caption {
+  font-size: 0.7rem;
+  line-height: 1.35;
+  color: var(--ink-soft);
+  margin-top: 0.2rem;
+}
+
 .tile.problems {
   border-left-color: var(--high);
 }

@@ -237,16 +237,52 @@ function renderSummary(problems, clean, blind) {
   // "Could not check" is rendered even when it is zero. An explicit "0 could
   // not check" is a statement of coverage; an absent tile is an absence of
   // information, and the two should not be confused.
+  //
+  // EACH TILE CARRIES ITS OWN ONE-LINE DEFINITION.
+  //     The paragraph above the tiles explains all three together, and it
+  //     stays -- but a reader looking at "5 / 0 / 1" is looking at the
+  //     BOXES, and an explanation they have to glance back up to is one
+  //     they skip. Reported from real use: the three numbers read as though
+  //     they should relate to each other.
+  //
+  //     The three captions are deliberately PARALLEL --
+  //     "ran and found ... / ran and found nothing ... / did not run" --
+  //     because the distinction being missed is precisely whether the check
+  //     ran at all, and putting the three in the same grammatical shape is
+  //     what makes that comparable at a glance.
+  //
+  //     THE THIRD ONE NEVER RELIES ON COLOUR. Amber is the signal, but the
+  //     words carry the whole claim on their own: "did not run" and
+  //     "nothing is known" say it for anyone who cannot see the border,
+  //     is reading a screenshot in greyscale, or has the page printed.
+  //     Same F-4 discipline as the "this is not a clean result" sentence on
+  //     the blind finding cards.
   const tiles = [
-    ["problems", problems.length, "problems found"],
-    ["clean", clean.length, "checked, nothing found"],
-    ["blind", blind.length, "could not check"],
+    [
+      "problems",
+      problems.length,
+      "problems found",
+      "The check ran and found a real issue",
+    ],
+    [
+      "clean",
+      clean.length,
+      "checked, nothing found",
+      "The check ran and found nothing wrong",
+    ],
+    [
+      "blind",
+      blind.length,
+      "could not check",
+      "The check did not run — nothing is known",
+    ],
   ];
 
-  tiles.forEach(([variant, count, label]) => {
+  tiles.forEach(([variant, count, label, caption]) => {
     const tile = el("div", `tile ${variant}`);
     tile.appendChild(el("div", "count", String(count)));
     tile.appendChild(el("div", "label", label));
+    tile.appendChild(el("div", "caption", caption));
     summary.appendChild(tile);
   });
 }
