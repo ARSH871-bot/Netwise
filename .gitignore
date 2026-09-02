@@ -33,6 +33,12 @@ snapshots/
 # Anchored to web/ because that is the only place the app writes.
 /web/uploaded_configs/
 
+# Codex/session scratch space. This sits inside the repo root and is exactly
+# where temporary briefs, probes, and copied examples land while working. Keep
+# it out of git by default for the same reason /configs/ is ignored: a real
+# config or client-derived note dropped here must not survive `git add .`.
+/scratchpad/
+
 # --- Test fixtures: the ONE allowed exception ------------------------------
 # Synthetic configs WE invented, used to test our own code. These are not
 # client data -- nobody's real network is described by them -- so committing

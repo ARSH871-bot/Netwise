@@ -72,6 +72,8 @@ MUST_BE_IGNORED = [
     "configs/deep/nested/anything.txt",
     "web/uploaded_configs/current/config.xml",
     "web/uploaded_configs/anything",
+    "scratchpad/client-export-with-no-extension",
+    "scratchpad/notes-about-a-real-firewall.md",
     "snapshots/snap/configs/device.cfg",
     "router.cfg",
     "firewall.conf",
