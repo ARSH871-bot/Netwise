@@ -93,7 +93,7 @@ def test_an_unknown_tier_is_rejected_and_lists_the_real_ones():
 def test_a_miscased_tier_gets_a_did_you_mean_but_is_still_refused():
     """Corrected silently would be a silent default; refused blankly is unkind.
 
-    So it is refused AND named, the same trade `policy._suggest` makes.
+    So it is refused AND named, the same trade the loader makes elsewhere: refuse, but name the fix. (`policy._suggest` made this trade too and was deleted in #185 -- its condition could never be reached. This one can; see _suggest_tier.)
     """
     with pytest.raises(BusinessContextError) as raised:
         load_business_context([_entry(tier="Critical")])
