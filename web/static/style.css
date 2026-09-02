@@ -517,6 +517,16 @@ body {
   color: var(--ink-soft);
 }
 
+/* This is an explicit privacy decision, not an operational error. The model
+   was deliberately not contacted, so it is shown neutrally beneath the
+   deterministic text rather than styled like a failed analysis. */
+.model-boundary-notice {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--ink-soft);
+}
+
 /* --- Remediation: what to change, not what is wrong (#221) ---------------
    A third voice, distinct from both .evidence (Batfish's own words) and
    .ai-explanation (a paraphrase, model or fallback). This is neither --

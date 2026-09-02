@@ -27,6 +27,7 @@ NO NETWORK
 
 from __future__ import annotations
 
+import os
 import socket
 
 import pytest
@@ -39,8 +40,10 @@ def _clean_probe_cache():
     """A probe answer surviving into the next test is how one test starts
     passing for a reason belonging to another one."""
     explain_module.reset_reachability_cache()
+    os.environ.pop(explain_module.REMOTE_OLLAMA_OPT_IN, None)
     yield
     explain_module.reset_reachability_cache()
+    os.environ.pop(explain_module.REMOTE_OLLAMA_OPT_IN, None)
 
 
 class _Socket:
@@ -245,3 +248,64 @@ def test_the_probe_follows_ollama_host(monkeypatch, value, expected):
     """
     monkeypatch.setenv("OLLAMA_HOST", value)
     assert explain_module._ollama_endpoint() == expected
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["localhost.evil.com", "evil-localhost.com", "localhost."],
+)
+def test_loopback_recognition_never_uses_a_localhost_substring(host):
+    """A substring match would reopen the most likely remote-host bypass."""
+    assert explain_module._is_loopback_host(host) is False
+
+
+@pytest.mark.parametrize("value", ["otherbox", "10.20.30.40", "https://example.test:11434"])
+def test_a_remote_ollama_host_is_refused_without_a_socket_or_model_call(monkeypatch, value):
+    """The local-only promise must hold even when OLLAMA_HOST is configured.
+
+    This proves both ends of the guard: no probe may contact the remote address,
+    and the explanation path must choose deterministic fallback rather than
+    calling the model with a finding derived from a configuration.
+    """
+    monkeypatch.setenv("OLLAMA_HOST", value)
+    attempts = _connections(monkeypatch, up=True)
+    called = []
+    monkeypatch.setattr(
+        explain_module, "_generate", lambda finding: called.append(finding) or "model text"
+    )
+
+    text, source = explain_module.explain_with_source(REAL_FINDING)
+
+    assert attempts == [], "an unapproved remote OLLAMA_HOST was contacted"
+    assert called == [], "config-derived evidence reached an unapproved remote model"
+    assert source == "fallback"
+    assert text
+    notice = explain_module.local_model_boundary_notice()
+    assert notice is not None
+    assert "NETWISE_ALLOW_REMOTE_OLLAMA=1" in notice
+    assert "otherbox" not in notice and "10.20.30.40" not in notice
+
+
+def test_remote_ollama_requires_the_exact_explicit_opt_in(monkeypatch):
+    monkeypatch.setenv("OLLAMA_HOST", "otherbox:1234")
+    monkeypatch.setenv(explain_module.REMOTE_OLLAMA_OPT_IN, "true")
+    assert explain_module._model_use_is_permitted() is False
+
+    monkeypatch.setenv(explain_module.REMOTE_OLLAMA_OPT_IN, "1")
+    assert explain_module._model_use_is_permitted() is True
+    assert explain_module.local_model_boundary_notice() is None
+
+
+def test_direct_generation_cannot_bypass_the_remote_host_guard(monkeypatch):
+    """Future callers of the private helper must not reopen the boundary."""
+    monkeypatch.setenv("OLLAMA_HOST", "otherbox")
+    called = []
+    monkeypatch.setattr(
+        explain_module.ollama,
+        "generate",
+        lambda **kwargs: called.append(kwargs) or {"response": "unsafe"},
+    )
+
+    with pytest.raises(RuntimeError, match="remote Ollama host refused"):
+        explain_module._generate(REAL_FINDING)
+    assert called == []

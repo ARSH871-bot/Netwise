@@ -15,12 +15,22 @@ Concretely:
 
 - Analysis runs against **Batfish in a local Docker container**, not a service.
 - Explanations are written by a **local LLM via Ollama**, not a hosted API.
+- A non-loopback `OLLAMA_HOST` is refused by default, before Netwise opens a
+  socket or sends a prompt. The dashboard states that it used the deterministic
+  path instead. `NETWISE_ALLOW_REMOTE_OLLAMA=1` is an explicit operator opt-in
+  for deployments that intentionally change this data boundary; it is not the
+  default local-first product behaviour.
 - No configuration data is sent to any cloud AI service, including ones the
   developers use. When a client offered a real export for AI-assisted debugging,
   it was declined and `tools/pfsense_shape.py` was written instead — it reports
   structure and never a value, so a file can be reasoned about without moving.
 - Netwise **never connects to, scans, or modifies a live network.** It reads
   files you already exported.
+- Audit logs are structured JSON with a closed field vocabulary. They record
+  only safe operational metadata (for example, byte count and file extension),
+  never configuration text, client filenames, policy bodies, prompts, model
+  hosts, or raw Batfish errors. `tests/test_audit_log.py` exercises the real
+  upload path with a distinctive secret and fails if it appears in a log line.
 
 ## Reporting a vulnerability
 

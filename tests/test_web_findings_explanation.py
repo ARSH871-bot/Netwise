@@ -140,6 +140,35 @@ def test_a_fallback_explanation_reports_fallback_as_the_source(monkeypatch):
     assert result["explanation_source"] == "fallback"
 
 
+def test_a_refused_remote_model_is_explained_on_the_dashboard(monkeypatch):
+    """The privacy guard is visible, not merely an invisible fallback."""
+    monkeypatch.setattr(main, "explain_with_source", lambda finding: ("text", "fallback"))
+    monkeypatch.setattr(
+        main,
+        "local_model_boundary_notice",
+        lambda: "Local-model safety: Netwise did not send config-derived evidence.",
+    )
+
+    (result,) = main._attach_explanations([_finding("found")])
+
+    assert result["explanation_notice"] == (
+        "Local-model safety: Netwise did not send config-derived evidence."
+    )
+
+
+def test_a_model_explanation_has_no_remote_host_notice(monkeypatch):
+    monkeypatch.setattr(main, "explain_with_source", lambda finding: ("text", "model"))
+    monkeypatch.setattr(
+        main,
+        "local_model_boundary_notice",
+        lambda: "this would be wrong on a model explanation",
+    )
+
+    (result,) = main._attach_explanations([_finding("found")])
+
+    assert "explanation_notice" not in result
+
+
 def test_a_none_finding_gets_neither_key(monkeypatch):
     calls = []
     monkeypatch.setattr(

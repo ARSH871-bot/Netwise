@@ -158,6 +158,11 @@ function renderFinding(finding, variant, icon, badgeText) {
       finding.explanation
     );
     card.appendChild(explanation);
+    if (finding.explanation_notice) {
+      card.appendChild(
+        el("p", "model-boundary-notice", finding.explanation_notice)
+      );
+    }
   }
 
   // Remediation -- what to CHANGE, not what is wrong (#221). A different
