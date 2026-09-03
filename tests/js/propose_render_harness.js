@@ -68,6 +68,28 @@ function makeElement(tag) {
     getAttribute(key) {
       return (this.attributes || {})[key] ?? null;
     },
+    // classList, backed by the same className string every other part of
+    // this shim already reads -- added when app.js started calling
+    // classList.add()/remove() for comparison mode. A live accessor, not a
+    // snapshot, so it stays correct across repeated add/remove calls on
+    // the same element.
+    get classList() {
+      const self = this;
+      return {
+        add(cls) {
+          const classes = self.className ? self.className.split(/\s+/) : [];
+          if (!classes.includes(cls)) classes.push(cls);
+          self.className = classes.join(' ');
+        },
+        remove(cls) {
+          const classes = self.className ? self.className.split(/\s+/) : [];
+          self.className = classes.filter((c) => c !== cls).join(' ');
+        },
+        contains(cls) {
+          return (self.className ? self.className.split(/\s+/) : []).includes(cls);
+        },
+      };
+    },
     removeEventListener() {},
     remove() {},
     focus() {},
@@ -122,11 +144,11 @@ function flatten(node, out) {
   return out;
 }
 
-function renderAndDescribe(result) {
+function renderAndDescribe(result, requestText) {
   log.replaceChildren();
   log.scrollTop = 0;
   log.scrollHeight = 500;
-  const exchange = sandbox.addProposeResponse(result);
+  const exchange = sandbox.addProposeResponse(result, requestText);
 
   const nodes = flatten(exchange, []);
   const classesInOrder = (exchange.children || []).map((c) => c.className);
@@ -163,6 +185,42 @@ function renderAndDescribe(result) {
     proposedLine: first("proposed-line"),
     proposedLineTag: find("proposed-line")[0] ? find("proposed-line")[0].tag : null,
     notAppliedText: first("proposed-not-applied"),
+
+    // The before/after ACL diff, and the download form -- both
+    // strengthenings of the propose pane. The diff is present whenever the
+    // backend sent lines to show; the download form only when this
+    // rendering pass was actually given a request to resubmit.
+    aclDiffPresent: find("acl-diff").length,
+    aclDiffLabel: first("acl-diff-label"),
+    aclDiffAddedLines: find("acl-diff-line added").map((n) => n.text),
+    aclDiffAllLines: find("acl-diff-line")
+      .concat(find("acl-diff-line added"))
+      .map((n) => n.text),
+
+    downloadFormPresent: find("propose-download-form").length,
+    downloadButtonText: first("propose-download-button"),
+    fullScanButtonPresent: find("full-scan-button").length,
+    fullScanButtonText: first("full-scan-button"),
+    // The hidden field's VALUE specifically -- flatten() only records
+    // textContent, which a hidden <input> never has, so the request text
+    // making it into the form has to be checked a different way.
+    downloadFormRequestValue: (() => {
+      const forms = nodes.filter((n) => n.cls === "propose-download-form");
+      if (!forms.length) return null;
+      // Walk the real tree (not the flattened text-only view) to reach the
+      // hidden input's .value property.
+      let formNode = null;
+      const walk = (node) => {
+        (node.children || []).forEach((child) => {
+          if (child.className === "propose-download-form") formNode = child;
+          walk(child);
+        });
+      };
+      walk(exchange);
+      if (!formNode) return null;
+      const hidden = (formNode.children || []).find((c) => c.name === "request");
+      return hidden ? hidden.value : null;
+    })(),
 
     impactPresent: find("impact").length,
     impactHeading: first("impact-heading"),
@@ -204,6 +262,12 @@ const CHANGE = {
   device: "rtr-us5",
   filter: "acl_in",
   line: "deny tcp host 10.10.10.5 host 10.20.0.5 eq 443",
+  before_lines: ["permit udp any any eq domain", "permit tcp any host 10.20.0.5 eq 443"],
+  after_lines: [
+    "deny tcp host 10.10.10.5 host 10.20.0.5 eq 443",
+    "permit udp any any eq domain",
+    "permit tcp any host 10.20.0.5 eq 443",
+  ],
 };
 
 const REFUSED = {
@@ -400,6 +464,28 @@ const out = {
   groundedJunkFlags: renderAndDescribe(GROUNDED_JUNK_FLAGS),
   groundedJunkWarningOnly: renderAndDescribe(GROUNDED_JUNK_WARNING_ONLY),
   scripted: renderAndDescribe(SCRIPTED),
+
+  // The two strengthenings, exercised together: a real request resubmitted
+  // for download, and before/after_lines rendered as a diff.
+  cleanWithDownload: renderAndDescribe(
+    CLEAN,
+    "block 10.10.10.5 to 10.20.0.5 on tcp/443 on rtr-us5"
+  ),
+  // No requestText passed at all -- must not crash, and the download form
+  // must simply not appear rather than appear with an empty/undefined value.
+  cleanNoRequestText: renderAndDescribe(CLEAN),
+  // A hostile request text, arriving at the ONE place other than el() this
+  // renderer assigns text without going through it: a hidden input's
+  // .value. That is a DOM property assignment, not markup, so it cannot
+  // inject -- proved by round-tripping it and confirming the string comes
+  // back byte-for-byte rather than interpreted.
+  scriptedDownload: renderAndDescribe(
+    CLEAN,
+    "<img src=x onerror=alert(1)> to 10.20.0.5 on tcp/443"
+  ),
+  // A refusal must never grow a download form -- there is no successful
+  // request to resubmit, and proposed_change is null.
+  refusedWithRequestText: renderAndDescribe(REFUSED, "block youtube"),
 };
 
 console.log(JSON.stringify(out, null, 2));

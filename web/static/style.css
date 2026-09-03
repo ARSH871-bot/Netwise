@@ -616,7 +616,7 @@ body {
 }
 
 .ai-explanation.placeholder::before {
-  content: "AI explanation — not generated yet";
+  content: "AI explanation -- not generated yet";
   color: var(--ink-soft);
   font-style: normal;
 }
@@ -902,11 +902,321 @@ body {
   white-space: pre;
 }
 
-.proposed-not-applied {
+/* --- The before/after ACL diff (propose-a-change strengthening) ----------
+   Deliberately NOT a new colour in the --high/--clean/--ai/--fix family --
+   an added line is not a severity, a status, a model's voice, or a
+   suggested fix, so claiming any of those hues would misstate what this is.
+   Emphasis instead: bold weight, a neutral tint, and the word "added"
+   spelled out -- the same "colour is last, not first" instinct this file's
+   own header comment states for F-4. */
+.acl-diff-label {
+  margin-top: 0.55rem;
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+}
+
+.acl-diff {
+  list-style: none;
+  margin: 0.3rem 0 0;
+  padding: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.acl-diff-line {
+  padding: 0.3rem 0.55rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.acl-diff-line:last-child {
+  border-bottom: none;
+}
+
+.acl-diff-line.added {
+  background: rgba(31, 41, 51, 0.06);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.acl-diff-tag {
+  float: right;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.05rem 0.3rem;
+  margin-left: 0.5rem;
+}
+
+/* --- Proposed-change groups -----------------------------------------------
+   Three visually separate blocks (what changes / the guarantee / what you
+   can do), each with a divider above it, so the card reads as three things
+   instead of one long stack. Only .pc-what and .pc-actions carry the
+   .pc-group divider treatment -- .proposed-not-applied sits between them
+   with its own bold-text emphasis, deliberately not boxed, so IT reads as
+   a guarantee stated in passing, not a fourth grouped section competing
+   for the same visual weight as the other two. */
+.pc-group {
+  padding-top: 0.6rem;
+  margin-top: 0.6rem;
+  border-top: 1px solid var(--line);
+}
+
+.pc-what {
+  padding-top: 0;
+  margin-top: 0.3rem;
+  border-top: none;
+}
+
+.pc-actions-label {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-bottom: 0.4rem;
+}
+
+.pc-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: flex-start;
+}
+
+.pc-actions-row > * {
+  margin-top: 0;
+}
+
+.propose-download-form {
+  margin-top: 0.6rem;
+}
+
+.propose-download-button {
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.propose-download-button:hover {
+  border-color: var(--ink-soft);
+}
+
+.full-scan-wrap {
   margin-top: 0.5rem;
+}
+
+/* Same neutral treatment as .propose-download-button, deliberately -- not
+   --low (severity blue) or any other claimed hue. This button's importance
+   is said in its own label text ("Run a FULL scan"), not borrowed from a
+   colour that means something else everywhere it already appears. */
+.full-scan-button {
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--ink);
+  border-radius: 5px;
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.full-scan-button:hover {
+  background: var(--page);
+}
+
+.full-scan-button:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.full-scan-results {
+  margin-top: 0.5rem;
+}
+
+.full-scan-refusal {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+.full-scan-clean {
+  font-size: 0.8rem;
+  color: var(--clean-ink);
+}
+
+/* --- Mock-data notice -------------------------------------------------------
+   Neutral, same reasoning as the comparison banner below: this is
+   wayfinding ("you have not uploaded anything yet"), not a severity or
+   status claim, so it stays out of every colour that already means one of
+   those. The [hidden] override is NOT optional -- see the comment on
+   .comparison-banner[hidden] just below for exactly why omitting it means
+   this notice shows on every page load regardless of the hidden
+   attribute. */
+.mock-data-notice {
+  margin-bottom: 0.75rem;
+  padding: 0.55rem 0.8rem;
+  background: var(--page);
+  border: 1px dashed var(--ink-soft);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.mock-data-notice[hidden] {
+  display: none;
+}
+
+/* --- Comparison mode banner ------------------------------------------------
+   Deliberately NOT --ai (violet means "a model wrote this" and nothing else
+   here means that), not a severity colour, not a status colour. This is
+   wayfinding -- "you are looking at a comparison, not your own scan" -- and
+   wayfinding is not a claim about the network, so it gets neutral ink and
+   line tones, the same family .rename-note and .no-explanation already use
+   for "a plain fact, not a judgement". */
+.comparison-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding: 0.6rem 0.85rem;
+  background: repeating-linear-gradient(
+    135deg,
+    var(--page),
+    var(--page) 10px,
+    var(--card) 10px,
+    var(--card) 20px
+  );
+  border: 2px dashed var(--ink-soft);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  color: var(--ink);
+}
+
+/* MUST WIN OVER display:flex ABOVE. The browser's own [hidden] rule and
+   this class selector have EQUAL specificity, and this stylesheet loads
+   after the browser's default one -- so without this, display:flex wins
+   the tie and the banner shows on every page load, hidden attribute or
+   not. Confirmed live: this was exactly the bug on a fresh, un-uploaded
+   page. Same fix needed anywhere else "display: something-other-than-none"
+   is set directly on an element also toggled by the hidden attribute. */
+.comparison-banner[hidden] {
+  display: none;
+}
+
+#comparison-banner-text {
+  font-weight: 600;
+}
+
+#comparison-back-button {
+  flex: none;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--ink-soft);
+  border-radius: 5px;
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+#comparison-back-button:hover {
+  background: var(--line);
+}
+
+/* Dashed borders, everywhere a card or tile can appear, for as long as a
+   comparison is on screen. One visual signal that survives a glance and a
+   scroll -- not just the banner text at the top -- so a hypothetical
+   result can never be mistaken for the reader's own scan, even by someone
+   who scrolled past the banner already. */
+#summary.comparison-mode .tile,
+#findings.comparison-mode .finding {
+  border-style: dashed;
+}
+
+#findings.comparison-mode .section {
+  padding: 0.4rem 0.6rem;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  margin-bottom: 0.9rem;
+}
+
+.comparison-unchanged-note {
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  font-style: italic;
+  margin-top: 0.5rem;
+}
+
+.comparison-download-wrap {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--line);
+}
+
+.comparison-download-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-bottom: 0.4rem;
+}
+
+.comparison-download-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.comparison-download-form {
+  margin: 0;
+}
+
+.comparison-download-button {
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--ink-soft);
+  border-radius: 5px;
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.comparison-download-button:hover {
+  background: var(--page);
+}
+
+.proposed-not-applied {
+  margin-top: 0.6rem;
+  padding: 0.4rem 0.6rem;
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--ink);
+  background: var(--page);
+  border-left: 3px solid var(--ink-soft);
+  border-radius: 0 4px 4px 0;
 }
 
 /* --- The simulated impact list (US-14) ----------------------------------- *

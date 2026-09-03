@@ -210,7 +210,7 @@ function renderFinding(finding, variant, icon, badgeText) {
       el(
         "p",
         "blind-warning",
-        "This is not a clean result — this check did not run, so nothing is known here."
+        "This is not a clean result -- this check did not run, so nothing is known here."
       )
     );
   }
@@ -274,7 +274,7 @@ function renderSummary(problems, clean, blind) {
       "blind",
       blind.length,
       "could not check",
-      "The check did not run — nothing is known",
+      "The check did not run -- nothing is known",
     ],
   ];
 
@@ -435,6 +435,239 @@ function renderFindings(findings) {
   updateDeviceFilter(findings);
   renderFilterNotice(selectedDevice());
   renderFindingSections(visibleFindings());
+
+  // A real scan's own findings, not a comparison -- close out any
+  // comparison view left open from a previous proposal. Without this, a
+  // fresh upload after viewing a comparison would show new findings under
+  // a banner still describing an old, unrelated proposed change.
+  const banner = document.getElementById("comparison-banner");
+  if (banner) banner.hidden = true;
+  const explainer = document.getElementById("results-explainer");
+  if (explainer) explainer.hidden = false;
+  const summaryEl = document.getElementById("summary");
+  if (summaryEl) summaryEl.classList.remove("comparison-mode");
+  const findingsEl = document.getElementById("findings");
+  if (findingsEl) findingsEl.classList.remove("comparison-mode");
+}
+
+/* ------------------------------------------------------------------------ *
+ * Before/after comparison for a proposed change (strengthening propose)
+ *
+ * WHY THIS EXISTS, AND WHY IT LIVES HERE RATHER THAN IN THE PROPOSE PANE
+ *     A full scan of a proposed config answers a narrower question than the
+ *     one anyone actually asks: not "what does the proposed config look
+ *     like" but "what does this CHANGE do to what I already know about my
+ *     network". That is a before/after comparison, and this panel -- with
+ *     its tiles, its sections, its device-aware finding cards -- is already
+ *     the UI built to show a set of findings clearly. Building a second,
+ *     smaller copy of it inside the narrow propose pane would be worse on
+ *     every axis that panel already got right.
+ *
+ * NEVER KEYED BY finding.id, THE SAME RULE EVERY OTHER PART OF THIS FILE
+ * FOLLOWS.
+ *     id is not guaranteed stable or unique across two separate runs of the
+ *     pipeline (see the "SECOND RULE" comment near the top of this file).
+ *     Two findings are "the same finding" here if they agree on WHAT was
+ *     found, not on which number the pipeline happened to assign it.
+ * ------------------------------------------------------------------------ */
+
+/** A stable identity for one finding, for comparing two separate scans --
+ * never `finding.id`, see the block comment above. */
+function findingIdentity(finding) {
+  return `${finding.check}|${finding.device}|${finding.status}|${finding.summary}`;
+}
+
+/**
+ * Split `after` against `before` into three buckets:
+ *   introduced  in after, not in before -- a NEW problem this change causes
+ *   resolved    in before, not in after -- a problem this change FIXES
+ *   unchanged   in both -- present either way, this change did not move it
+ *
+ * Deliberately simple set comparison, not a smarter fuzzy match. A finding
+ * that changed severity or evidence but kept the same summary reads as
+ * "unchanged" here -- correct, because the CLAIM (what was found, on what,
+ * by what check) is what a reader means by "the same problem", not the
+ * exact bytes of its evidence string.
+ */
+function diffFindings(before, after) {
+  const beforeKeys = new Set(before.map(findingIdentity));
+  const afterKeys = new Set(after.map(findingIdentity));
+
+  return {
+    introduced: after.filter((f) => !beforeKeys.has(findingIdentity(f))),
+    resolved: before.filter((f) => !afterKeys.has(findingIdentity(f))),
+    unchanged: after.filter((f) => beforeKeys.has(findingIdentity(f))),
+  };
+}
+
+/** Render the three comparison tiles -- same shape as renderSummary(),
+ * different claim: not "what is true", but "what changed". */
+function renderComparisonSummary(introduced, resolved, unchanged) {
+  const summary = document.getElementById("summary");
+  summary.replaceChildren();
+
+  const tiles = [
+    ["problems", introduced.length, "new problems this change introduces"],
+    ["clean", resolved.length, "problems this change fixes"],
+    ["blind", unchanged.length, "unaffected -- true either way"],
+  ];
+
+  tiles.forEach(([variant, count, label]) => {
+    const tile = el("div", `tile ${variant}`);
+    tile.appendChild(el("div", "count", String(count)));
+    tile.appendChild(el("div", "label", label));
+    summary.appendChild(tile);
+  });
+}
+
+/**
+ * Show a before/after comparison in the main results panel, and remember
+ * how to get back. `description` is the plain-English request that was
+ * understood, shown in the banner so the comparison is never mistaken for
+ * the reader's own uploaded config.
+ */
+function showComparison(afterFindings, description) {
+  const { introduced, resolved, unchanged } = diffFindings(allFindings, afterFindings);
+
+  document.getElementById("results-explainer").hidden = true;
+  const filterRow = document.getElementById("device-filter-row");
+  if (filterRow) filterRow.hidden = true;
+  document.getElementById("filter-notice").hidden = true;
+
+  const banner = document.getElementById("comparison-banner");
+  document.getElementById("comparison-banner-text").textContent =
+    `COMPARISON -- not your uploaded config. Proposed change: ${description}`;
+  banner.hidden = false;
+
+  // The normal report links point at /api/report, which serves the
+  // READER'S OWN scan -- never what a comparison is showing. Left enabled,
+  // clicking "Download this report" while looking at a comparison would
+  // silently download something that does not match the screen at all.
+  // The comparison gets its own download further down instead.
+  setDownloadAvailable(
+    false,
+    "Not available for a comparison -- use the buttons below, or go back " +
+      "to your own scan first."
+  );
+
+  // A dashed border on both containers, on for as long as the comparison
+  // is on screen -- one visual signal that survives a glance, not just the
+  // banner text, so this can never be mistaken for a real scan even by
+  // someone scrolled past the top of the panel.
+  document.getElementById("summary").classList.add("comparison-mode");
+  document.getElementById("findings").classList.add("comparison-mode");
+
+  renderComparisonSummary(introduced, resolved, unchanged);
+
+  const container = document.getElementById("findings");
+  container.replaceChildren();
+
+  const sections = [
+    renderSection(
+      "New problems this change introduces",
+      "Not present in your uploaded config -- caused by this specific change.",
+      introduced.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]),
+      (f) => renderFinding(f, f.severity, "●", f.severity)
+    ),
+    renderSection(
+      "Problems this change fixes",
+      "Present in your uploaded config, gone after this change.",
+      resolved.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]),
+      (f) => renderFinding(f, f.severity, "●", f.severity)
+    ),
+  ];
+  sections.filter(Boolean).forEach((s) => container.appendChild(s));
+
+  // Unaffected findings are not rendered as cards -- every one of them is
+  // already visible in the reader's own scan, unchanged, and repeating
+  // that whole list here would bury the two sections that actually answer
+  // the question this view exists for. The count above already discloses
+  // how many there are; nothing here is hidden, only not repeated.
+  if (unchanged.length) {
+    container.appendChild(
+      el(
+        "p",
+        "comparison-unchanged-note",
+        `${unchanged.length} other finding(s) are unaffected -- true whether ` +
+          `or not this change is made. See your own scan results for those.`
+      )
+    );
+  }
+
+  container.appendChild(
+    renderComparisonDownload(introduced, resolved, unchanged.length, description)
+  );
+}
+
+/**
+ * Download the comparison itself, HTML or CSV -- two real forms, same "the
+ * browser handles it natively" reasoning as every other download on this
+ * page. Posts the EXACT introduced/resolved/unchanged split already on
+ * screen, not a re-request for the server to recompute -- see
+ * POST /api/propose/comparison-report's own docstring for why: a full
+ * scan is real seconds-to-minutes of work, and the data to render a
+ * report of it is already sitting right here.
+ */
+function renderComparisonDownload(introduced, resolved, unchangedCount, description) {
+  const wrap = el("div", "comparison-download-wrap");
+  wrap.appendChild(el("div", "comparison-download-label", "Download this comparison"));
+
+  const row = el("div", "comparison-download-row");
+  const payload = JSON.stringify({
+    introduced,
+    resolved,
+    unchanged_count: unchangedCount,
+    description,
+  });
+
+  [["html", "HTML"], ["csv", "CSV"]].forEach(([format, label]) => {
+    const form = el("form", "comparison-download-form");
+    form.method = "post";
+    form.action = "/api/propose/comparison-report";
+    form.target = "_blank";
+
+    const findingsField = document.createElement("input");
+    findingsField.type = "hidden";
+    findingsField.name = "findings_json";
+    findingsField.value = payload;
+    form.appendChild(findingsField);
+
+    const formatField = document.createElement("input");
+    formatField.type = "hidden";
+    formatField.name = "format";
+    formatField.value = format;
+    form.appendChild(formatField);
+
+    const button = document.createElement("button");
+    button.type = "submit";
+    button.className = "comparison-download-button";
+    button.textContent = label;
+    form.appendChild(button);
+
+    row.appendChild(form);
+  });
+
+  wrap.appendChild(row);
+  return wrap;
+}
+
+/** Restore the panel to the reader's own scan -- allFindings was never
+ * touched, so this is a re-render, not a re-fetch. */
+function hideComparison() {
+  // The normal report links describe the reader's own scan again the
+  // moment this view goes away -- loadFindings() would set this too, but
+  // going "back" is a re-render of allFindings, not a re-fetch, so nothing
+  // else would restore it.
+  setDownloadAvailable(
+    true,
+    "Downloads what is shown above. The report states what it describes."
+  );
+
+  // renderFindings() itself closes the banner and restores the explainer --
+  // see the comment there. Calling it with the SAME list it already holds
+  // is a re-render, not a re-fetch: allFindings was never touched by
+  // showComparison() in the first place.
+  renderFindings(allFindings);
 }
 
 function renderFindingSections(findings) {
@@ -466,7 +699,7 @@ function renderFindingSections(findings) {
       (f) => renderFinding(f, f.severity, "●", f.severity)
     ),
     renderSection(
-      "Checked — nothing found",
+      "Checked -- nothing found",
       "These checks ran successfully and found no issues.",
       clean,
       (f) => renderFinding(f, "clean", "✓", "checked")
@@ -484,11 +717,22 @@ function renderFindingSections(findings) {
  * reads as "nothing wrong" -- which would be the same lie the status field
  * exists to prevent, told at the frontend instead of the backend.
  */
+/** Show or hide the "this is demo data" notice -- read from the response
+ * header /api/findings sets, never guessed at from the findings themselves.
+ * A header, not a body field, so this stays a pure presentation decision
+ * layered on top of the exact same F-1 list every other caller already
+ * expects -- see get_findings()'s own docstring in web/main.py. */
+function setMockDataNotice(isMock) {
+  const notice = document.getElementById("mock-data-notice");
+  if (notice) notice.hidden = !isMock;
+}
+
 async function loadFindings() {
   const container = document.getElementById("findings");
   try {
     const response = await fetch("/api/findings");
     if (!response.ok) throw new Error(`server returned ${response.status}`);
+    setMockDataNotice(response.headers.get("X-Netwise-Mock-Data") === "true");
     renderFindings(await response.json());
 
     // Findings are on screen, so there is something to export.
@@ -510,7 +754,7 @@ async function loadFindings() {
         "div",
         "notice",
         `Could not load findings: ${error.message}. This is not a clean ` +
-          `result — no analysis has been shown. Is the server running?`
+          `result -- no analysis has been shown. Is the server running?`
       )
     );
 
@@ -520,7 +764,7 @@ async function loadFindings() {
     // that sentence.
     setDownloadAvailable(
       false,
-      "Nothing to export — the findings could not be loaded."
+      "Nothing to export -- the findings could not be loaded."
     );
   }
 }
@@ -613,7 +857,7 @@ function clearStaleResults(reason) {
   // analysis to produce a report of results nobody has seen.
   setDownloadAvailable(
     false,
-    "Nothing to export yet — click Scan Now to check the staged config."
+    "Nothing to export yet -- click Scan Now to check the staged config."
   );
 }
 
@@ -687,7 +931,7 @@ function setUpUpload() {
       const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
       showUploadMessage(
         `'${name}' is ${sizeMb} MB, over the 2 MB limit. Network configs ` +
-          `are normally well under this — is this definitely a config file?`,
+          `are normally well under this -- is this definitely a config file?`,
         false
       );
       input.value = "";
@@ -922,7 +1166,7 @@ function setUpPolicyUpload() {
     // that counts -- the same division of labour as the config upload.
     if (extension !== ".json") {
       showPolicyMessage(
-        `'${name}' is not a policy file. A policy is .json — YAML is not ` +
+        `'${name}' is not a policy file. A policy is .json -- YAML is not ` +
           `supported yet.`,
         "bad"
       );
@@ -955,7 +1199,7 @@ function setUpPolicyUpload() {
       }
 
       clearStaleResults(
-        "Policy staged. Previous findings cleared — they were checked " +
+        "Policy staged. Previous findings cleared -- they were checked " +
           "against the old rules. Click Scan Now to check again."
       );
     } catch (error) {
@@ -1045,7 +1289,7 @@ function addSkippedNotes(notes) {
  *      lands on the side that claims LESS -- the same cautious default the
  *      chat pane and the explanation byline both use.
  */
-function addProposeResponse(result) {
+function addProposeResponse(result, requestText) {
   const log = document.getElementById("propose-log");
   const exchange = el("div", "exchange");
 
@@ -1129,7 +1373,7 @@ function addProposeResponse(result) {
   // a placeholder card for it would be showing a change that does not
   // exist.
   if (result.proposed_change) {
-    exchange.appendChild(renderProposedChange(result.proposed_change));
+    exchange.appendChild(renderProposedChange(result.proposed_change, requestText));
   }
 
   // What the simulation actually found. Empty on a refusal, and empty on a
@@ -1190,22 +1434,113 @@ function addProposeResponse(result) {
  * The line is `el()`-built like everything else -- it is generated text
  * containing addresses from the user's own request.
  */
-function renderProposedChange(change) {
+/**
+ * The affected filter, before and after, as a single ordered list -- every
+ * line from `after`, with the ones that were not already in `before` marked
+ * as added. Answers "what does this actually change" the way a bare
+ * generated line cannot: a line in isolation says nothing about where it
+ * lands or what it sits beside.
+ *
+ * COUNTS OCCURRENCES, NOT JUST MEMBERSHIP. Two rules that happen to read
+ * identically both count once each -- `before.filter(x => x === line).length`
+ * decremented per match, not `.includes()` -- so a config that already
+ * contains the exact text of the generated line does not get it marked
+ * "added" by mistake.
+ *
+ * Returns null if either list is empty, so a config `_acl_body_lines()`
+ * could not parse degrades to no diff shown rather than a false one, and
+ * the caller falls back to the bare line it already rendered.
+ */
+function renderAclDiff(beforeLines, afterLines) {
+  if (!beforeLines || !afterLines || afterLines.length === 0) return null;
+
+  const remaining = beforeLines.slice();
+  const list = el("ul", "acl-diff");
+  afterLines.forEach((line) => {
+    const seenIndex = remaining.indexOf(line);
+    const isNew = seenIndex === -1;
+    if (!isNew) remaining.splice(seenIndex, 1);
+    const item = el("li", isNew ? "acl-diff-line added" : "acl-diff-line", line);
+    if (isNew) {
+      item.appendChild(el("span", "acl-diff-tag", "added"));
+    }
+    list.appendChild(item);
+  });
+  return list;
+}
+
+/**
+ * A real HTML form posting to /api/propose/download, opened in a new tab.
+ * Not fetch + Blob -- same reasoning as the report-download links elsewhere
+ * on this page: a native submission lets the browser handle the file
+ * (Content-Disposition) on its own, with no object URL to build or revoke.
+ *
+ * `requestText` travels as a hidden field's VALUE, a DOM property
+ * assignment rather than a string built into markup -- the same
+ * textContent-not-innerHTML discipline el() uses, applied to a value
+ * instead of a text node, so a request containing quotes or angle brackets
+ * can never break out of the form.
+ */
+function renderProposeDownload(requestText) {
+  const form = el("form", "propose-download-form");
+  form.method = "post";
+  form.action = "/api/propose/download";
+  form.target = "_blank";
+
+  const hidden = document.createElement("input");
+  hidden.type = "hidden";
+  hidden.name = "request";
+  hidden.value = requestText;
+  form.appendChild(hidden);
+
+  const button = document.createElement("button");
+  button.type = "submit";
+  button.className = "propose-download-button";
+  button.textContent = "Download this config with the change applied";
+  form.appendChild(button);
+
+  return form;
+}
+
+/**
+ * The proposed change card, in three visually separate groups rather than
+ * one long stack -- WHAT CHANGES, then the not-applied guarantee on its
+ * own line where it cannot be lost among the other text, then WHAT YOU CAN
+ * DO with it. Each group carries a small-caps label, the same convention
+ * .proposed-heading already uses one level up, so the eye can find "which
+ * part is this" without reading every line.
+ */
+function renderProposedChange(change, requestText) {
   const card = el("div", "proposed-change");
 
   card.appendChild(el("div", "proposed-heading", "Proposed change"));
 
-  // Device and filter first: a line without them is not actionable, and
-  // "which box, which ACL" is the first thing anyone asks.
+  // --- Group 1: what changes -----------------------------------------
+  const whatChanges = el("div", "pc-group pc-what");
+
   const where = el("div", "proposed-where");
   where.appendChild(el("span", "proposed-device", change.device));
   where.appendChild(el("span", "proposed-filter", change.filter));
-  card.appendChild(where);
+  whatChanges.appendChild(where);
 
-  card.appendChild(el("code", "proposed-line", change.line));
+  whatChanges.appendChild(el("code", "proposed-line", change.line));
 
-  // Spelled out in words, not only in colour or position -- the same
-  // reasoning as the "this is not a clean result" sentence on a blind
+  // The full filter, before and after, not just the one generated line --
+  // see renderAclDiff()'s own docstring. Absent rather than guessed if the
+  // backend could not extract the block; the bare line above still stands
+  // on its own either way.
+  const diff = renderAclDiff(change.before_lines, change.after_lines);
+  if (diff) {
+    whatChanges.appendChild(
+      el("div", "acl-diff-label", `${change.filter}, with this change:`)
+    );
+    whatChanges.appendChild(diff);
+  }
+  card.appendChild(whatChanges);
+
+  // --- Group 2: the safety guarantee, alone, between the two groups it
+  // separates. Spelled out in words, not only in colour or position -- the
+  // same reasoning as the "this is not a clean result" sentence on a blind
   // finding card. A style can be overridden, missed, or read past; a
   // sentence cannot be misread.
   card.appendChild(
@@ -1213,10 +1548,22 @@ function renderProposedChange(change) {
       "div",
       "proposed-not-applied",
       "Not applied. Netwise generated this line and simulated it against a " +
-        "throwaway copy of your config — nothing has been written to any " +
+        "throwaway copy of your config -- nothing has been written to any " +
         "device or to the config you uploaded."
     )
   );
+
+  // --- Group 3: what you can do with it -------------------------------
+  // Offered only when there is a real request to resubmit.
+  if (requestText) {
+    const actions = el("div", "pc-group pc-actions");
+    actions.appendChild(el("div", "pc-actions-label", "What you can do next"));
+    const row = el("div", "pc-actions-row");
+    row.appendChild(renderProposeDownload(requestText));
+    row.appendChild(renderFullScanButton(requestText));
+    actions.appendChild(row);
+    card.appendChild(actions);
+  }
 
   return card;
 }
@@ -1247,16 +1594,13 @@ function renderProposedChange(change) {
  *     severity alone would bury a "could not verify" under three
  *     medium-severity diffs.
  */
-function renderImpact(impact) {
+function renderImpact(
+  impact,
+  heading = "Simulated impact -- what changed when this line was applied to a copy"
+) {
   const box = el("div", "impact");
 
-  box.appendChild(
-    el(
-      "div",
-      "impact-heading",
-      "Simulated impact — what changed when this line was applied to a copy"
-    )
-  );
+  box.appendChild(el("div", "impact-heading", heading));
 
   const blind = impact.filter((f) => f.status === "error");
   const problems = impact
@@ -1271,6 +1615,103 @@ function renderImpact(impact) {
   clean.forEach((f) => box.appendChild(renderFinding(f, "clean", "✓", "checked")));
 
   return box;
+}
+
+/**
+ * "Run a full scan against this proposed config" -- the recommended
+ * strengthening. propose_change()'s own impact list only ever proves
+ * change_impact's narrow before/after diff; this runs every check
+ * (access_control, routing, policy_compliance) against the exact config
+ * the change would produce, the same way manually downloading it and
+ * uploading it as a new scan already does today, without the round trip.
+ *
+ * A REAL FETCH, NOT A FORM -- unlike renderProposeDownload() beside it.
+ * This result is rendered INLINE on the same page, not saved as a file, so
+ * there is no download for the browser to hand off and no reason to avoid
+ * fetch here the way the download button does.
+ *
+ * ONE RUN PER CLICK, NOT PER KEYSTROKE OR PER RENDER. This is deliberately
+ * NOT called automatically when the proposed-change card first renders --
+ * see /api/propose/full-scan's own docstring for why it is a second,
+ * explicit click rather than a cost folded into the button everyone
+ * already uses.
+ */
+function renderFullScanButton(requestText) {
+  const wrap = el("div", "full-scan-wrap");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "full-scan-button";
+  button.textContent = "Run a full scan against this proposed config";
+  wrap.appendChild(button);
+
+  const results = el("div", "full-scan-results");
+  wrap.appendChild(results);
+
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    const originalLabel = button.textContent;
+    button.textContent = "Scanning every check against the proposed config…";
+    results.replaceChildren();
+
+    try {
+      const response = await fetch("/api/propose/full-scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request: requestText }),
+      });
+      if (!response.ok) throw new Error(`server returned ${response.status}`);
+      const result = await response.json();
+
+      // Re-fetch the CURRENT baseline rather than trust allFindings to
+      // still be accurate. allFindings is set by the last render of the
+      // reader's own scan, and nothing forces "Scan Now" to have been the
+      // most recent action before this button is clicked -- a stale
+      // in-memory baseline here would make the comparison compare against
+      // the wrong "before" without any error to show for it. This costs
+      // one extra fast request against results already sitting in the
+      // server-side cache; correctness is worth more than saving it.
+      if (result.grounded === true) {
+        const baselineResponse = await fetch("/api/findings");
+        if (baselineResponse.ok) {
+          allFindings = await baselineResponse.json();
+        }
+      }
+
+      // grounded !== true, not === false -- the same cautious-default
+      // reasoning every other flag on this page already follows: a
+      // missing or malformed key must land on the side that claims LESS.
+      if (result.grounded !== true) {
+        results.appendChild(el("div", "full-scan-refusal", result.answer));
+      } else {
+        // Shown in the MAIN results panel, not here -- see showComparison()
+        // for why a before/after comparison belongs in the panel that
+        // already has tiles, sections and a device-aware finding renderer,
+        // not a second, smaller copy of that UI in this narrow pane.
+        showComparison(result.findings || [], requestText);
+        results.appendChild(
+          el(
+            "div",
+            "full-scan-clean",
+            "Comparison ready -- see the Scan results panel on the left."
+          )
+        );
+      }
+    } catch (error) {
+      results.appendChild(
+        el(
+          "div",
+          "full-scan-refusal",
+          `Could not run the full scan: ${error.message}. Nothing was ` +
+            `checked, so nothing is known either way.`
+        )
+      );
+    } finally {
+      button.disabled = false;
+      button.textContent = originalLabel;
+    }
+  });
+
+  return wrap;
 }
 
 function addProposeMessage(text, who) {
@@ -1325,7 +1766,7 @@ function setUpProposeChange() {
 
       if (!response.ok) throw new Error(`server returned ${response.status}`);
 
-      addProposeResponse(await response.json());
+      addProposeResponse(await response.json(), request);
     } catch (error) {
       // Nothing was simulated, so nothing is known. Same reasoning as the
       // chat pane's catch: "could not be asked" and "was refused" are the
@@ -1423,7 +1864,7 @@ function setUpBusinessContextUpload() {
       }
 
       clearStaleResults(
-        "Business context staged. Previous findings cleared — they were " +
+        "Business context staged. Previous findings cleared -- they were " +
           "scored without it. Click Scan Now to check again."
       );
     } catch (error) {
@@ -1548,6 +1989,12 @@ function setUpDeviceFilter() {
   select.addEventListener("change", applyDeviceFilter);
 }
 
+function setUpComparisonBanner() {
+  const button = document.getElementById("comparison-back-button");
+  if (!button) return;
+  button.addEventListener("click", hideComparison);
+}
+
 /* ------------------------------------------------------------------------ */
 loadFindings();
 setUpUpload();
@@ -1557,3 +2004,4 @@ setUpChat();
 setUpProposeChange();
 setUpReportDownload();
 setUpDeviceFilter();
+setUpComparisonBanner();
