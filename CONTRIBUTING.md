@@ -669,10 +669,10 @@ together.
 > what a reader checks first.
 >
 > **Samika signed last, having already been following it for a week**, which
-> is worth recording because it is the wrong order. On #254 she re-requested
-> review rather than merging on two approvals that predated a commit she had
-> pushed — rule 1, applied to her own PR, at her own cost — and wrote on the
-> PR that she was "not claiming it binds me, following it because I cannot
+> is worth recording because it is the wrong order. On #254 he re-requested
+> review rather than merging on two approvals that predated a commit he had
+> pushed — rule 1, applied to his own PR, at his own cost — and wrote on the
+> PR that he was "not claiming it binds me, following it because I cannot
 > see a good argument for the other side." Behaving as though an unratified
 > rule were binding is how a rule quietly becomes custom without anyone
 > agreeing to it, which is the failure this table exists to prevent. The tick
