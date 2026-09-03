@@ -267,6 +267,150 @@ def _coverage_html(findings: Sequence[Dict[str, Any]]) -> str:
     return "".join(parts)
 
 
+def render_comparison_csv(
+    introduced: Sequence[Dict[str, Any]],
+    resolved: Sequence[Dict[str, Any]],
+    unchanged_count: int,
+) -> str:
+    """A before/after comparison, one row per finding that actually moved.
+
+    A `change_type` COLUMN (introduced/resolved) IN PLACE OF `status`.
+        `status` alone would be misleading here: a RESOLVED finding still
+        carries `status="found"` from the scan where it existed -- it is
+        not a "none" or an "error", it is a problem that used to be found
+        and now is not. `change_type` says what actually happened, and
+        `status` is kept alongside it so the original claim is not lost.
+
+    UNCHANGED FINDINGS ARE NOT ROWS HERE.
+        Same reasoning as the dashboard's own comparison view: every one of
+        them is already in the reader's own report of their real scan,
+        unchanged. Repeating the whole list would bury the two things this
+        report exists to answer under everything that stayed the same.
+        `unchanged_count` is still a real number, not a silent omission --
+        see the summary row below.
+    """
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(("change_type",) + CSV_COLUMNS)
+
+    ordered_introduced = sorted(
+        introduced, key=lambda f: SEVERITY_ORDER.get(f.get("severity"), 99)
+    )
+    ordered_resolved = sorted(
+        resolved, key=lambda f: SEVERITY_ORDER.get(f.get("severity"), 99)
+    )
+
+    for change_type, rows in (("introduced", ordered_introduced), ("resolved", ordered_resolved)):
+        for finding in rows:
+            evidence = finding.get("evidence") or {}
+            writer.writerow([
+                change_type,
+                finding.get("id", ""),
+                finding.get("check", ""),
+                finding.get("status", ""),
+                finding.get("severity", ""),
+                finding.get("device", ""),
+                finding.get("summary", ""),
+                evidence.get("detail", ""),
+                evidence.get("source", ""),
+            ])
+
+    # A summary row, not a silent count buried only in the HTML sibling of
+    # this function -- a CSV opened alone, with no report page beside it,
+    # should still be able to say how many findings this comparison is NOT
+    # showing rather than let the row count alone imply completeness.
+    writer.writerow([])
+    writer.writerow(["summary", "introduced", len(ordered_introduced)])
+    writer.writerow(["summary", "resolved", len(ordered_resolved)])
+    writer.writerow(["summary", "unchanged", unchanged_count])
+
+    return buffer.getvalue()
+
+
+def render_comparison_html(
+    introduced: Sequence[Dict[str, Any]],
+    resolved: Sequence[Dict[str, Any]],
+    unchanged_count: int,
+    description: str,
+    source: Optional[str] = None,
+    generated_at: Optional[str] = None,
+) -> str:
+    """A before/after comparison for one proposed change, as a self-contained
+    HTML report -- the same shape render_html() gives a real scan, answering
+    a different question: not "what is true", but "what would this change
+    do".
+
+    REUSES _finding_html()/_STYLE RATHER THAN A SECOND TEMPLATE.
+        Every escaping rule render_html() enforces (evidence.detail is
+        config text taken verbatim from a file someone uploaded, and must
+        never be interpreted as markup) applies here identically -- a
+        second, hand-rolled template would be a second place for that
+        discipline to quietly not hold.
+
+    RESOLVED FINDINGS RENDER WITH THE "clean" CARD STYLE, ON PURPOSE.
+        Visually good news, even though the finding itself came from a
+        status="found" scan -- the card colour answers "is this good or bad
+        for the reader", which is the opposite question from what `status`
+        answers about the scan that produced it. See
+        render_comparison_csv()'s own docstring for the CSV side of the
+        same distinction.
+    """
+    ordered_introduced = sorted(
+        introduced, key=lambda f: SEVERITY_ORDER.get(f.get("severity"), 99)
+    )
+    ordered_resolved = sorted(
+        resolved, key=lambda f: SEVERITY_ORDER.get(f.get("severity"), 99)
+    )
+    when = generated_at or _now()
+    subject = source or "an uploaded configuration"
+    esc = html.escape
+
+    counts = (
+        f'<div class="counts">'
+        f'<div class="count bad"><span class="n">{len(ordered_introduced)}</span>'
+        f'<span class="k">new problems this change introduces</span></div>'
+        f'<div class="count good"><span class="n">{len(ordered_resolved)}</span>'
+        f'<span class="k">problems this change fixes</span></div>'
+        f'<div class="count warn"><span class="n">{unchanged_count}</span>'
+        f'<span class="k">unaffected -- true either way</span></div>'
+        f'</div>'
+    )
+
+    introduced_section = _section_html(
+        "New problems this change introduces",
+        "Not present in the uploaded config -- caused by this specific change.",
+        ordered_introduced, "found",
+        "This change introduces no new problems.")
+
+    resolved_section = _section_html(
+        "Problems this change fixes",
+        "Present in the uploaded config, gone after this change.",
+        ordered_resolved, "clean",
+        "This change fixes no existing problems.")
+
+    unchanged_note = (
+        f'<p class="lede">{unchanged_count} other finding(s) are unaffected '
+        f'-- true whether or not this change is made. See the full scan '
+        f'report for those.</p>'
+        if unchanged_count else ""
+    )
+
+    return (
+        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        f"<title>Netwise comparison -- {esc(subject)}</title>"
+        f"<style>{_STYLE}</style></head><body><div class=\"wrap\">"
+        f"<h1>Netwise proposed-change comparison</h1>"
+        f'<p class="meta">{esc(subject)} &middot; proposed change: '
+        f'{esc(description)} &middot; generated {esc(when)}</p>'
+        f"{counts}{introduced_section}{resolved_section}{unchanged_note}"
+        '<footer>This compares your uploaded config against a SIMULATED '
+        'change -- nothing here was applied to any device or to the '
+        'config you uploaded. Generated by Netwise, offline.'
+        "</footer></div></body></html>"
+    )
+
+
 def render_html(findings: Sequence[Dict[str, Any]],
                 source: Optional[str] = None,
                 generated_at: Optional[str] = None) -> str:
@@ -307,7 +451,7 @@ def render_html(findings: Sequence[Dict[str, Any]],
         "No problems were found by the checks that ran.")
 
     clean = _section_html(
-        "Checked — nothing found",
+        "Checked -- nothing found",
         "These checks ran successfully and found no issues.",
         s["clean"], "clean",
         "No check completed with a clean result.")
@@ -315,7 +459,7 @@ def render_html(findings: Sequence[Dict[str, Any]],
     return (
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-        f"<title>Netwise report — {html.escape(subject)}</title>"
+        f"<title>Netwise report -- {html.escape(subject)}</title>"
         f"<style>{_STYLE}</style></head><body><div class=\"wrap\">"
         f"<h1>Netwise analysis report</h1>"
         f'<p class="meta">{html.escape(subject)} &middot; generated '
