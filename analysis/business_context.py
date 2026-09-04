@@ -161,11 +161,16 @@ def _describe_entry(index: int, entry: Mapping[str, Any]) -> str:
 def _suggest_tier(given: Any) -> str:
     """A did-you-mean, but only for a difference we can actually see.
 
-    No fuzzy matching, for `policy._suggest`'s reason: a wrong guess in an
-    error message is worse than no guess, because it sends the reader to
-    change the wrong thing. Case is the one difference worth naming --
-    "Critical" is a plausible thing to write and an unhelpful thing to be
-    silently corrected on.
+    No fuzzy matching: a wrong guess in an error message is worse than no
+    guess, because it sends the reader to change the wrong thing. Case is the
+    one difference worth naming -- "Critical" is a plausible thing to write
+    and an unhelpful thing to be silently corrected on.
+
+    This one EARNS its place, which is not automatic. `policy._suggest()` was
+    the same idea and was deleted in #185 because its condition was identical
+    to the accepting branch above it, so it could never fire. The test here is
+    whether a suggestion can say something the accepting path does not already
+    handle. A case difference is not silently corrected, so this one can.
     """
     if isinstance(given, str) and given.strip().lower() in TIERS:
         return f" -- did you mean {given.strip().lower()!r}? (tiers are lower-case)"

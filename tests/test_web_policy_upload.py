@@ -256,15 +256,15 @@ def test_an_unknown_key_is_rejected_and_the_entry_is_named():
     names the ENTRY, not just the field, which is the difference between a
     fixable error and a scavenger hunt.
 
-    NOT asserted here: a did-you-mean suggestion. `analysis/policy.py` has
-    `_suggest()` for exactly that, and it is currently UNREACHABLE -- it
-    fires only when a legacy key's canonical name is allowed in that section,
-    which is the same condition the rename branch above it already handles,
-    so every input that would earn a suggestion is accepted-and-renamed
-    instead. Measured across all three sections and both legacy keys: no
-    input produces one. Asserting it here would be a test for behaviour that
-    does not exist; raised as #185 against `analysis/policy.py` instead,
-    where the fault is.
+    NOT asserted here: a did-you-mean suggestion for a legacy key. There is
+    none, and there should not be. `analysis/policy.py` used to carry
+    `_suggest()` for exactly that and it could never fire -- its condition was
+    identical to the rename branch above it, so every input that would have
+    earned a suggestion was accepted-and-renamed instead. Deleted in #185.
+
+    That is the right outcome rather than a lost feature: being accepted with
+    a note in `Policy.renamed` is strictly better for the user than being
+    refused with a hint.
     """
     typo = {
         "device": "rtr-us5",
