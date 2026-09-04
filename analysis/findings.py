@@ -45,6 +45,15 @@ VALID_CHECKS = (
     "policy_compliance",  # Shubham
     "change_impact",  # Shubham
     "risk",  # Samika
+    # --- NOT RATIFIED. Present so the check can be reviewed; NOT registered
+    # in pipeline.CHECKS, so nothing runs before the team agrees (#239).
+    #
+    # This line is a vocabulary addition, and the comment above this tuple
+    # says such an addition takes team agreement. docs/finding-format.md
+    # spends two paragraphs regretting A-2's code landing while its table was
+    # still incomplete; adding the name AND wiring it into every scan would
+    # repeat that exactly. So the name exists and the registration does not.
+    "cve_mapping",  # Samika -- #239, awaiting team agreement before it runs
 )
 
 # The ID prefix each check uses. ONE PREFIX PER CHECK, never shared -- see
@@ -57,6 +66,10 @@ PREFIX_BY_CHECK = {
     "policy_compliance": "PC",
     "change_impact": "CH",
     "risk": "RK",
+    # "CV", not "CM": "CM" reads as a second change-impact prefix beside "CH",
+    # and A-2's whole point was that two checks sharing a prefix makes `id`
+    # uniqueness a matter of discipline rather than of the contract.
+    "cve_mapping": "CV",  # #239 -- see the note in VALID_CHECKS above
 }
 
 VALID_SEVERITIES = ("high", "medium", "low")

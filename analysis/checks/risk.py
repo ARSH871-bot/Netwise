@@ -198,6 +198,46 @@ def severity_for(finding: Dict[str, Any]) -> str:
 _ESCALATING_TIERS = frozenset({"critical"})
 
 
+#: A CEILING SOME CHECKS DECLARE, WHICH ESCALATION MAY NOT BREACH (#239).
+#:
+#: Not every check can support the same claim. `cve_mapping` matches a
+#: software TRAIN against an advisory list, which can only ever say "worth
+#: checking" -- the exact build is not in an exported config, and most
+#: advisories additionally need a feature enabled. So that check caps itself
+#: at `medium` and never emits `high`.
+#:
+#: Business context would undo that from the outside. A `medium` finding on a
+#: device the user marked `critical` escalates by one level, which is `high`
+#: -- and the ordering would then claim a certainty the check explicitly
+#: declined to claim, through a feature that knows nothing about why.
+#:
+#: THIS IS NOT THE SAME AS DOWNGRADING, which limit 2 forbids. A ceiling
+#: applies only to a severity this pass itself raised; it never lowers a
+#: severity a check or an R-rule set. If a check ever emits `high` on its own
+#: judgement, this leaves it alone.
+#:
+#: Keyed on the check rather than hardcoded in the escalation, so the next
+#: check with the same property adds a line rather than an `if`.
+_SEVERITY_CEILING = {"cve_mapping": "medium"}
+
+
+def _apply_ceiling(check: Any, severity: str, previous: str) -> str:
+    """Hold `severity` at the check's ceiling, if it declares one.
+
+    `previous` is the severity BEFORE escalation, and it is what gets returned
+    when the ceiling bites -- not the ceiling value itself. The difference
+    matters if a check ever emits something already below its own ceiling:
+    returning the ceiling would silently RAISE it, which is the opposite of
+    what a cap is for.
+    """
+    ceiling = _SEVERITY_CEILING.get(check)
+    if ceiling is None:
+        return severity
+    if _SEVERITY_RANK.get(severity, 9) < _SEVERITY_RANK.get(ceiling, 9):
+        return previous
+    return severity
+
+
 #: _SEVERITY_RANK read backwards, so a rank can be turned into a name.
 _RANK_TO_SEVERITY = {rank: name for name, rank in _SEVERITY_RANK.items()}
 
@@ -323,7 +363,10 @@ def apply_business_context(
         if updated.get("status") == "found":
             tier = _tier_for(updated.get("device"), context)
             if tier in _ESCALATING_TIERS:
-                updated["severity"] = _escalate(updated.get("severity", ""))
+                before = updated.get("severity", "")
+                updated["severity"] = _apply_ceiling(
+                    updated.get("check"), _escalate(before), before
+                )
 
         adjusted.append(updated)
 
