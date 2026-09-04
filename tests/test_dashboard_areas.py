@@ -144,6 +144,32 @@ def test_the_results_heading_id_is_preserved_exactly_once():
     assert HTML.count('id="results-heading"') == 1
 
 
+def test_the_f4_explainer_id_is_preserved_exactly_once():
+    """The sibling of the test above, and it did not exist until #284.
+
+    RAISED BY @patelankeet2 IN REVIEW, AND HE IS RIGHT ABOUT WHY IT MATTERS.
+    `results-heading` had a count check; `results-explainer` did not. The
+    asymmetry was invisible until he resolved this branch's conflict with
+    `main` by hand and produced a document containing the explainer TWICE --
+    once at its pre-#288 position with the old wording, once at #288's new
+    position with the current wording.
+
+    Every test still passed against that state. The reason is worth naming:
+    test_the_f4_explainer_survives_the_reorganisation() reads the paragraph
+    with HTML.index(), which finds the FIRST match and stops. The stale copy
+    was first and still contained all four required phrases, so the guard
+    matched the orphan and never saw the duplicate below it.
+
+    So the test above is only safe while there is exactly one to find, and
+    nothing asserted that. This is what makes the first-match read honest.
+    The conflict itself is resolved -- both sides of it were deletions, since
+    the heading moved into .area-head and #288 moved the explainer down to
+    sit against the tiles. This guards the class of failure, not that
+    instance.
+    """
+    assert HTML.count('id="results-explainer"') == 1
+
+
 def test_the_areas_introduce_no_new_colours():
     """The issue asked for no gradient/neon/glow.
 
