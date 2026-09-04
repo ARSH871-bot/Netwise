@@ -190,7 +190,21 @@ function renderFinding(finding, variant, icon, badgeText, evidenceId) {
   // anchor to the evidence block's id rather than a click handler, so a
   // reader (or a screen reader, or a test) can follow it the same way as any
   // other link on the page.
-  if (variant !== "blind" && variant !== "clean") {
+  // KEYED ON status, NOT ON A LIST OF VARIANTS.
+  //
+  // This read `variant !== "blind" && variant !== "clean"`, which was exactly
+  // right for the three variants that existed and silently wrong the moment a
+  // fourth arrived: #266's "nothing to check" card fell through and acquired
+  // "No explanation was generated for this finding" -- implying one was
+  // expected, on a card whose whole point is that there was nothing to check.
+  //
+  // The server never even calls the model for a non-`found` finding
+  // (web/main.py's _attach_explanations() and _attach_remediation() both skip
+  // them), so `status === "found"` is the rule those two notices were always
+  // describing. Equivalent for every variant that exists today -- the found
+  // ones are named by severity, and blind/clean/nothing are the other three --
+  // but it cannot go stale the next time someone adds one.
+  if (finding.status === "found") {
     if (finding.explanation) {
       const fromModel = finding.explanation_source === "model";
       const explanation = el(
@@ -250,7 +264,12 @@ function renderFinding(finding, variant, icon, badgeText, evidenceId) {
   //     is available for this one". So a found finding with no remediation
   //     says so in words, the same instinct behind `.no-explanation`-style
   //     states elsewhere in this file.
-  if (variant !== "blind" && variant !== "clean") {
+  //
+  // KEYED ON status FOR THE SAME REASON AS THE EXPLANATION BLOCK ABOVE, and
+  // this is the second copy of that variant list -- which is why #266 hit it
+  // twice. Its own comment says the notice is for "a found finding"; now the
+  // condition says so too.
+  if (finding.status === "found") {
     if (finding.remediation) {
       card.appendChild(
         el("div", "remediation", finding.remediation)
@@ -264,6 +283,20 @@ function renderFinding(finding, variant, icon, badgeText, evidenceId) {
         )
       );
     }
+  }
+
+  // Same reasoning as the blind sentence below, for the third claim (#266).
+  // A muted card is a signal; the words are the claim. Without this the whole
+  // distinction between "we checked and found nothing" and "there was nothing
+  // to check" would rest on a shade of grey.
+  if (variant === "nothing") {
+    card.appendChild(
+      el(
+        "p",
+        "nothing-warning",
+        "This is not a clean result — no rules were supplied for this check, so nothing was checked."
+      )
+    );
   }
 
   // Spell it out in words as well as colour. An amber card is a signal; a
@@ -500,6 +533,33 @@ function renderFindings(findings) {
   renderFindingSections(visibleFindings());
 }
 
+/**
+ * True for a `status="none"` finding that means "there was nothing to run".
+ *
+ * THE THIRD CLAIM (#266). F-4 gives three statuses, and `none` carries two
+ * different sentences: "we checked and found nothing wrong" is a result,
+ * "you supplied no rules for this check, so nothing was checked" is the
+ * absence of one. The second says so in its own detail text while the tile
+ * above counts it as a clean pass -- which is F-4's own confusion appearing
+ * one level down, inside the status that was meant to end it.
+ *
+ * IT STILL COUNTS TOWARD THE CLEAN TILE, deliberately. A fourth number
+ * would trade one confusion for another; three counts are already what
+ * #203 and #288 were both written about. The distinction is made on the
+ * CARD, where there is room for words.
+ *
+ * `device === "n/a"` is the signal because it is the only one that works.
+ * `evidence.source` reads "the policy file you supplied" for this sentinel
+ * AND for every real user-policy finding, so it cannot separate them. The
+ * predicate is duplicated in `analysis/report.py` rather than shared -- two
+ * languages, and a renderer that disagreed with the export would be worse
+ * than one that repeats a line. `tests/test_nothing_to_check.py` pins both
+ * against the real producer.
+ */
+function isNothingToCheck(finding) {
+  return finding.status === "none" && finding.device === "n/a";
+}
+
 function renderFindingSections(findings) {
   const container = document.getElementById("findings");
   container.replaceChildren();
@@ -540,7 +600,10 @@ function renderFindingSections(findings) {
       "Checked — nothing found",
       "These checks ran successfully and found no issues.",
       clean,
-      (f) => renderFinding(f, "clean", "✓", "checked", nextEvidenceId())
+      (f) =>
+        isNothingToCheck(f)
+          ? renderFinding(f, "nothing", "–", "nothing to check", nextEvidenceId())
+          : renderFinding(f, "clean", "✓", "checked", nextEvidenceId())
     ),
   ];
 

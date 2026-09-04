@@ -54,9 +54,61 @@ from analysis import coverage
 #: worse than one that repeats three lines.
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
-#: The F-1 fields, in the order a CSV reader expects to meet them.
+#: The F-1 fields, in the order a CSV reader expects to meet them, plus one
+#: derived column -- see `is_nothing_to_check()` for why it exists and why it
+#: is not part of F-1.
 CSV_COLUMNS = ("id", "check", "status", "severity", "device",
-               "summary", "detail", "source")
+               "summary", "detail", "source", "nothing_to_check")
+
+#: The `device` value a check uses when a finding is ABOUT THE CHECK rather
+#: than about any device. Today exactly one producer emits it --
+#: `analysis/checks/policy_compliance.py`, for "your policy has no rules for
+#: this check" -- and `tests/test_nothing_to_check.py` pins that join so this
+#: renderer cannot quietly stop recognising it.
+NOTHING_TO_CHECK_DEVICE = "n/a"
+
+
+def is_nothing_to_check(finding: Dict[str, Any]) -> bool:
+    """True for a `status="none"` finding that means "there was nothing to run".
+
+    THE THIRD CLAIM, AND WHY IT NEEDS ONE (#266)
+        F-4 gives three statuses, and `none` currently carries two different
+        sentences. "We checked and found nothing wrong" is a result. "You
+        supplied no rules for this check, so nothing was asserted and nothing
+        was checked" is not -- it is the absence of one, and its own detail
+        text says so while the tile above it counts it as a clean pass.
+
+        That is F-4's own failure re-appearing one level down: `none` and
+        `error` were separated precisely so "we looked" could not be confused
+        with "nobody looked", and this is a third thing hiding inside the
+        first.
+
+    WHY THE COUNT DOES NOT MOVE
+        It still counts toward "checked, nothing found". Splitting the tile
+        into four would trade one confusion for another -- the numbers exist
+        to be read at a glance, and a reader cannot hold four. The
+        distinction is made on the CARD, where there is room to say it in
+        words. The tile total is unchanged in both renderers, and tests pin
+        that.
+
+    WHY `device`, AND WHY THAT IS A JOIN WORTH PINNING
+        `n/a` is not a device. It is what a check writes when the finding is
+        about the check itself, and it is the only signal on the finding that
+        separates the two sentences -- `evidence.source` cannot, because it
+        reads "the policy file you supplied" for this sentinel and for every
+        real user-policy finding alike.
+
+        Nothing in F-1 promises that, so a producer renaming it would return
+        this card to looking like a clean pass, silently, with every test
+        green. `tests/test_nothing_to_check.py` runs the real check and
+        asserts the sentinel it emits still satisfies this predicate -- the
+        same class of gap as the PF Sense/policy join, where both halves were
+        tested and the join between them was not.
+    """
+    return (
+        finding.get("status") == "none"
+        and finding.get("device") == NOTHING_TO_CHECK_DEVICE
+    )
 
 
 def _sections(findings: Sequence[Dict[str, Any]]) -> Dict[str, List[Dict]]:
@@ -110,6 +162,13 @@ def render_csv(findings: Sequence[Dict[str, Any]]) -> str:
             finding.get("summary", ""),
             evidence.get("detail", ""),
             evidence.get("source", ""),
+            # "yes" or EMPTY, not "yes"/"no". A blank cell reads as "this
+            # column does not apply here", which is the truth for a problem
+            # or a could-not-check row; writing "no" on those would answer a
+            # question nobody asked of them and invite a reader to treat the
+            # column as a second status. Filterable either way in a
+            # spreadsheet, which is the point of having it at all.
+            "yes" if is_nothing_to_check(finding) else "",
         ])
     return buffer.getvalue()
 
@@ -152,6 +211,10 @@ page-break-inside:avoid}
 .f.blind{background:var(--warn-b);border-color:var(--warn)}
 .f.found{background:var(--bad-b);border-color:var(--bad)}
 .f.clean{background:var(--good-b);border-color:var(--good)}
+/* Neither green nor amber: a third claim gets a third, deliberately
+   NEUTRAL look, so it cannot be misread as either. */
+.f.nothing{background:var(--sunk);border-color:var(--rule)}
+.f .claim{font-size:.8rem;font-weight:600;color:var(--dim);margin-top:.45rem}
 .f .top{display:flex;gap:.55rem;align-items:baseline;flex-wrap:wrap;margin-bottom:.3rem}
 .f .id{font-family:ui-monospace,Consolas,monospace;font-size:.78rem;font-weight:600}
 .f .sev{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;
@@ -181,6 +244,16 @@ def _finding_html(finding: Dict[str, Any], css_class: str) -> str:
     """
     evidence = finding.get("evidence") or {}
     esc = html.escape
+
+    # A "nothing to check" card is styled apart from a genuinely clean one and
+    # SAYS SO IN WORDS. The class alone would leave the whole distinction
+    # resting on a colour, which fails in greyscale, on a printed page and in
+    # a screen reader -- the same discipline as the blind cards' own
+    # "this is not a clean result" sentence, and as the summary tiles'
+    # captions.
+    if is_nothing_to_check(finding):
+        css_class = "nothing"
+
     parts = [f'<div class="f {esc(css_class)}">', '<div class="top">']
     parts.append(f'<span class="id">{esc(str(finding.get("id", "")))}</span>')
     if finding.get("severity"):
@@ -193,6 +266,12 @@ def _finding_html(finding: Dict[str, Any], css_class: str) -> str:
         parts.append(f'<div class="det">{esc(str(evidence["detail"]))}</div>')
     if evidence.get("source"):
         parts.append(f'<div class="src">{esc(str(evidence["source"]))}</div>')
+    if is_nothing_to_check(finding):
+        parts.append(
+            '<div class="claim">Nothing was checked here. This is not a '
+            'clean result -- no rules were supplied for this check, so '
+            'nothing was asserted about the configuration.</div>'
+        )
     parts.append("</div>")
     return "".join(parts)
 
