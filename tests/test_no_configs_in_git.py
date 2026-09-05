@@ -72,6 +72,12 @@ MUST_BE_IGNORED = [
     "configs/deep/nested/anything.txt",
     "web/uploaded_configs/current/config.xml",
     "web/uploaded_configs/anything",
+    # Deliberately NOT a .docx: *.docx is already ignored globally, so a
+    # .docx case here would pass with the folder rule deleted and would
+    # be testing a different line. These three are caught by nothing else.
+    "docs/Feedback/anything-a-marker-wrote.pdf",
+    "docs/Feedback/marker-notes-with-my-student-id.txt",
+    "docs/Feedback/scan-of-a-marked-script.png",
     "scratchpad/client-export-with-no-extension",
     "scratchpad/notes-about-a-real-firewall.md",
     "snapshots/snap/configs/device.cfg",

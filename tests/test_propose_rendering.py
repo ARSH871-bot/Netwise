@@ -481,3 +481,70 @@ def test_the_warning_uses_the_amber_could_not_check_family():
     assert block, ".propose-warning rule not found"
     assert "--blind" in block.group(1)
     assert "rename-note" not in block.group(1)
+
+
+# ---------------------------------------------------------------------------
+# Impact evidence ids (#255 review, Arsh + Samika)
+#
+# renderImpact() reuses renderFinding(), and #236 gave renderFinding() a 5th
+# parameter -- evidenceId -- so an explanation can link to its own evidence
+# block. renderImpact() was not updated for it when this was first written,
+# so every impact card's evidence.id was `undefined`, and two impact cards on
+# screen at once shared one id with two links both resolving to the same
+# (wrong, for one of them) card. Fixed with a module-level, never-reset
+# counter and a prefix ("impact-evidence-") distinct from the dashboard's
+# ("evidence-"), specifically because the propose log accumulates exchanges
+# rather than replacing them -- see the long comment on `_impactEvidenceCounter`
+# in app.js for why a per-call reset would only move the collision from
+# "two panes" to "two turns of the same pane".
+# ---------------------------------------------------------------------------
+
+
+@needs_node
+def test_an_impact_evidence_block_never_gets_an_undefined_id(rendered):
+    ids = rendered["turnOne"]["evidenceIds"]
+    assert ids, "expected at least one evidence block in the impact list"
+    assert "undefined" not in ids
+    assert all(i.startswith("impact-evidence-") for i in ids)
+
+
+@needs_node
+def test_an_impact_evidence_link_points_at_its_own_card(rendered):
+    ids = rendered["turnOne"]["evidenceIds"]
+    hrefs = rendered["turnOne"]["evidenceLinkHrefs"]
+    assert hrefs, "an explained impact finding must get a link"
+    assert hrefs == [f"#{i}" for i in ids]
+
+
+@needs_node
+def test_two_propose_turns_in_one_session_never_collide(rendered):
+    """The regression this design exists to prevent.
+
+    addProposeResponse() never clears #propose-log, so a second proposal's
+    cards render beside the first's, still on screen. A counter that reset
+    per call -- the more obvious implementation, and what renderFindings()
+    itself does -- would hand this second response's evidence block the same
+    id as the first's, and a `getElementById` lookup (or a `:target` jump)
+    would then land on turn one's card from turn two's link.
+    """
+    ids_one = rendered["turnOne"]["evidenceIds"]
+    ids_two = rendered["turnTwo"]["evidenceIds"]
+
+    assert ids_one and ids_two
+    assert set(ids_one).isdisjoint(ids_two), (
+        f"turn one and turn two share an evidence id: {ids_one} / {ids_two}"
+    )
+
+    # Each turn's link must still resolve to THAT turn's own card, not just
+    # be non-colliding by accident.
+    assert rendered["turnOne"]["evidenceLinkHrefs"] == [f"#{i}" for i in ids_one]
+    assert rendered["turnTwo"]["evidenceLinkHrefs"] == [f"#{i}" for i in ids_two]
+
+
+@needs_node
+def test_impact_evidence_ids_cannot_collide_with_the_dashboards(rendered):
+    """Distinct prefixes, not a shared counter -- so the propose pane and
+    the findings pane can both be on screen without coordinating."""
+    ids = rendered["turnOne"]["evidenceIds"] + rendered["turnTwo"]["evidenceIds"]
+    assert all(i.startswith("impact-evidence-") for i in ids)
+    assert not any(i.startswith("evidence-") and not i.startswith("impact-evidence-") for i in ids)

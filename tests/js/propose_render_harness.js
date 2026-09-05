@@ -42,6 +42,8 @@ function makeElement(tag) {
     tagName: tag,
     className: "",
     textContent: "",
+    id: "",
+    href: "",
     children: [],
     style: {},
     disabled: false,
@@ -109,13 +111,15 @@ vm.runInContext(fs.readFileSync(APP, "utf8"), sandbox, { filename: APP });
 
 const log = document.getElementById("propose-log");
 
-/** Flatten a subtree to {cls, tag, text} rows, so assertions can look anywhere. */
+/** Flatten a subtree to {cls, tag, text, id, href} rows, so assertions can look anywhere. */
 function flatten(node, out) {
   (node.children || []).forEach((child) => {
     out.push({
       tag: child.tagName,
       cls: child.className,
       text: child.textContent,
+      id: child.id,
+      href: child.href,
     });
     flatten(child, out);
   });
@@ -171,6 +175,13 @@ function renderAndDescribe(result) {
     findingClasses: nodes
       .filter((n) => n.cls && n.cls.startsWith("finding "))
       .map((n) => n.cls),
+    // Evidence block ids and the hrefs of any evidence-links pointing at
+    // them (#255 review, Arsh + Samika: renderImpact() used to call
+    // renderFinding() without the evidenceId this PR adds, so every impact
+    // card's evidence.id was undefined -- two cards, one id, links that
+    // resolve to the wrong card).
+    evidenceIds: nodes.filter((n) => n.cls === "evidence").map((n) => n.id),
+    evidenceLinkHrefs: nodes.filter((n) => n.cls === "evidence-link").map((n) => n.href),
     // The sentence renderFinding() puts on a blind card. A hand-rolled
     // impact renderer would almost certainly omit it.
     blindNoteCount: nodes.filter(
@@ -386,6 +397,50 @@ const SCRIPTED = {
   answer: "Generated: ...",
 };
 
+// --- Two turns in one session (#255 review) -------------------------------
+//
+// addProposeResponse() appends each exchange to #propose-log and never
+// clears it (unlike loadFindings(), which replaces the whole findings
+// container every call). So a second proposal renders ALONGSIDE the first,
+// not instead of it, and an evidence-id counter that reset per call would
+// hand the second response's cards the same ids as the first's -- which are
+// still on screen. This scenario renders two DIFFERENT explained impact
+// findings back to back and checks the second call's ids never repeat the
+// first's, matching the real, never-cleared log.
+const EXPLAINED_IMPACT_TURN_1 = {
+  request_understood: "On rtr-us5, add to 'acl_in' (at the top): deny tcp ...",
+  proposed_change: CHANGE,
+  impact: [
+    finding({
+      id: "CH-001",
+      evidence: { detail: "turn one detail", source: "turn-one-source" },
+      explanation: "Turn one explanation.",
+      explanation_source: "model",
+    }),
+  ],
+  verified: true,
+  warning: false,
+  grounded: true,
+  answer: "Generated: ... turn one.",
+};
+
+const EXPLAINED_IMPACT_TURN_2 = {
+  request_understood: "On rtr-us5, add to 'acl_in' (at the top): permit tcp ...",
+  proposed_change: CHANGE,
+  impact: [
+    finding({
+      id: "CH-001",
+      evidence: { detail: "turn two detail", source: "turn-two-source" },
+      explanation: "Turn two explanation.",
+      explanation_source: "model",
+    }),
+  ],
+  verified: true,
+  warning: false,
+  grounded: true,
+  answer: "Generated: ... turn two.",
+};
+
 const out = {
   refused: renderAndDescribe(REFUSED),
   noUpload: renderAndDescribe(NO_UPLOAD),
@@ -400,6 +455,8 @@ const out = {
   groundedJunkFlags: renderAndDescribe(GROUNDED_JUNK_FLAGS),
   groundedJunkWarningOnly: renderAndDescribe(GROUNDED_JUNK_WARNING_ONLY),
   scripted: renderAndDescribe(SCRIPTED),
+  turnOne: renderAndDescribe(EXPLAINED_IMPACT_TURN_1),
+  turnTwo: renderAndDescribe(EXPLAINED_IMPACT_TURN_2),
 };
 
 console.log(JSON.stringify(out, null, 2));

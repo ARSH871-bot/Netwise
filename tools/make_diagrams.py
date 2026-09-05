@@ -148,3 +148,82 @@ ax.text(5.0, -0.75,
 save(fig, "config-journey.svg")
 
 print("done")
+
+
+# --- 4. the ownership boundary -----------------------------------------------
+# Written for the PDR feedback of 3 September, which asked three related
+# things: distinguish Batfish from our own contribution, explain what Batfish
+# outputs and how we use it, and show clearly which parts are third party.
+# One diagram answers all three, because they are one question.
+THIRD = "#8A94A6"
+OURS = ACCENT
+
+fig, ax = plt.subplots(figsize=(7.6, 5.4))
+ax.set_xlim(0, 10)
+ax.set_ylim(0, 7.4)
+ax.axis("off")
+
+ax.text(5, 7.15, "What Batfish does, and what we wrote",
+        ha="center", fontsize=11.5, fontweight="bold", color="#1a1a1a")
+ax.text(5, 6.78, "Grey is somebody else's work. Blue is ours.",
+        ha="center", fontsize=8.4, color=MUTED)
+
+box(ax, 0.4, 5.35, 4.3, 1.15, "Batfish  (third party)",
+    "parses vendor config text, builds a model,\nanswers formal questions", THIRD)
+box(ax, 5.3, 5.35, 4.3, 1.15, "Ollama + llama3.2  (third party)",
+    "runs a language model locally\nno network egress", THIRD)
+
+box(ax, 0.4, 3.75, 4.3, 1.25, "What we ASK Batfish",
+    "which questions, with which parameters,\nscoped to the devices present", OURS)
+box(ax, 5.3, 3.75, 4.3, 1.25, "What we ALLOW the model to do",
+    "rephrase one finding it is handed;\nnever choose, never invent", OURS)
+
+box(ax, 0.4, 2.15, 9.2, 1.25, "Our pipeline and the F-1 contract",
+    "runs each check in isolation, converts a crash into a visible finding,\n"
+    "and forces every result into seven fields with found / none / error", OURS)
+
+box(ax, 0.4, 0.55, 9.2, 1.25, "Our judgement, which Batfish has no opinion about",
+    "severity rules · what counts as a blind spot · refusing a question we cannot ground\n"
+    "PF Sense conversion · what the user is told when a check did not run", OURS)
+
+for y0, y1 in ((5.30, 5.05), (3.70, 3.45), (2.10, 1.85)):
+    for x in (2.55, 7.45):
+        ax.annotate("", xy=(x, y1), xytext=(x, y0),
+                    arrowprops=dict(arrowstyle="->", lw=1.4, color=MUTED))
+
+ax.text(5, 0.12, "Batfish answers questions. Choosing the question, trusting the "
+        "answer, and saying what it means are ours.",
+        ha="center", fontsize=8.2, color="#1a1a1a", style="italic")
+save(fig, "ownership-boundary.svg")
+
+
+# --- 5. the process flowchart -------------------------------------------------
+fig, ax = plt.subplots(figsize=(6.4, 8.2))
+ax.set_xlim(0, 10)
+ax.set_ylim(0, 15.2)
+ax.axis("off")
+ax.text(5, 14.9, "What happens when you press Scan Now",
+        ha="center", fontsize=11.5, fontweight="bold", color="#1a1a1a")
+
+steps = [
+    (13.2, "Upload a config file", "staged only — nothing is analysed yet", OURS),
+    (11.7, "Press Scan Now", "the scan is a separate, deliberate act", OURS),
+    (10.2, "Load into Batfish", "init_snapshot builds the model", THIRD),
+    (8.7, "Did it parse?", "no → report it; never analyse silently", WARN),
+    (7.2, "Run the three checks, isolated", "access control · policy · routing", OURS),
+    (5.7, "Is this check about a device present?", "no → status=error, not a green tick", WARN),
+    (4.2, "Re-rate and sort (risk)", "may re-rate; may not bury a blind spot", OURS),
+    (2.7, "Explain each problem", "model if reachable, else deterministic text", OURS),
+    (1.2, "Render, and say which", "byline names model or fallback", OURS),
+]
+for y, title, sub, colour in steps:
+    box(ax, 0.5, y, 9.0, 1.05, title, sub, colour)
+for i in range(len(steps) - 1):
+    y0 = steps[i][0]
+    y1 = steps[i + 1][0] + 1.05
+    ax.annotate("", xy=(5, y1), xytext=(5, y0),
+                arrowprops=dict(arrowstyle="->", lw=1.5, color=MUTED))
+ax.text(5, 0.55, "Amber steps are the ones that can stop and say so. "
+        "They are the reason a result is trustworthy.",
+        ha="center", fontsize=8.2, color="#1a1a1a", style="italic")
+save(fig, "process-flow.svg")
