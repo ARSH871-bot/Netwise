@@ -170,6 +170,118 @@ def test_the_f4_explainer_id_is_preserved_exactly_once():
     assert HTML.count('id="results-explainer"') == 1
 
 
+def _element_children_of_parent_of(html_text, target_id):
+    """(parent_tag, [ids-or-tags of that parent's ELEMENT children], index of target).
+
+    A real parse rather than a string-distance check, because "immediately
+    preceding sibling" is a claim about the tree and a claim about the tree
+    should be tested against one. Two elements can be adjacent in the source
+    and not siblings at all, and a substring test cannot tell the difference.
+
+    Comments and text are skipped deliberately: a comment between two
+    elements does not separate them for a reader, and this project's markup
+    is full of long explanatory ones. Only ELEMENTS count as separation,
+    which is exactly what the regression inserted.
+    """
+    from html.parser import HTMLParser
+
+    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input",
+            "link", "meta", "param", "source", "track", "wbr"}
+
+    class _Tree(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.root = {"tag": "#root", "attrs": {}, "children": []}
+            self.stack = [self.root]
+
+        def handle_starttag(self, tag, attrs):
+            node = {"tag": tag, "attrs": dict(attrs), "children": []}
+            self.stack[-1]["children"].append(node)
+            if tag not in VOID:
+                self.stack.append(node)
+
+        def handle_startendtag(self, tag, attrs):
+            self.stack[-1]["children"].append(
+                {"tag": tag, "attrs": dict(attrs), "children": []}
+            )
+
+        def handle_endtag(self, tag):
+            for i in range(len(self.stack) - 1, 0, -1):
+                if self.stack[i]["tag"] == tag:
+                    del self.stack[i:]
+                    return
+
+    parser = _Tree()
+    parser.feed(html_text)
+
+    def find_parent(node):
+        for child in node["children"]:
+            if child["attrs"].get("id") == target_id:
+                return node
+            found = find_parent(child)
+            if found is not None:
+                return found
+        return None
+
+    parent = find_parent(parser.root)
+    assert parent is not None, f"no element with id={target_id!r} in the document"
+
+    labels = [c["attrs"].get("id") or f"<{c['tag']}>" for c in parent["children"]]
+    index = next(
+        i for i, c in enumerate(parent["children"])
+        if c["attrs"].get("id") == target_id
+    )
+    return parent["tag"], labels, index
+
+
+def test_the_f4_explainer_is_the_immediately_preceding_sibling_of_the_tiles():
+    """THE DISPLACEMENT GUARD, and it did not exist until this commit.
+
+    RAISED BY @SamikaPerera IN REVIEW ON THIS PR, twice, and offered by her
+    rather than requested -- this is that offer taken up.
+
+    #203 put this paragraph directly above the tiles deliberately, because
+    the client said the results heading misled him and an explanation of
+    three numbers belongs next to the three numbers. #219 then put the device
+    filter between them, pushing the explanation 48px away from the thing it
+    explains and leaving a control in the gap. #288 moved it back.
+
+    NOTHING GUARDED THAT, AND THE OMISSION WAS MEASURED RATHER THAN ASSUMED.
+    She replanted the exact regression on this branch -- moved the explainer
+    back above the device filter -- and the whole suite passed, 1250 tests,
+    zero failures. Her #288 description had already predicted it: "nothing
+    pins the explainer's text or position in the test suite, so nothing
+    broke; that is also why the regression was silent."
+
+    THIS IS NOT THE SAME PROPERTY AS THE TEST ABOVE. `test_the_f4_explainer_
+    id_is_preserved_exactly_once` catches DUPLICATION; this catches
+    DISPLACEMENT. Neither can catch the other: a document can hold exactly
+    one explainer in entirely the wrong place, or two in the right one.
+    @patelankeet2 found the first, @SamikaPerera the second, and it took both
+    reviews to cover the pair.
+
+    Written as a sibling assertion rather than "is it near the tiles",
+    because near is a judgement and this is not: the paragraph either sits
+    against the block it describes or something is between them.
+    """
+    parent_tag, siblings, summary_index = _element_children_of_parent_of(
+        HTML, "summary"
+    )
+
+    assert summary_index > 0, (
+        f"#summary is the first child of <{parent_tag}>, so nothing precedes "
+        f"it. Siblings: {siblings}"
+    )
+
+    preceding = siblings[summary_index - 1]
+    assert preceding == "results-explainer", (
+        f"the F-4 explainer is no longer immediately above the tiles -- "
+        f"{preceding!r} is between them. This is the #219 regression that "
+        f"#288 fixed; see the docstring. Siblings of #summary in "
+        f"<{parent_tag}>: {siblings}"
+    )
+
+
 def test_the_areas_introduce_no_new_colours():
     """The issue asked for no gradient/neon/glow.
 
