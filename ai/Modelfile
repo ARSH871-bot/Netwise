@@ -18,13 +18,42 @@
 #     ollama create netwise-warden -f ai/Modelfile
 #
 # WHY llama3.2:3b AND NOT SOMETHING BIGGER
-#     This machine has 16 GB RAM and no dedicated GPU (integrated Intel Iris
-#     Xe only), so inference runs on CPU. 3B is small enough to respond in a
-#     few seconds on this hardware and is more than capable for this task --
-#     REPHRASING one already-verified finding into plain English is a
-#     translation job, not an open-ended reasoning task. If explanation
-#     quality turns out to need more model, the fix is changing this one FROM
-#     line and rebuilding; nothing else in the project depends on the size.
+#     The reason stands on its own regardless of hardware: REPHRASING one
+#     already-verified finding into plain English is a translation job, not
+#     an open-ended reasoning task, and 3B is more than capable of that. If
+#     explanation quality turns out to need more model, the fix is changing
+#     this one FROM line and rebuilding; nothing else in the project depends
+#     on the size.
+#
+#     A PRIOR VERSION OF THIS COMMENT justified 3B with "16 GB RAM and no
+#     dedicated GPU (integrated Intel Iris Xe only), so inference runs on
+#     CPU" -- not true of the machine that actually ran the client demo build
+#     (#258). Measured on it directly:
+#
+#         RAM   15.6 GB
+#         CPU   13th Gen Intel(R) Core(TM) i7-13650HX
+#         GPU   Intel(R) UHD Graphics                  (2,048 MB)
+#         GPU   NVIDIA GeForce RTX 4050 Laptop GPU     (4,095 MB)  <- dedicated
+#
+#     4 GB of dedicated VRAM, not "no dedicated GPU" -- and llama3.2:3b fits
+#     inside it, so inference is running on GPU, not CPU as the old comment
+#     claimed. This matters because the comment above is load-bearing for a
+#     future decision: it says the fix for needing more model is one FROM
+#     line. Someone reading "no dedicated GPU, CPU inference" would
+#     reasonably conclude a bigger model is off the table on this hardware.
+#     It is not -- there is real VRAM headroom the old comment hid.
+#
+#     Measured timings, with the model actually live, replace the old
+#     comment's guess ("a few seconds on this hardware", describing CPU
+#     inference that was never happening):
+#
+#         per-finding inference, warm            ~1.0 s
+#         first inference after a model build     7.4 s
+#         first scan of an uploaded config       9-12 s
+#         re-scan without re-upload                0.0 s  (analysis cache)
+#
+#     The number that actually matters for budgeting a demo -- 9-12 seconds
+#     for the first scan -- was not predicted by the old comment at all.
 #
 # THE ONE RULE EVERYTHING BELOW SERVES
 #     CLAUDE.md constraint 2: the AI must never invent or guess network
