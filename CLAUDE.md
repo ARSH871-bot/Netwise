@@ -236,6 +236,45 @@ Batfish runs in Docker container `batfish` (image `batfish/allinone`), exposing
   > missing `<type>`/`<protocol>` question (#80) are unaffected by this and
   > remain open.
 
+  > **UPDATE, 5 September.** The rest of #78 was picked up without waiting
+  > for Senaka's answers to the four questions now written out in Discussion
+  > #294, on the reasoning that a decision genuinely blocked on him should
+  > stay blocked, but nothing else should sit idle in the meantime. That
+  > split the remaining work into two very different piles.
+  >
+  > **The blast radius, fixed.** A single rule failing to convert for ANY
+  > reason (missing or unsupported `<type>`, an unsupported `<protocol>`
+  > value, an unresolved alias, a bad port, an unresolvable network
+  > reference) used to abort the entire file, not just the interface or rule
+  > it was on. At the client's real scale — 1,998 XML elements against this
+  > project's 54-element fixture — one anomaly anywhere meant zero analysis
+  > of anything. Re-scoped the same way the DHCP-WAN/undeclared-VPN case was:
+  > the one failing rule is excluded and named, everything else converts
+  > exactly as if it were never there. This required no guess about what any
+  > field means — every refusal still names the same cause it always did,
+  > only its blast radius shrank from "the whole file" to "this one rule".
+  >
+  > **`<protocol>`'s semantic question, still untouched.** #80 itself says
+  > "do not fix this before the client answers" — that instruction stands,
+  > unconditionally. What DID move: missing `<type>` now gets its own precise
+  > message, split from present-but-invalid the same way the two interface
+  > causes were split earlier, because there is no safe default for
+  > pass/block/reject the way "any" is one for protocol. `<protocol>`'s
+  > existing default-to-`"any"` behaviour was not touched at all.
+  >
+  > **NAT, reaffirmed rather than left stale.** Checked against the same
+  > "no guessing" bar the blast-radius fix cleared: it does not clear it.
+  > There is no version of "convert the NAT rule" that does not invent
+  > translation semantics this module has never observed. Detection and
+  > exclusion (#264) is unchanged, and `docs/design/pfsense-nat-support.md`
+  > records that this was revisited today, not simply never revisited.
+  >
+  > A separate idea — disclosing an inferred `<protocol>` with a comment,
+  > #80's own preferred Option C, which changes no behaviour, only makes the
+  > existing silent default visible — was drafted as a question for the team
+  > rather than built solo, precisely because it touches the one issue
+  > marked blocked on the client. Not yet decided.
+
 ## 7a. The finding format (F-1) — the one contract
 
 **`docs/finding-format.md` is authoritative.** It was agreed by all four team
