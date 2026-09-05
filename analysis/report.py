@@ -354,6 +354,20 @@ def render_comparison_html(
         answers about the scan that produced it. See
         render_comparison_csv()'s own docstring for the CSV side of the
         same distinction.
+
+    `introduced`/`resolved` MUST BE status="found" ONLY -- ENFORCED BY THE
+    CALLER, NOT HERE.
+        `_section_html()` below hard-codes the card status to "found" for
+        `introduced`. That is only correct because
+        `POST /api/propose/comparison-report` (web/main.py) rejects any
+        other status in either list before this is ever called, and
+        `diffFindings()` in web/static/app.js filters to status="found" on
+        both sides before building the payload in the first place. A
+        status="none"/"error" finding reaching this function would render
+        under a heading that misstates what happened -- see #298's review
+        for the two concrete cases (a check going blind rendered as a fix,
+        a check going clean rendered as a new problem) this now prevents
+        upstream.
     """
     ordered_introduced = sorted(
         introduced, key=lambda f: SEVERITY_ORDER.get(f.get("severity"), 99)

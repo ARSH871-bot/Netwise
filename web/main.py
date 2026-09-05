@@ -1966,6 +1966,27 @@ def download_comparison_report(
     if not isinstance(description, str) or not description:
         raise HTTPException(status_code=422, detail="findings_json.description must be a non-empty string.")
 
+    # F-4, enforced here rather than trusted from the browser (#298 review,
+    # @shubhamkataria2005 and @ARSH871-bot). "introduced" and "resolved" mean
+    # a PROBLEM appearing or disappearing; a status="none" or "error" finding
+    # in either list is a status TRANSITION, a different and more urgent
+    # claim, and rendering it under either heading here is exactly the bug
+    # review caught in app.js's diffFindings(). The browser now filters to
+    # status="found" before ever building this payload, but this endpoint is
+    # a real POST a request can still reach directly, and the artefact this
+    # produces is what a reader keeps after the screen is gone.
+    for field_name, field_findings in (("introduced", introduced), ("resolved", resolved)):
+        offenders = [f.get("status") for f in field_findings if f.get("status") != "found"]
+        if offenders:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"findings_json.{field_name} must contain only status=\"found\" "
+                    f"findings; got status={offenders[0]!r}. A status transition "
+                    "(none/error) is not a problem introduced or resolved."
+                ),
+            )
+
     media_type, extension = _COMPARISON_REPORT_FORMATS[format]
     if format == "html":
         subject = configs_dir().name if _is_uploaded() else "an uploaded configuration"

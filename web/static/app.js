@@ -483,21 +483,102 @@ function findingIdentity(finding) {
  *   resolved    in before, not in after -- a problem this change FIXES
  *   unchanged   in both -- present either way, this change did not move it
  *
- * Deliberately simple set comparison, not a smarter fuzzy match. A finding
- * that changed severity or evidence but kept the same summary reads as
- * "unchanged" here -- correct, because the CLAIM (what was found, on what,
- * by what check) is what a reader means by "the same problem", not the
- * exact bytes of its evidence string.
+ * FOUND FINDINGS ONLY, ON BOTH SIDES, BEFORE ANY OF THAT.
+ *     This file's own rule at the top says status decides which section a
+ *     finding belongs in. A `none` or `error` finding entering this diff by
+ *     set membership alone breaks that rule two ways at once, both found in
+ *     review (#298, @shubhamkataria2005 and @ARSH871-bot, reproduced
+ *     independently against this exact function):
+ *
+ *       - a check going from clean/found to error renders as "problems this
+ *         change FIXES" -- going blind is shown as good news
+ *       - a check going from error to clean renders as "a new problem this
+ *         change INTRODUCES" -- a green tick is shown as a new problem
+ *
+ *     Filtering both inputs to status="found" first means "introduced" and
+ *     "resolved" can only ever mean what their section headings say. A
+ *     status TRANSITION (something we could check becoming something we
+ *     cannot, or the reverse) is a real, separate signal -- see
+ *     detectBlindTransitions() below, which this deliberately does not fold
+ *     into any of the three buckets here.
+ *
+ * Deliberately simple set comparison otherwise, not a smarter fuzzy match. A
+ * finding that changed severity or evidence but kept the same summary reads
+ * as "unchanged" here -- correct, because the CLAIM (what was found, on
+ * what, by what check) is what a reader means by "the same problem", not
+ * the exact bytes of its evidence string.
  */
 function diffFindings(before, after) {
-  const beforeKeys = new Set(before.map(findingIdentity));
-  const afterKeys = new Set(after.map(findingIdentity));
+  const beforeFound = before.filter((f) => f.status === "found");
+  const afterFound = after.filter((f) => f.status === "found");
+  const beforeKeys = new Set(beforeFound.map(findingIdentity));
+  const afterKeys = new Set(afterFound.map(findingIdentity));
 
   return {
-    introduced: after.filter((f) => !beforeKeys.has(findingIdentity(f))),
-    resolved: before.filter((f) => !afterKeys.has(findingIdentity(f))),
-    unchanged: after.filter((f) => beforeKeys.has(findingIdentity(f))),
+    introduced: afterFound.filter((f) => !beforeKeys.has(findingIdentity(f))),
+    resolved: beforeFound.filter((f) => !afterKeys.has(findingIdentity(f))),
+    unchanged: afterFound.filter((f) => beforeKeys.has(findingIdentity(f))),
   };
+}
+
+/** `check|device`, the identity a status TRANSITION is measured against --
+ * deliberately without `status` or `summary`, unlike findingIdentity() above.
+ * The question here is not "is this the same problem" but "can we check
+ * this thing at all", which is a property of the (check, device) pair, not
+ * of any one finding's wording. */
+function checkDeviceKey(finding) {
+  return `${finding.check}|${finding.device}`;
+}
+
+/** Every (check, device) pair that could not be checked at all in this set
+ * of findings -- i.e. has a status="error" sentinel. */
+function blindPairs(findings) {
+  const pairs = new Map();
+  findings.forEach((f) => {
+    if (f.status === "error") pairs.set(checkDeviceKey(f), f);
+  });
+  return pairs;
+}
+
+/**
+ * Which (check, device) pairs changed whether we could check them at all,
+ * between two scans. Built and rendered separately from diffFindings()'s
+ * three buckets on purpose -- see that function's own comment for why
+ * folding this in is exactly the bug review caught on #298.
+ *
+ *   newlyBlind    could be checked before (found or none), cannot now
+ *                 (error). The dangerous direction: this change broke our
+ *                 ability to see something, and it must never be silent.
+ *   newlySighted  could not be checked before (error), now reports CLEAN
+ *                 (none). Good news, but still not "introduced" or
+ *                 "resolved" -- nothing was found either time.
+ *
+ * A pair that goes from error to a NEW found finding is deliberately left
+ * out of newlySighted -- diffFindings() above already reports that
+ * correctly as "introduced", and listing it twice under two different
+ * framings would be confusing rather than careful.
+ */
+function detectBlindTransitions(before, after) {
+  const beforeBlind = blindPairs(before);
+  const afterBlind = blindPairs(after);
+  const afterNone = new Map();
+  after.forEach((f) => {
+    if (f.status === "none") afterNone.set(checkDeviceKey(f), f);
+  });
+
+  const newlyBlind = [];
+  afterBlind.forEach((finding, key) => {
+    if (!beforeBlind.has(key)) newlyBlind.push(finding);
+  });
+
+  const newlySighted = [];
+  beforeBlind.forEach((_beforeFinding, key) => {
+    if (!afterBlind.has(key) && afterNone.has(key)) {
+      newlySighted.push(afterNone.get(key));
+    }
+  });
+
+  return { newlyBlind, newlySighted };
 }
 
 /** Render the three comparison tiles -- same shape as renderSummary(),
@@ -521,6 +602,54 @@ function renderComparisonSummary(introduced, resolved, unchanged) {
 }
 
 /**
+ * Render the status-transition disclosure from detectBlindTransitions(),
+ * or null if neither list has anything in it.
+ *
+ * ITS OWN SECTION, ABOVE "introduced"/"resolved", NEVER FOLDED INTO EITHER
+ * COUNT. A pair going blind is not "a new problem" in the sense the section
+ * below it means -- it is the dashboard admitting it no longer knows,
+ * which is a different and more urgent claim than any one finding. Reuses
+ * renderFinding()'s existing "blind"/"clean" variants rather than a new
+ * template, because these ARE real status="error"/"none" findings from the
+ * actual scan -- not summaries invented for this view.
+ */
+function renderBlindTransitions(newlyBlind, newlySighted) {
+  if (!newlyBlind.length && !newlySighted.length) return null;
+
+  const wrap = el("div", "comparison-blind-transitions");
+
+  if (newlyBlind.length) {
+    wrap.appendChild(
+      el(
+        "p",
+        "comparison-blind-transitions-lede warn",
+        `This change stops us being able to check ${newlyBlind.length} ` +
+          `thing${newlyBlind.length === 1 ? "" : "s"}:`
+      )
+    );
+    newlyBlind.forEach((f) =>
+      wrap.appendChild(renderFinding(f, "blind", "⚠", "could not check"))
+    );
+  }
+
+  if (newlySighted.length) {
+    wrap.appendChild(
+      el(
+        "p",
+        "comparison-blind-transitions-lede",
+        `This change lets us check ${newlySighted.length} ` +
+          `thing${newlySighted.length === 1 ? "" : "s"} we could not check before:`
+      )
+    );
+    newlySighted.forEach((f) =>
+      wrap.appendChild(renderFinding(f, "clean", "✓", "checked"))
+    );
+  }
+
+  return wrap;
+}
+
+/**
  * Show a before/after comparison in the main results panel, and remember
  * how to get back. `description` is the plain-English request that was
  * understood, shown in the banner so the comparison is never mistaken for
@@ -528,6 +657,7 @@ function renderComparisonSummary(introduced, resolved, unchanged) {
  */
 function showComparison(afterFindings, description) {
   const { introduced, resolved, unchanged } = diffFindings(allFindings, afterFindings);
+  const { newlyBlind, newlySighted } = detectBlindTransitions(allFindings, afterFindings);
 
   document.getElementById("results-explainer").hidden = true;
   const filterRow = document.getElementById("device-filter-row");
@@ -561,6 +691,9 @@ function showComparison(afterFindings, description) {
 
   const container = document.getElementById("findings");
   container.replaceChildren();
+
+  const blindTransitions = renderBlindTransitions(newlyBlind, newlySighted);
+  if (blindTransitions) container.appendChild(blindTransitions);
 
   const sections = [
     renderSection(

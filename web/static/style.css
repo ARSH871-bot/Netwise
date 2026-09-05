@@ -1168,6 +1168,32 @@ body {
   margin-top: 0.5rem;
 }
 
+/* A status TRANSITION (something we could check becoming something we
+   cannot, or the reverse) -- its own block, above the introduced/resolved
+   sections, never folded into either. See detectBlindTransitions() and
+   renderBlindTransitions() in app.js for why this exists as a third thing
+   rather than a variant of the two sections beside it. */
+.comparison-blind-transitions {
+  margin-bottom: 1.5rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px dashed var(--blind);
+  border-radius: 6px;
+}
+
+.comparison-blind-transitions-lede {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0.5rem 0 0.4rem;
+}
+
+.comparison-blind-transitions-lede:first-child {
+  margin-top: 0;
+}
+
+.comparison-blind-transitions-lede.warn {
+  color: var(--blind-ink);
+}
+
 .comparison-download-wrap {
   margin-top: 1rem;
   padding-top: 0.75rem;
