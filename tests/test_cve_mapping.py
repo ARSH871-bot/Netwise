@@ -21,8 +21,6 @@ where a real-Batfish test went, and the four outcomes were verified that way
 by hand before these were written.
 """
 
-import re
-
 import pandas as pd
 import pytest
 
