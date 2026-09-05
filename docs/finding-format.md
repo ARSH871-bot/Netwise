@@ -345,7 +345,7 @@ two incidents above are the argument, and both were in code with tests.
 | **Shubham** | Raised it; #238 is blocked on it and `policy_compliance` would populate it first | ✅ |
 | **Arsh** | Owns `analysis/findings.py`, where the optional field is validated, and `access_control` would be a second producer | ⬜ |
 | **Ankeet** | The AI layer reads `evidence.detail`, which this deliberately does not touch — his sign-off is the check on that claim | ✅ |
-| **Samika** | `risk` reads every finding and the dashboard renders them; an unrendered new field is hers to decide about | ✅ |
+| **Samika** | `risk` reads every finding and the dashboard renders them; an unrendered new field is his to decide about | ✅ |
 
 > **NOT RATIFIED — three of four, as of 3 September.** Confirmed on #269: the
 > specific claim this row depends on was checked directly rather than trusted
@@ -357,10 +357,10 @@ two incidents above are the argument, and both were in code with tests.
 > `main`, and this file spends two paragraphs on why that was wrong. #238
 > waits on @ARSH871-bot.
 >
-> **Samika's tick is dated 31 August, not today.** She posted *"Signing.
+> **Samika's tick is dated 31 August, not today.** He posted *"Signing.
 > Clean and genuinely optional -- doesn't touch evidence.detail, doesn't add
 > severity or new vocabulary"* on #269 at 03:16 that morning; the PR merged
-> at 03:54, thirty-eight minutes later, with her row still ⬜. The agreement
+> at 03:54, thirty-eight minutes later, with his row still ⬜. The agreement
 > existed the whole time and lived only in a comment.
 >
 > That is this file's own recurring lesson happening to this file: an
