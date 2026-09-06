@@ -468,6 +468,32 @@ body {
   color: #fff;
 }
 
+/* --- status="none" BUT nothing was actually checked (#266) ---------------
+   A THIRD CLAIM, so a third look -- deliberately NEITHER green nor amber.
+   Green would say we checked and it was fine; amber would say a check
+   failed. Neither happened: there was nothing to run. Neutral grey is the
+   absence of a verdict, which is exactly what this is.
+
+   The colour is the signal and never the claim -- `.nothing-warning` below
+   carries the whole meaning in words, so this survives greyscale, a printed
+   page and a screen reader. Same discipline as `.blind-warning`. */
+.finding.nothing {
+  border-color: var(--line);
+  border-left-color: var(--ink-soft);
+  background: var(--page);
+}
+.finding.nothing .badge {
+  background: var(--ink-soft);
+  color: #fff;
+}
+
+.nothing-warning {
+  margin: 0.4rem 0 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
 .blind-warning {
   margin: 0.4rem 0 0;
   font-size: 0.8rem;
