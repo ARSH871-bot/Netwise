@@ -347,7 +347,12 @@ two incidents above are the argument, and both were in code with tests.
 | **Ankeet** | The AI layer reads `evidence.detail`, which this deliberately does not touch — his sign-off is the check on that claim | ✅ |
 | **Samika** | `risk` reads every finding and the dashboard renders them; an unrendered new field is his to decide about | ✅ |
 
-> **RATIFIED — four of four, as of 4 September.** Confirmed on #269: the
+> **RATIFIED — four of four, as of 6 September.** The fourth signature was
+> agreed on 4 September and the table only filled when #300 merged on the
+> 6th; this note said "as of 4 September" for two days, which dated a
+> ratification to the day it was decided rather than the day it became
+> true. Small, and exactly the distinction this file exists to keep:
+> agreed and recorded are different facts. Confirmed on #269: the
 > specific claim this row depends on was checked directly rather than trusted
 > — `subject` appears nowhere in `ai/` or in `analysis/findings.py` today, so
 > "deliberately does not touch `evidence.detail`" holds exactly as written.
