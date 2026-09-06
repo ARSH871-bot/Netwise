@@ -926,6 +926,33 @@ function isNothingToCheck(finding) {
   return finding.status === "none" && finding.device === "n/a";
 }
 
+/**
+ * True for a `status="none"` finding that means "there was nothing to run".
+ *
+ * THE THIRD CLAIM (#266). F-4 gives three statuses, and `none` carries two
+ * different sentences: "we checked and found nothing wrong" is a result,
+ * "you supplied no rules for this check, so nothing was checked" is the
+ * absence of one. The second says so in its own detail text while the tile
+ * above counts it as a clean pass -- which is F-4's own confusion appearing
+ * one level down, inside the status that was meant to end it.
+ *
+ * IT STILL COUNTS TOWARD THE CLEAN TILE, deliberately. A fourth number
+ * would trade one confusion for another; three counts are already what
+ * #203 and #288 were both written about. The distinction is made on the
+ * CARD, where there is room for words.
+ *
+ * `device === "n/a"` is the signal because it is the only one that works.
+ * `evidence.source` reads "the policy file you supplied" for this sentinel
+ * AND for every real user-policy finding, so it cannot separate them. The
+ * predicate is duplicated in `analysis/report.py` rather than shared -- two
+ * languages, and a renderer that disagreed with the export would be worse
+ * than one that repeats a line. `tests/test_nothing_to_check.py` pins both
+ * against the real producer.
+ */
+function isNothingToCheck(finding) {
+  return finding.status === "none" && finding.device === "n/a";
+}
+
 function renderFindingSections(findings) {
   const container = document.getElementById("findings");
   container.replaceChildren();
