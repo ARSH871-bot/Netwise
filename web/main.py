@@ -214,6 +214,30 @@ def business_context_path(session_id: Optional[str] = None) -> Path:
 #: endpoint must not accept a format the loader cannot read.
 BUSINESS_CONTEXT_EXTENSIONS = {".json"}
 
+# --- Where a PF Sense conversion's skip notes are staged (#78, #302 review) -
+#
+# BESIDE THE POLICY, FOR THE SAME REASON, AND READ BACK BY THE REPORT.
+#     `pfsense_convert.convert()` can exclude a rule it could not model (a
+#     DHCP WAN, an undeclared VPN role, a bad alias) without refusing the
+#     whole file. Before this existed, that list reached the user exactly
+#     once, in the upload response, and then was gone -- a downloaded report
+#     generated later from the same staged config had no way to know
+#     anything had been excluded, and could say "Every reported check ran.
+#     Nothing was skipped." about a config that was missing real rules. See
+#     `CLAUDE.md` section 7 for why that specific claim is dangerous rather
+#     than merely imprecise: excluding a `pass` rule makes the analysed ACL
+#     STRICTER than the real device, which can make a policy violation that
+#     is real on the actual firewall report as `none` here.
+#
+#         uploaded_configs/
+#           current/
+#             configs/                 <- Batfish reads THIS
+#               device.cfg
+#             pfsense-skipped.json     <- read back by /api/report only
+def pfsense_skips_path(session_id: Optional[str] = None) -> Path:
+    """Where a session's PF Sense conversion skip notes are staged, if any."""
+    return snapshot_dir(session_id) / "pfsense-skipped.json"
+
 # Has a config been uploaded in this process? Until one has, /api/findings
 # serves mock data, because there is genuinely nothing to analyse yet.
 #
@@ -646,6 +670,28 @@ def _staged_policy():
         return None
 
 
+def _staged_pfsense_skips() -> List[str]:
+    """The PF Sense conversion skip notes for the current session's staged
+    config, or [] if there are none -- either because the upload was not a
+    PF Sense export, or because nothing was excluded.
+
+    Same degrade-quietly reasoning as `_staged_policy()`: a file that will
+    not parse here is not this endpoint's problem to raise about, and the
+    honest fallback ("we don't know of anything excluded") is the same
+    answer a normal, non-PF-Sense upload gives.
+    """
+    path = pfsense_skips_path()
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(note) for note in data]
+
+
 def _analysis_key() -> Optional[str]:
     """One cache key covering BOTH inputs the analysis depends on.
 
@@ -991,8 +1037,13 @@ def download_report(format: str = "html") -> Response:
         subject = ", ".join(staged) or "an uploaded configuration"
 
     media_type, extension = REPORT_FORMATS[format]
-    body = (report.render_html(results, source=subject) if format == "html"
-            else report.render_csv(results))
+    body = (
+        report.render_html(
+            results, source=subject, conversion_gaps=_staged_pfsense_skips()
+        )
+        if format == "html"
+        else report.render_csv(results)
+    )
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
     return Response(
         content=body,
@@ -1254,6 +1305,17 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     context_was_staged = business_context_path().exists()
     _discard_staged_business_context()
 
+    # Stage THIS upload's PF Sense skip notes, if any -- and clear whatever
+    # was staged before, unconditionally, so a plain Cisco upload after a
+    # PF Sense one cannot leave a stale note pointing at a config that is no
+    # longer there (#302 review). Only written when non-empty; a missing
+    # file and an empty list mean the same thing to `_staged_pfsense_skips()`.
+    _discard_staged_pfsense_skips()
+    if skipped:
+        pfsense_skips_path().write_text(
+            json.dumps(skipped), encoding="utf-8"
+        )
+
     # Records THIS session, rather than putting the whole process into an
     # uploaded state. Before #242 this was `global _uploaded; _uploaded =
     # True`, which meant one person's upload made every other browser's
@@ -1366,6 +1428,19 @@ def _discard_staged_policy() -> None:
     #181/#182 settle how a policy reaches a check.
     """
     policy_path().unlink(missing_ok=True)
+
+
+def _discard_staged_pfsense_skips() -> None:
+    """Remove the staged PF Sense skip notes, if there are any.
+
+    A NEW UPLOAD MUST NOT INHERIT THE OLD ONE'S SKIP NOTES -- same reasoning
+    as `_discard_staged_policy()`/`_discard_staged_business_context()`, and
+    arguably sharper: a skip note names a specific rule and interface from
+    the PREVIOUS config. Left staged, a report generated after uploading an
+    unrelated Cisco config would say a rule was excluded from a file that
+    was never even converted.
+    """
+    pfsense_skips_path().unlink(missing_ok=True)
 
 
 @app.post("/api/policy")

@@ -97,14 +97,23 @@ _NO_RULES_XML = b"""<?xml version="1.0"?>
 def clean_staging():
     """Same reasoning as test_web_policy_upload.py's fixture of the same
     name: module-level paths survive a test, so leftover staged files would
-    be visible to the next test."""
+    be visible to the next test.
+
+    pfsense_skips_path() lives BESIDE configs/, not inside it (same reason
+    policy.json does -- see its own comment in web/main.py), so clearing
+    CONFIGS_DIR does not touch it. Cleaned separately here for the same
+    reason the policy upload tests clean POLICY_PATH separately.
+    """
     import shutil
 
-    if main.CONFIGS_DIR.exists():
-        shutil.rmtree(main.CONFIGS_DIR)
+    def _clear():
+        if main.CONFIGS_DIR.exists():
+            shutil.rmtree(main.CONFIGS_DIR)
+        main.pfsense_skips_path().unlink(missing_ok=True)
+
+    _clear()
     yield
-    if main.CONFIGS_DIR.exists():
-        shutil.rmtree(main.CONFIGS_DIR)
+    _clear()
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +204,98 @@ def test_skipped_interfaces_are_surfaced_and_genuinely_excluded():
     staged_text = list(main.CONFIGS_DIR.glob("*"))[0].read_text()
     assert staged_text == expected.text
     assert "em0" not in staged_text  # the wan rule never reached the output
+
+
+# ---------------------------------------------------------------------------
+# PF Sense: skip notes reach the downloaded report too (#302 review)
+#
+# Before this, `skipped` reached the user exactly once, in the upload
+# response, and was gone -- a report downloaded later from the same staged
+# config had no way to know a rule had been excluded, and could claim
+# "Every reported check ran. Nothing was skipped." about a config that was
+# missing real rules. See analysis/coverage.py and CLAUDE.md section 7 for
+# why that specific claim is dangerous, not just imprecise.
+# ---------------------------------------------------------------------------
+
+
+def test_a_plain_cisco_upload_never_stages_a_skip_file():
+    _post_config(b"hostname rtr-us5\n", "device.cfg")
+    assert not main.pfsense_skips_path().exists()
+    assert main._staged_pfsense_skips() == []
+
+
+def test_a_clean_pfsense_upload_never_stages_a_skip_file():
+    """Nothing was skipped, so there is nothing to persist -- a missing
+    file and an empty list mean the same thing to _staged_pfsense_skips()."""
+    _post_config(_LAN_ONLY_XML, "config.xml", "application/xml")
+    assert not main.pfsense_skips_path().exists()
+    assert main._staged_pfsense_skips() == []
+
+
+def test_a_pfsense_upload_with_skips_persists_them_for_the_report():
+    response = _post_config(
+        _LAN_AND_DHCP_WAN_XML, "config.xml", "application/xml"
+    )
+    body = response.json()
+
+    assert main.pfsense_skips_path().exists()
+    assert main._staged_pfsense_skips() == body["skipped"]
+    assert "wan" in main._staged_pfsense_skips()[0]
+
+
+def test_a_new_upload_clears_the_previous_uploads_skip_notes():
+    """The exact reasoning _discard_staged_policy() already has: a skip note
+    names a rule and interface from the PREVIOUS config. A plain Cisco
+    upload afterwards must not leave it staged, pointing at a file that is
+    no longer there."""
+    _post_config(_LAN_AND_DHCP_WAN_XML, "config.xml", "application/xml")
+    assert main.pfsense_skips_path().exists()
+
+    _post_config(b"hostname rtr-us5\n", "device.cfg")
+    assert not main.pfsense_skips_path().exists()
+    assert main._staged_pfsense_skips() == []
+
+
+def test_a_refused_conversion_does_not_touch_the_previous_uploads_skip_notes():
+    """Same validate-then-stage discipline as the staged CONFIG file itself
+    (test_a_refused_conversion_leaves_the_previous_config_staged, below) --
+    a refused second upload must leave the first upload's skip notes alone,
+    same as it leaves the first upload's config alone."""
+    _post_config(_LAN_AND_DHCP_WAN_XML, "config.xml", "application/xml")
+    before = main._staged_pfsense_skips()
+    assert before
+
+    refused = _post_config(_NO_RULES_XML, "config.xml", "application/xml")
+    assert refused.status_code == 400
+    assert main._staged_pfsense_skips() == before
+
+
+def test_the_downloaded_report_names_a_skipped_rule():
+    _post_config(_LAN_AND_DHCP_WAN_XML, "config.xml", "application/xml")
+
+    response = client.get("/api/report?format=html")
+    assert response.status_code == 200
+    assert "Excluded during conversion" in response.text
+    assert "wan" in response.text
+    assert "no static address configured" in response.text
+
+
+def test_the_downloaded_report_does_not_falsely_claim_nothing_was_skipped():
+    """The exact claim #302's review flagged. It must never appear on a
+    report generated from an upload that genuinely skipped something."""
+    _post_config(_LAN_AND_DHCP_WAN_XML, "config.xml", "application/xml")
+
+    response = client.get("/api/report?format=html")
+    assert "Every reported check ran. Nothing was skipped." not in response.text
+
+
+def test_a_clean_pfsense_uploads_report_is_unaffected():
+    """The fix must not invent a claim where there is genuinely nothing to
+    disclose -- a clean conversion still reads exactly as it did before."""
+    _post_config(_LAN_ONLY_XML, "config.xml", "application/xml")
+
+    response = client.get("/api/report?format=html")
+    assert "Excluded during conversion" not in response.text
 
 
 # ---------------------------------------------------------------------------

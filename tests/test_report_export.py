@@ -287,6 +287,86 @@ def test_an_empty_findings_list_is_not_a_claim_that_nothing_was_skipped():
     )
 
 
+# ---------------------------------------------------------------------------
+# Conversion gaps -- #302 review, @SamikaPerera. A rule pfsense_convert.py
+# excluded before any check ran is a different claim from a check that could
+# not run, and "Every reported check ran. Nothing was skipped." was false
+# about the FILE even when every check genuinely ran clean.
+# ---------------------------------------------------------------------------
+
+
+def test_conversion_gaps_stop_the_false_nothing_was_skipped_claim():
+    """The exact case the review found: every check clean, but a rule was
+    excluded before any check saw it. The old sentence would have been
+    printed here; it must not be."""
+    html = report.render_html(
+        [PROBLEM, CLEAN],
+        conversion_gaps=["rule 1 of 2 on 'lan' could not be converted: bad alias"],
+    )
+
+    assert "Every reported check ran. Nothing was skipped." not in html
+    assert (
+        "Every reported check ran, but 1 part of the uploaded configuration "
+        "could not be converted and was not included in this analysis." in html
+    )
+    assert "bad alias" in html
+    assert 'class="coverage incomplete"' in html, (
+        "complete must be False -- a conversion gap means the file was not "
+        "fully analysed, even though every check ran clean"
+    )
+
+
+def test_conversion_gaps_are_plural_when_there_are_more_than_one():
+    html = report.render_html(
+        [CLEAN],
+        conversion_gaps=["rule 1 on 'lan': bad alias", "rule 2 on 'wan': bad port"],
+    )
+    assert "2 parts of the uploaded configuration could not be converted and were" in html
+
+
+def test_conversion_gaps_render_as_their_own_list_not_merged_with_check_gaps():
+    """A check gap (a check that could not run) and a conversion gap (a rule
+    excluded before any check ran) must stay visibly distinct -- merging
+    them would lose which one happened."""
+    html = report.render_html(
+        [PROBLEM, BLIND],
+        conversion_gaps=["rule 1 on 'lan' could not be converted: bad alias"],
+    )
+    assert "Excluded during conversion, before any check ran:" in html
+    assert "bad alias" in html
+    # The check-level gap section is unaffected -- still names BLIND's own
+    # reason, not folded into the conversion note.
+    assert "2 route assertions could not be checked" in html
+
+
+def test_no_conversion_gaps_reproduces_the_exact_prior_output():
+    """Omitting the parameter must change nothing -- every existing caller
+    of render_html()/summarise() keeps working unchanged."""
+    with_default = report.render_html([PROBLEM, CLEAN])
+    with_empty = report.render_html([PROBLEM, CLEAN], conversion_gaps=())
+    assert with_default == with_empty
+    assert "Excluded during conversion" not in with_default
+
+
+def test_coverage_summarise_conversion_gaps_key_is_always_present():
+    """Always a key, even when empty -- matching the project's own 'an
+    absent row is a weaker statement than an explicit zero' convention."""
+    result = coverage.summarise([CLEAN])
+    assert result["conversion_gaps"] == []
+
+
+def test_the_could_not_check_sections_own_empty_text_also_stops_claiming_nothing_was_skipped():
+    """A SECOND, textually distinct occurrence of the same false claim, in
+    the 'Could not check' section's own empty-state text (not the coverage
+    box tested above) -- 'Every check ran. Nothing was skipped.', without
+    'reported'. Different string, same bug, same fix needed independently."""
+    html = report.render_html(
+        [CLEAN], conversion_gaps=["rule 1 on 'lan': bad alias"]
+    )
+    assert "Every check ran. Nothing was skipped." not in html
+    assert "Every check that ran found nothing, but part" in html
+
+
 def test_a_single_blind_spot_reads_as_one():
     """The plural branch was tested; the singular one was not.
 
