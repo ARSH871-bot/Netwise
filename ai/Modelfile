@@ -43,17 +43,34 @@
 #     reasonably conclude a bigger model is off the table on this hardware.
 #     It is not -- there is real VRAM headroom the old comment hid.
 #
-#     Measured timings, with the model actually live, replace the old
-#     comment's guess ("a few seconds on this hardware", describing CPU
-#     inference that was never happening):
+#     ATTRIBUTED TO THE MACHINE THEY WERE MEASURED ON, NOT STATED AS THE
+#     PROJECT'S CONDITION -- the first draft of this fix did not do this,
+#     and @SamikaPerera's review on #303 measured a second machine (an AMD
+#     Ryzen 7 5700U, no dedicated GPU at all) where the old comment's "no
+#     GPU, CPU inference" is TRUE and this file's own numbers below are 10x
+#     too fast. Four of us have four machines; stating one laptop's numbers
+#     as this file's condition is the same shape of mistake this section
+#     exists to fix, just with different numbers. So: both, each labelled.
+#
+#     On the demo-build machine above (RTX 4050, 4 GB VRAM, GPU inference):
 #
 #         per-finding inference, warm            ~1.0 s
 #         first inference after a model build     7.4 s
 #         first scan of an uploaded config       9-12 s
 #         re-scan without re-upload                0.0 s  (analysis cache)
 #
-#     The number that actually matters for budgeting a demo -- 9-12 seconds
-#     for the first scan -- was not predicted by the old comment at all.
+#     On a machine with no dedicated GPU (measured on #303's review, CPU
+#     inference, same model, same call):
+#
+#         per-finding inference, warm             9.98 s
+#         first inference after a model build    99.67 s
+#
+#     Roughly 10x slower warm and 13x slower cold -- exactly what the
+#     GPU/CPU difference above predicts, not a discrepancy to chase. The
+#     number that matters for budgeting a demo (first scan of an uploaded
+#     config) is 9-12 s ONLY on GPU-equipped hardware; expect it roughly an
+#     order of magnitude slower on a machine without one. Check which kind
+#     of machine is running the demo before quoting either number.
 #
 # THE ONE RULE EVERYTHING BELOW SERVES
 #     CLAUDE.md constraint 2: the AI must never invent or guess network
