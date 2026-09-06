@@ -26,7 +26,8 @@ import json
 
 import pytest
 
-from analysis.policy import POLICY_SECTIONS, Policy, PolicyError, load_policy, load_policy_file
+from analysis.policy import (POLICY_SECTIONS, Policy, PolicyError, load_policy,
+                             load_policy_file, _LEGACY_KEYS, _SECTION_REQUIRED)
 
 
 def _entry(**overrides):
@@ -270,3 +271,59 @@ def test_a_real_file_round_trips(tmp_path):
 
 def test_policy_is_constructible_directly_for_callers_that_need_a_stub():
     assert Policy({s: [] for s in POLICY_SECTIONS}).is_empty
+
+
+# ---------------------------------------------------------------------------
+# #185 -- a legacy key is ACCEPTED with a note, never refused with a hint.
+#
+# `analysis/policy.py` carried a `_suggest()` offering "did you mean
+# 'violation_severity'?" beside its unknown-key error. It could never fire:
+# its condition was character-for-character the condition on the rename branch
+# one line above, so every key that would have earned a suggestion had already
+# been accepted. Deleted rather than fixed, because the rename branch is
+# strictly better -- it gives the user a working load AND tells them what
+# changed.
+#
+# These pin the behaviour that makes a suggestion unnecessary, so nobody
+# re-adds one on the grounds that the error message looks unhelpful.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("section", sorted(POLICY_SECTIONS))
+@pytest.mark.parametrize("legacy", sorted(_LEGACY_KEYS))
+def test_a_legacy_key_loads_and_is_reported_rather_than_refused(section, legacy):
+    """THE #185 REGRESSION, across every section and both legacy keys.
+
+    Six combinations. All six must load. If any starts refusing, a
+    did-you-mean becomes reachable again -- and that is the signal to
+    reconsider it, not to add one back on principle.
+    """
+    entry = {"description": "x", "node": "rtr-us5", legacy: "high"}
+    for key in _SECTION_REQUIRED.get(section, ()):
+        entry.setdefault(key, [{"srcIps": "10.0.0.0/8"}] if key == "queries" else "x")
+
+    loaded = load_policy({section: [entry]})
+
+    assert loaded.entries_for(section), f"{legacy!r} was refused in {section}"
+    assert any(legacy in note for note in loaded.renamed), (
+        f"{legacy!r} was accepted silently -- a corrected key must be reported"
+    )
+
+
+def test_the_canonical_name_is_what_the_check_actually_reads(section=None):
+    """Accepting a rename is only useful if the value lands under the new key."""
+    loaded = load_policy(
+        {"policy_compliance": [{
+            "description": "x", "start_node": "rtr-us5", "severity": "high",
+            "filter": "acl_in", "kind": "prohibition", "number": 1,
+            "violation_summary": "x", "queries": [{"srcIps": "10.0.0.0/8"}],
+        }]}
+    )
+    entry = loaded.entries_for("policy_compliance")[0]
+
+    assert entry["node"] == "rtr-us5", "start_node did not become node"
+    assert entry["violation_severity"] == "high", "severity did not become violation_severity"
+    assert "start_node" not in entry and "severity" not in entry, (
+        "the legacy key survived alongside its canonical name -- a check "
+        "reading one and a validator reading the other is how they drift"
+    )

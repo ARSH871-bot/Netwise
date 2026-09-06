@@ -20,7 +20,7 @@ Already in flight. Nothing new is invented, and everything else waits on it.
 |---|---|---|
 | User's own policy, end to end | Arsh | #181, #196 — in review |
 | PF Sense converter reachable from the upload | Ankeet | #211 — approved, needs a merge with `main` |
-| A report that can leave the screen | **Samika** | #222 — see §3, I built #233 against her issue |
+| A report that can leave the screen | **Samika** | #222 — see §3, I built #233 against his issue |
 
 ### Phase 1 — the four capabilities
 

@@ -224,17 +224,6 @@ def _describe_entry(section: str, index: int, entry: Mapping[str, Any]) -> str:
     return f"{section} entry {index}"
 
 
-def _suggest(unknown: str, allowed: frozenset) -> str:
-    """A did-you-mean, but only when it is a rename we actually know about.
-
-    No fuzzy matching. A wrong guess in an error message is worse than no
-    guess, because it sends the reader to change the wrong thing.
-    """
-    if unknown in _LEGACY_KEYS and _LEGACY_KEYS[unknown] in allowed:
-        return f" -- did you mean {_LEGACY_KEYS[unknown]!r}? (renamed in #159)"
-    return ""
-
-
 def _validate_entry(
     section: str, index: int, entry: Any, default_node: Optional[str]
 ) -> Tuple[Dict[str, Any], List[str]]:
@@ -252,6 +241,28 @@ def _validate_entry(
     renamed: List[str] = []
 
     for key, value in entry.items():
+        # A RENAME IS ACCEPTED AND REPORTED, NOT SUGGESTED (#185).
+        #
+        # There used to be a `_suggest()` beside the `unknown key` error below,
+        # offering "did you mean 'violation_severity'?" -- and it could never
+        # fire. Its condition was `key in _LEGACY_KEYS and _LEGACY_KEYS[key] in
+        # allowed`, which is character-for-character the condition on this
+        # line. Every key that would have triggered a suggestion was already
+        # renamed and accepted here, one branch earlier. Measured across all
+        # three sections and both legacy keys: six of six accepted, zero
+        # suggestions ever produced.
+        #
+        # It is not a bug that needed fixing -- it is redundancy that needed
+        # removing, because this branch is STRICTLY BETTER than a suggestion.
+        # A suggestion tells you what to type. This accepts the file AND tells
+        # you what changed, in `Policy.renamed`. The user gets a working load
+        # and a note, instead of a refusal and a hint.
+        #
+        # `business_context._suggest_tier()` is the same idea done where it
+        # DOES pay: its condition (a case or whitespace difference) is not the
+        # acceptance condition, so it genuinely fires. That contrast is the
+        # rule -- a did-you-mean only earns its place when it can say something
+        # the accepting path does not already handle.
         if key in _LEGACY_KEYS and _LEGACY_KEYS[key] in allowed:
             canonical = _LEGACY_KEYS[key]
             renamed.append(f"{where}: {key!r} was renamed to {canonical!r} in #159")
@@ -259,7 +270,7 @@ def _validate_entry(
             continue
         if key not in allowed:
             raise PolicyError(
-                f"{where}: unknown key {key!r}{_suggest(key, allowed)}. "
+                f"{where}: unknown key {key!r}. "
                 f"Allowed here: {', '.join(sorted(allowed))}"
             )
         normalised[key] = value
