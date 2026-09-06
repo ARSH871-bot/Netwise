@@ -1925,8 +1925,13 @@ def download_comparison_report(
     A REAL FORM POST, NOT FETCH + BLOB, same reasoning as every other
     download on this page -- the browser handles Content-Disposition
     itself. `findings_json` carries a JSON blob because a comparison is
-    structured data (two finding lists plus a count and a description),
-    not the one flat field the other propose-download endpoint needs.
+    structured data (finding lists plus a count and a description), not
+    the one flat field the other propose-download endpoint needs.
+    `newly_blind`/`newly_sighted` are optional lists, defaulting to empty
+    for a caller that predates them -- a check going blind or sighted is a
+    status TRANSITION, not a problem introduced or resolved, and belongs
+    in its own disclosure rather than either of those two buckets (#298
+    review, round two).
 
     VALIDATED, NOT TRUSTED. The payload originates in the browser, built
     from data this server sent it -- but a request is still a request.
@@ -1956,6 +1961,8 @@ def download_comparison_report(
     resolved = payload.get("resolved")
     unchanged_count = payload.get("unchanged_count")
     description = payload.get("description")
+    newly_blind = payload.get("newly_blind", [])
+    newly_sighted = payload.get("newly_sighted", [])
 
     if not isinstance(introduced, list) or not all(isinstance(f, dict) for f in introduced):
         raise HTTPException(status_code=422, detail="findings_json.introduced must be a list of findings.")
@@ -1965,6 +1972,10 @@ def download_comparison_report(
         raise HTTPException(status_code=422, detail="findings_json.unchanged_count must be a non-negative integer.")
     if not isinstance(description, str) or not description:
         raise HTTPException(status_code=422, detail="findings_json.description must be a non-empty string.")
+    if not isinstance(newly_blind, list) or not all(isinstance(f, dict) for f in newly_blind):
+        raise HTTPException(status_code=422, detail="findings_json.newly_blind must be a list of findings.")
+    if not isinstance(newly_sighted, list) or not all(isinstance(f, dict) for f in newly_sighted):
+        raise HTTPException(status_code=422, detail="findings_json.newly_sighted must be a list of findings.")
 
     # F-4, enforced here rather than trusted from the browser (#298 review,
     # @shubhamkataria2005 and @ARSH871-bot). "introduced" and "resolved" mean
@@ -1987,14 +1998,39 @@ def download_comparison_report(
                 ),
             )
 
+    # The other half of the same F-4 discipline, in the other direction
+    # (#298 review, round two, @shubhamkataria2005): newly_blind IS the
+    # status transition the block above excludes from introduced/resolved,
+    # so it must be status="error" -- a check that stopped running, not a
+    # problem. newly_sighted is the reverse: a check that now runs clean,
+    # status="none". Getting either backwards here would relabel exactly
+    # the transition this endpoint exists to disclose correctly.
+    for field_name, field_findings, required_status in (
+        ("newly_blind", newly_blind, "error"),
+        ("newly_sighted", newly_sighted, "none"),
+    ):
+        offenders = [f.get("status") for f in field_findings if f.get("status") != required_status]
+        if offenders:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"findings_json.{field_name} must contain only "
+                    f'status="{required_status}" findings; got status={offenders[0]!r}.'
+                ),
+            )
+
     media_type, extension = _COMPARISON_REPORT_FORMATS[format]
     if format == "html":
         subject = configs_dir().name if _is_uploaded() else "an uploaded configuration"
         body = report.render_comparison_html(
-            introduced, resolved, unchanged_count, description, source=subject
+            introduced, resolved, unchanged_count, description, source=subject,
+            newly_blind=newly_blind, newly_sighted=newly_sighted,
         )
     else:
-        body = report.render_comparison_csv(introduced, resolved, unchanged_count)
+        body = report.render_comparison_csv(
+            introduced, resolved, unchanged_count,
+            newly_blind=newly_blind, newly_sighted=newly_sighted,
+        )
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
     return Response(

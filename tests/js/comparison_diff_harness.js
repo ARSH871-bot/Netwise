@@ -244,6 +244,22 @@ function describeDiff(before, after) {
 
 /* --- End-to-end: showComparison() actually renders the disclosure ------- */
 
+// Walks the raw (unflattened) tree looking for the hidden `findings_json`
+// input renderComparisonDownload() creates -- that is the actual payload a
+// download form POSTs, so this is what proves newlyBlind/newlySighted were
+// threaded all the way into the request rather than just computed and
+// dropped (#298 review, round two, @shubhamkataria2005).
+function findFindingsJsonPayload(node) {
+  for (const child of node.children || []) {
+    if (child.tagName === "input" && child.name === "findings_json") {
+      return JSON.parse(child.value);
+    }
+    const found = findFindingsJsonPayload(child);
+    if (found) return found;
+  }
+  return null;
+}
+
 function describeRenderedComparison(before, after, description) {
   // showComparison() reads the module-level `allFindings` as "before". That
   // is a `let` binding inside app.js's own scope, not a property of the vm
@@ -278,6 +294,16 @@ function describeRenderedComparison(before, after, description) {
     // two sections, per the review's "above both sections" ask.
     topLevelOrder: (container.children || []).map((c) => c.className),
     allText: nodes.map((n) => n.text).join(" | "),
+    // The actual download payload -- proves the disclosure survives past
+    // the DOM and into the request the server will see.
+    downloadPayloadIds: (() => {
+      const payload = findFindingsJsonPayload(container);
+      if (!payload) return null;
+      return {
+        newlyBlindIds: (payload.newly_blind || []).map((f) => f.id),
+        newlySightedIds: (payload.newly_sighted || []).map((f) => f.id),
+      };
+    })(),
   };
 }
 

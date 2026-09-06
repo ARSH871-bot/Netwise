@@ -201,3 +201,39 @@ def test_rendered_ordinary_new_problem_has_no_blind_transitions_block(rendered):
     case = rendered["renderedNoTransition"]
     assert case["blindTransitionsPresent"] == 0
     assert case["findingCards"] == ["finding high"]
+
+
+# ---------------------------------------------------------------------------
+# 5. The disclosure must survive into the download payload itself, not just
+#    the DOM (#298 review, round two, @shubhamkataria2005). The on-screen
+#    fix above was necessary but not sufficient: renderComparisonDownload()
+#    built its POST payload from only introduced/resolved/unchanged_count,
+#    so a downloaded report of a blinding proposal read "0 new problems, 0
+#    fixed" -- correct about the two buckets it knew, silent about the one
+#    that matters most to a reader deciding whether to apply the change.
+# ---------------------------------------------------------------------------
+
+
+@needs_node
+def test_download_payload_carries_the_newly_blind_transition(rendered):
+    case = rendered["renderedGoesBlind"]
+    assert case["downloadPayloadIds"] is not None, (
+        "no findings_json input found in the rendered comparison -- the "
+        "download form must exist even when the change blinds a check"
+    )
+    assert case["downloadPayloadIds"]["newlyBlindIds"] == ["PC-000"]
+    assert case["downloadPayloadIds"]["newlySightedIds"] == []
+
+
+@needs_node
+def test_download_payload_carries_the_newly_sighted_transition(rendered):
+    case = rendered["renderedBecomesClean"]
+    assert case["downloadPayloadIds"]["newlySightedIds"] == ["RT-000"]
+    assert case["downloadPayloadIds"]["newlyBlindIds"] == []
+
+
+@needs_node
+def test_download_payload_has_empty_transition_lists_when_there_are_none(rendered):
+    case = rendered["renderedNoTransition"]
+    assert case["downloadPayloadIds"]["newlyBlindIds"] == []
+    assert case["downloadPayloadIds"]["newlySightedIds"] == []

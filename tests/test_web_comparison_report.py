@@ -208,6 +208,101 @@ def test_a_found_only_payload_still_succeeds():
     assert response.status_code == 200
 
 
+# ---------------------------------------------------------------------------
+# newly_blind/newly_sighted (#298 review, round two, @shubhamkataria2005)
+#
+# The disclosure that works on screen has to survive the trip into the
+# download this endpoint produces -- see the endpoint's own docstring. These
+# are optional so a caller predating the fix (or a payload with no
+# transitions) still works; when present, each must carry the status the
+# transition actually claims -- error for newly_blind, none for newly_sighted
+# -- for the same F-4 reason introduced/resolved are restricted above.
+# ---------------------------------------------------------------------------
+
+BLIND = [{
+    "id": "AC-005", "check": "access_control", "severity": "high",
+    "device": "rtr-us5", "status": "error",
+    "summary": "1 supplied rule(s) for this check were not read",
+    "evidence": {"detail": "policy references an undeclared interface", "source": "access_control"},
+}]
+SIGHTED = [{
+    "id": "AC-006", "check": "access_control", "severity": "low",
+    "device": "rtr-us5", "status": "none",
+    "summary": "No policy violation found",
+    "evidence": {"detail": "0/0 rules violated", "source": "access_control"},
+}]
+
+
+def test_newly_blind_and_sighted_are_optional_and_default_empty():
+    """A payload from before this fix landed (or simply one with no
+    transitions) must still succeed -- these fields cannot become a new
+    required field that breaks an old caller."""
+    response = client.post(
+        "/api/propose/comparison-report",
+        data={"findings_json": json.dumps(_payload()), "format": "html"},
+    )
+    assert response.status_code == 200
+
+
+def test_newly_blind_reaches_the_html_download():
+    response = client.post(
+        "/api/propose/comparison-report",
+        data={
+            "findings_json": json.dumps(_payload(newly_blind=BLIND)),
+            "format": "html",
+        },
+    )
+    assert response.status_code == 200
+    assert BLIND[0]["summary"] in response.text
+
+
+def test_newly_sighted_reaches_the_csv_download():
+    response = client.post(
+        "/api/propose/comparison-report",
+        data={
+            "findings_json": json.dumps(_payload(newly_sighted=SIGHTED)),
+            "format": "csv",
+        },
+    )
+    assert response.status_code == 200
+    assert "newly_sighted" in response.text
+    assert "AC-006" in response.text
+
+
+def test_a_found_status_finding_in_newly_blind_is_a_422():
+    """The exact reverse of the introduced/resolved guard: newly_blind IS
+    the status transition those two exclude, so it must be status="error",
+    not "found"."""
+    wrong = [{**BLIND[0], "status": "found"}]
+    response = client.post(
+        "/api/propose/comparison-report",
+        data={"findings_json": json.dumps(_payload(newly_blind=wrong)), "format": "html"},
+    )
+    assert response.status_code == 422
+    assert "status=\"error\"" in response.json()["detail"]
+
+
+def test_a_found_status_finding_in_newly_sighted_is_a_422():
+    wrong = [{**SIGHTED[0], "status": "found"}]
+    response = client.post(
+        "/api/propose/comparison-report",
+        data={"findings_json": json.dumps(_payload(newly_sighted=wrong)), "format": "html"},
+    )
+    assert response.status_code == 422
+    assert "status=\"none\"" in response.json()["detail"]
+
+
+def test_newly_blind_not_a_list_of_dicts_is_a_422():
+    response = client.post(
+        "/api/propose/comparison-report",
+        data={
+            "findings_json": json.dumps(_payload(newly_blind=["not", "a", "dict"])),
+            "format": "html",
+        },
+    )
+    assert response.status_code == 422
+
+
 def test_hostile_evidence_survives_as_text_not_markup_in_the_html_download():
     hostile = [{
         "id": "AC-003", "check": "access_control", "severity": "high",

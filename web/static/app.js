@@ -824,20 +824,34 @@ function showComparison(afterFindings, description) {
   }
 
   container.appendChild(
-    renderComparisonDownload(introduced, resolved, unchanged.length, description)
+    renderComparisonDownload(
+      introduced, resolved, unchanged.length, description, newlyBlind, newlySighted
+    )
   );
 }
 
 /**
  * Download the comparison itself, HTML or CSV -- two real forms, same "the
  * browser handles it natively" reasoning as every other download on this
- * page. Posts the EXACT introduced/resolved/unchanged split already on
- * screen, not a re-request for the server to recompute -- see
- * POST /api/propose/comparison-report's own docstring for why: a full
+ * page. Posts the EXACT introduced/resolved/unchanged/newlyBlind/newlySighted
+ * split already on screen, not a re-request for the server to recompute --
+ * see POST /api/propose/comparison-report's own docstring for why: a full
  * scan is real seconds-to-minutes of work, and the data to render a
  * report of it is already sitting right here.
+ *
+ * newlyBlind/newlySighted MUST be threaded through, not just introduced/
+ * resolved (#298 review, round two, @shubhamkataria2005). The on-screen
+ * fix in detectBlindTransitions()/renderBlindTransitions() stopped a
+ * blinded check from being miscounted as "fixed" on screen; it did nothing
+ * for this download, which used to build its payload from only the two
+ * buckets that predate that fix. The person deciding whether to apply a
+ * change is likelier to read this export than the tab it came from, so a
+ * downloaded report of a blinding proposal must carry the same disclosure
+ * the screen already shows, not a payload that quietly drops it.
  */
-function renderComparisonDownload(introduced, resolved, unchangedCount, description) {
+function renderComparisonDownload(
+  introduced, resolved, unchangedCount, description, newlyBlind, newlySighted
+) {
   const wrap = el("div", "comparison-download-wrap");
   wrap.appendChild(el("div", "comparison-download-label", "Download this comparison"));
 
@@ -847,6 +861,8 @@ function renderComparisonDownload(introduced, resolved, unchangedCount, descript
     resolved,
     unchanged_count: unchangedCount,
     description,
+    newly_blind: newlyBlind,
+    newly_sighted: newlySighted,
   });
 
   [["html", "HTML"], ["csv", "CSV"]].forEach(([format, label]) => {

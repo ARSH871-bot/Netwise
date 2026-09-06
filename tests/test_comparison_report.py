@@ -16,6 +16,11 @@ WHAT THIS GUARDS
        originally found it; the HTML must style it as fixed (the "clean"
        card), not as a currently-open problem.
 
+    4. A STATUS TRANSITION SURVIVES THE DOWNLOAD (#298 review, round two).
+       newly_blind/newly_sighted must reach both exports, rendered first,
+       and the HTML section must appear even when empty -- an absent
+       section and "none" are different claims, same as F-4 itself.
+
 RUN
     pytest tests/ -v
 """
@@ -109,6 +114,35 @@ def test_ordering_is_worst_first_within_each_bucket():
     assert ids == ["AC-001", "AC-005", "AC-009"]
 
 
+BLIND = finding(id="AC-005", status="error", check="access_control",
+                 summary="1 supplied rule(s) for this check were not read")
+SIGHTED = finding(id="AC-006", status="none",
+                   summary="No policy violation found")
+
+
+def test_csv_carries_newly_blind_and_newly_sighted_as_real_rows():
+    """The bug Shubham's second review caught: a blinding proposal's
+    export used to say "0 new problems, 0 fixed" and nothing else. These
+    are rows, not a summary count, so they cannot be silently dropped."""
+    text = report.render_comparison_csv(
+        [], [], 0, newly_blind=[BLIND], newly_sighted=[SIGHTED]
+    )
+    rows = list(csv.reader(io.StringIO(text)))
+    blind_row = next(r for r in rows if r and r[0] == "newly_blind")
+    sighted_row = next(r for r in rows if r and r[0] == "newly_sighted")
+    assert blind_row[1] == "AC-005"
+    assert sighted_row[1] == "AC-006"
+
+
+def test_csv_orders_newly_blind_and_sighted_before_introduced_and_resolved():
+    text = report.render_comparison_csv(
+        [INTRODUCED], [RESOLVED], 0, newly_blind=[BLIND], newly_sighted=[SIGHTED]
+    )
+    rows = [r for r in csv.reader(io.StringIO(text))
+            if r and r[0] in ("newly_blind", "newly_sighted", "introduced", "resolved")]
+    assert [r[0] for r in rows] == ["newly_blind", "newly_sighted", "introduced", "resolved"]
+
+
 # ---------------------------------------------------------------------------
 # HTML
 # ---------------------------------------------------------------------------
@@ -183,3 +217,43 @@ def test_footer_states_nothing_was_applied():
     out = report.render_comparison_html([], [], 0, "a change")
     assert "SIMULATED" in out
     assert "nothing here was applied to any device" in out
+
+
+def test_html_renders_the_blind_transition_disclosure():
+    """The exact bug Shubham's second review found: a proposal that makes
+    a check go blind must show that in the DOWNLOADED report, not just on
+    screen. Before this fix, render_comparison_html() had no parameter to
+    carry newly_blind/newly_sighted at all."""
+    out = report.render_comparison_html(
+        [], [], 0, "a change", newly_blind=[BLIND], newly_sighted=[SIGHTED]
+    )
+    assert BLIND["summary"] in out
+    assert SIGHTED["summary"] in out
+
+
+def test_html_blind_section_renders_even_when_empty():
+    """Same F-4 reasoning as render_html()'s own "Could not check" section
+    (_section_html's docstring): an absent section and a section saying
+    "none" are different claims. A comparison export with no transitions
+    must say so, not omit the section entirely."""
+    out = report.render_comparison_html([], [], 0, "a change")
+    assert "does not blind any check" in out
+    assert "does not restore any check" in out
+
+
+def test_html_blind_section_renders_before_introduced_and_resolved():
+    out = report.render_comparison_html(
+        [INTRODUCED], [RESOLVED], 0, "a change",
+        newly_blind=[BLIND], newly_sighted=[SIGHTED],
+    )
+    assert out.index(BLIND["summary"]) < out.index(INTRODUCED["summary"])
+    assert out.index(SIGHTED["summary"]) < out.index(INTRODUCED["summary"])
+
+
+def test_html_escapes_hostile_newly_blind_evidence():
+    hostile_blind = finding(id="AC-007", status="error", summary=HOSTILE,
+                             evidence={"detail": HOSTILE, "source": HOSTILE})
+    out = report.render_comparison_html(
+        [], [], 0, "a change", newly_blind=[hostile_blind]
+    )
+    assert "<script>alert" not in out

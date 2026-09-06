@@ -350,23 +350,30 @@ def render_comparison_csv(
     introduced: Sequence[Dict[str, Any]],
     resolved: Sequence[Dict[str, Any]],
     unchanged_count: int,
+    newly_blind: Sequence[Dict[str, Any]] = (),
+    newly_sighted: Sequence[Dict[str, Any]] = (),
 ) -> str:
     """A before/after comparison, one row per finding that actually moved.
 
-    A `change_type` COLUMN (introduced/resolved) IN PLACE OF `status`.
+    A `change_type` COLUMN (introduced/resolved/newly_blind/newly_sighted)
+    IN PLACE OF `status`.
         `status` alone would be misleading here: a RESOLVED finding still
         carries `status="found"` from the scan where it existed -- it is
         not a "none" or an "error", it is a problem that used to be found
         and now is not. `change_type` says what actually happened, and
         `status` is kept alongside it so the original claim is not lost.
 
-    UNCHANGED FINDINGS ARE NOT ROWS HERE.
-        Same reasoning as the dashboard's own comparison view: every one of
-        them is already in the reader's own report of their real scan,
-        unchanged. Repeating the whole list would bury the two things this
-        report exists to answer under everything that stayed the same.
-        `unchanged_count` is still a real number, not a silent omission --
-        see the summary row below.
+    `newly_blind`/`newly_sighted` (#298 review, @shubhamkataria2005) ARE
+    ROWS, NOT A SUMMARY COUNT, UNLIKE `unchanged_count`.
+        Before this, a proposal that made a check go blind produced a
+        report reading "0 new problems, 0 fixed" -- correct about the two
+        buckets it knew about, and silent about the one that actually
+        matters. A reader deciding whether to apply a change is more
+        likely to read this export than the screen it came from, so the
+        disclosure has to survive the trip. Rendered FIRST, matching
+        render_html()'s own "blind always first" rule, for the same
+        reason: the thing most likely to mislead someone skimming goes
+        where it cannot be missed.
     """
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
@@ -379,7 +386,12 @@ def render_comparison_csv(
         resolved, key=lambda f: SEVERITY_ORDER.get(f.get("severity"), 99)
     )
 
-    for change_type, rows in (("introduced", ordered_introduced), ("resolved", ordered_resolved)):
+    for change_type, rows in (
+        ("newly_blind", newly_blind),
+        ("newly_sighted", newly_sighted),
+        ("introduced", ordered_introduced),
+        ("resolved", ordered_resolved),
+    ):
         for finding in rows:
             evidence = finding.get("evidence") or {}
             writer.writerow([
@@ -398,6 +410,8 @@ def render_comparison_csv(
     # this function -- a CSV opened alone, with no report page beside it,
     # should still be able to say how many findings this comparison is NOT
     # showing rather than let the row count alone imply completeness.
+    # newly_blind/newly_sighted need no summary row of their own -- unlike
+    # unchanged, they ARE rows above, so their count is already visible.
     writer.writerow([])
     writer.writerow(["summary", "introduced", len(ordered_introduced)])
     writer.writerow(["summary", "resolved", len(ordered_resolved)])
@@ -413,6 +427,8 @@ def render_comparison_html(
     description: str,
     source: Optional[str] = None,
     generated_at: Optional[str] = None,
+    newly_blind: Sequence[Dict[str, Any]] = (),
+    newly_sighted: Sequence[Dict[str, Any]] = (),
 ) -> str:
     """A before/after comparison for one proposed change, as a self-contained
     HTML report -- the same shape render_html() gives a real scan, answering
@@ -447,6 +463,20 @@ def render_comparison_html(
         for the two concrete cases (a check going blind rendered as a fix,
         a check going clean rendered as a new problem) this now prevents
         upstream.
+
+    `newly_blind`/`newly_sighted` RENDER FIRST, BEFORE introduced/resolved
+    (#298 review, round two, @shubhamkataria2005).
+        The first fix stopped a status transition from being miscategorised
+        as introduced/resolved on screen. It did not carry the transition
+        into this export at all -- a proposal that made a check go blind
+        produced a report reading "0 new problems, 0 fixed", correct about
+        the two buckets it knew about and silent about the one that
+        actually matters. Reused `_section_html(..., "blind", warn=True)`
+        for the disclosure rather than a third template, for the same
+        escaping-discipline reason the other two sections already reuse it.
+        Rendered first because `render_html()` already renders `blind`
+        first, always, for exactly this reason: the thing most likely to
+        mislead someone skimming goes where it cannot be missed.
     """
     ordered_introduced = sorted(
         introduced, key=lambda f: SEVERITY_ORDER.get(f.get("severity"), 99)
@@ -468,6 +498,19 @@ def render_comparison_html(
         f'<span class="k">unaffected -- true either way</span></div>'
         f'</div>'
     )
+
+    blind_section = _section_html(
+        "This change stops us being able to check",
+        "These checks ran before the change. They cannot run after it.",
+        list(newly_blind), "blind",
+        "This change does not blind any check that currently runs.",
+        warn=True)
+
+    sighted_section = _section_html(
+        "This change lets us check something we could not check before",
+        "These checks could not run before the change. They run clean after it.",
+        list(newly_sighted), "clean",
+        "This change does not restore any check that is currently blind.")
 
     introduced_section = _section_html(
         "New problems this change introduces",
@@ -496,7 +539,8 @@ def render_comparison_html(
         f"<h1>Netwise proposed-change comparison</h1>"
         f'<p class="meta">{esc(subject)} &middot; proposed change: '
         f'{esc(description)} &middot; generated {esc(when)}</p>'
-        f"{counts}{introduced_section}{resolved_section}{unchanged_note}"
+        f"{counts}{blind_section}{sighted_section}"
+        f"{introduced_section}{resolved_section}{unchanged_note}"
         '<footer>This compares your uploaded config against a SIMULATED '
         'change -- nothing here was applied to any device or to the '
         'config you uploaded. Generated by Netwise, offline.'
