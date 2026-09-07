@@ -343,19 +343,25 @@ two incidents above are the argument, and both were in code with tests.
 | Member | Why it touches them | Agreed |
 |---|---|---|
 | **Shubham** | Raised it; #238 is blocked on it and `policy_compliance` would populate it first | ✅ |
-| **Arsh** | Owns `analysis/findings.py`, where the optional field is validated, and `access_control` would be a second producer | ⬜ |
+| **Arsh** | Owns `analysis/findings.py`, where the optional field is validated, and `access_control` would be a second producer | ✅ |
 | **Ankeet** | The AI layer reads `evidence.detail`, which this deliberately does not touch — his sign-off is the check on that claim | ✅ |
 | **Samika** | `risk` reads every finding and the dashboard renders them; an unrendered new field is his to decide about | ✅ |
 
-> **NOT RATIFIED — three of four, as of 3 September.** Confirmed on #269: the
+> **RATIFIED — four of four, as of 6 September.** The fourth signature was
+> agreed on 4 September and the table only filled when #300 merged on the
+> 6th; this note said "as of 4 September" for two days, which dated a
+> ratification to the day it was decided rather than the day it became
+> true. Small, and exactly the distinction this file exists to keep:
+> agreed and recorded are different facts. Confirmed on #269: the
 > specific claim this row depends on was checked directly rather than trusted
 > — `subject` appears nowhere in `ai/` or in `analysis/findings.py` today, so
 > "deliberately does not touch `evidence.detail`" holds exactly as written.
-> Merging this PR means the wording is worth having. It does **not** mean the
-> amendment is agreed, and **no code may populate or read `subject` until
-> this table is full.** A-2 merged at two of four with its code already on
-> `main`, and this file spends two paragraphs on why that was wrong. #238
-> waits on @ARSH871-bot.
+> The table is now full, so the bar this note set has been met: **code may
+> populate and read `subject` from here**, and #238 is no longer blocked on a
+> signature. A-2 merged at two of four with its code already on `main`, and
+> this file spends two paragraphs on why that was wrong — A-3 did not repeat
+> it. The wording merged first and the code waited for the fourth tick, which
+> is the order that was argued for.
 >
 > **Samika's tick is dated 31 August, not today.** He posted *"Signing.
 > Clean and genuinely optional -- doesn't touch evidence.detail, doesn't add

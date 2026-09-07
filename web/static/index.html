@@ -1,9 +1,14 @@
 <!DOCTYPE html>
 <!--
-  Netwise dashboard -- the two-pane interface.
+  Netwise dashboard -- four areas, laid out in two columns.
 
-  LEFT PANE   config upload, then the findings the analysis produced.
-  RIGHT PANE  a chat panel for plain-English questions about those findings.
+  LEFT COLUMN   Step 1 Configure, then Step 2 Scan results.
+  RIGHT COLUMN  Ask a question, and Propose a change.
+
+  The AREAS are the structure; the columns are only where they sit. Steps 1
+  and 2 are numbered because they are a real sequence -- you cannot review
+  results before you scan. Ask and Propose are not, because they are
+  independent (#279).
 
   This file is only the skeleton. Everything inside #findings and #chat-log is
   built by static/app.js, because it depends on data.
@@ -26,10 +31,32 @@
 
     <main class="panes">
       <!-- ============ LEFT PANE: upload + results ============ -->
-      <section class="pane pane-results" aria-labelledby="results-heading">
+      <!-- A LAYOUT CONTAINER, NOT A LANDMARK (#279, raised by @ARSH871-bot).
+           This was <section aria-labelledby="results-heading">, so a screen
+           reader heard an outer region called "Scan results" that also
+           contained Configure -- and the right column was called "Ask a
+           question" while also containing Propose a change.
+
+           The ids resolved, so nothing was broken. The LABELS were wrong for
+           what they wrapped, which is worse in this PR than it was before it:
+           the whole claim here is that the four areas are the real
+           boundaries. A parent labelled as one of its children contradicts
+           that in the one place the change is meant to fix.
+
+           So the panes are plain columns and the four .area sections are the
+           landmarks -- which is what the CSS comment already said was the
+           model ("the panes are containers now, not surfaces"). -->
+      <div class="pane pane-results">
         <!-- ---- Upload ---- -->
+        <!-- ---- AREA 1: Configure (#279) ----
+             Everything you give Netwise before it runs. Three pickers and
+             the button that starts the scan -- one activity, one area. -->
+        <section class="area" id="area-configure" aria-labelledby="area-configure-heading">
+          <div class="area-head">
+            <span class="area-step">Step 1</span><h2 id="area-configure-heading">Configure</h2>
+          </div>
+          <div class="area-body">
         <div class="card upload">
-          <h2>Analyse a config</h2>
           <!-- The vendor list is what we have FIXTURES for, not what the
                engine might manage. Each one named here has a committed
                fixture carrying a deliberate fault, and a test asserting we
@@ -115,6 +142,25 @@
           </button>
         </div>
 
+          </div>
+        </section>
+
+        <!-- ---- AREA 2: Scan results (#279) ----
+             What the scan found, could not find, and could not check.
+
+             THE EXPLAINER IS NOT DIRECTLY UNDER THIS HEADING, AND THAT IS
+             DELIBERATE. #288 moved it down to sit against the tiles it
+             explains, because #219's device filter had pushed it 48px away
+             from them. This restructure keeps that adjacency rather than
+             pulling the paragraph back up under the heading -- the tiles are
+             what it describes, not the section. Its wording is #288's, and a
+             test pins the CLAIM it makes rather than the sentence, so that
+             wording stays the author's to improve. -->
+        <section class="area" id="area-results" aria-labelledby="results-heading">
+          <div class="area-head">
+            <span class="area-step">Step 2</span><h2 id="results-heading">Scan results</h2>
+          </div>
+          <div class="area-body">
         <!-- ---- Coverage summary ----
              Three counts, never merged. "Could not check" is shown even when
              it is zero, because an explicit zero is a stronger statement than
@@ -129,7 +175,6 @@
              of one, which is the distinction the whole contract exists to
              protect. The line below states it in words rather than relying on
              the reader to infer it from three tile colours. -->
-        <h2 id="results-heading">Scan results</h2>
         <!-- ---- Filter by device (#219) ----
              HIDDEN UNTIL A SCAN COVERS MORE THAN ONE DEVICE. A selector
              offering exactly one choice is a control that cannot do
@@ -149,6 +194,40 @@
         </div>
 
         <p id="filter-notice" class="filter-notice" role="status" hidden></p>
+
+        <!-- ---- Mock-data notice ----
+             HIDDEN UNTIL loadFindings() SEES THE MOCK-DATA RESPONSE HEADER.
+             Before this existed, nothing on screen said the findings shown
+             before any upload are invented demo data -- only a downloaded
+             report's subject line ever admitted it, and nobody sees that
+             before uploading anything. Same F-4 instinct one layer up: a
+             viewer must never be left to believe an invented result is a
+             real one.
+
+             ABOVE THE EXPLAINER, NOT BETWEEN IT AND THE TILES (#298 merge
+             with #288). #288 fixed #219's exact regression -- something
+             sitting between results-explainer and #summary pushes the
+             explainer away from the thing it explains, and a reader skips
+             it. This notice and the comparison banner below recontextualise
+             everything under them (this is invented, or this is a
+             hypothetical), so both belong ABOVE the explainer they would
+             otherwise separate from the tiles, never between. -->
+        <div id="mock-data-notice" class="mock-data-notice" hidden>
+          Example findings -- upload a config and click Scan Now to see your
+          own results. This is demo data, not a real scan.
+        </div>
+
+        <!-- ---- Comparison mode (propose-a-change strengthening) ----
+             HIDDEN UNTIL A FULL SCAN OF A PROPOSED CHANGE RUNS. Reuses this
+             whole panel -- tiles, sections, renderFinding() -- for a
+             before/after comparison instead of building a second, weaker
+             copy of the same UI inside the narrow propose pane. allFindings
+             itself is never touched, so "back" is just a re-render, no
+             re-fetch. -->
+        <div id="comparison-banner" class="comparison-banner" hidden>
+          <span id="comparison-banner-text"></span>
+          <button type="button" id="comparison-back-button">Back to my scan</button>
+        </div>
 
         <!-- ---- What the three tiles mean ---- #203, moved by #219
              DIRECTLY ABOVE THE TILES, AND THAT POSITION IS THE POINT.
@@ -176,31 +255,6 @@
           deliberately insecure will show mostly problems and little or no
           clean -- that is the expected shape, not a fault in the scan.
         </p>
-
-        <!-- ---- Mock-data notice ----
-             HIDDEN UNTIL loadFindings() SEES THE MOCK-DATA RESPONSE HEADER.
-             Before this existed, nothing on screen said the findings shown
-             before any upload are invented demo data -- only a downloaded
-             report's subject line ever admitted it, and nobody sees that
-             before uploading anything. Same F-4 instinct one layer up: a
-             viewer must never be left to believe an invented result is a
-             real one. -->
-        <div id="mock-data-notice" class="mock-data-notice" hidden>
-          Example findings -- upload a config and click Scan Now to see your
-          own results. This is demo data, not a real scan.
-        </div>
-
-        <!-- ---- Comparison mode (propose-a-change strengthening) ----
-             HIDDEN UNTIL A FULL SCAN OF A PROPOSED CHANGE RUNS. Reuses this
-             whole panel -- tiles, sections, renderFinding() -- for a
-             before/after comparison instead of building a second, weaker
-             copy of the same UI inside the narrow propose pane. allFindings
-             itself is never touched, so "back" is just a re-render, no
-             re-fetch. -->
-        <div id="comparison-banner" class="comparison-banner" hidden>
-          <span id="comparison-banner-text"></span>
-          <button type="button" id="comparison-back-button">Back to my scan</button>
-        </div>
 
         <div id="summary" class="summary" aria-live="polite"></div>
 
@@ -250,11 +304,23 @@
 
         <!-- ---- The findings themselves, grouped by status ---- -->
         <div id="findings"></div>
-      </section>
+          </div>
+        </section>
+      </div>
 
       <!-- ============ RIGHT PANE: chat ============ -->
-      <section class="pane pane-chat" aria-labelledby="chat-heading">
-        <h2 id="chat-heading">Ask a question</h2>
+      <div class="pane pane-chat">
+        <!-- ---- AREA 3: Ask (#279) ----
+             DELIBERATELY NOT NUMBERED. Steps 1 and 2 are a sequence -- you
+             cannot review results before you scan. These two are not: asking
+             and proposing are independent activities available in either
+             order, and numbering them would assert an order that does not
+             exist. Structure should encode something true. -->
+        <section class="area" id="area-ask" aria-labelledby="chat-heading">
+          <div class="area-head">
+            <h2 id="chat-heading">Ask a question</h2>
+          </div>
+          <div class="area-body">
         <!-- No model is involved here, in either direction -- the question is
              matched against a closed set of three, and the answer is built from
              Batfish's own result. Saying "a local model" would have been both
@@ -286,16 +352,26 @@
              way that matters most: asking is read-only, and proposing
              produces a config line somebody might paste into a device.
 
-             SHELL ONLY. The response rendering -- how proposed_change,
-             verified and warning actually display -- is deliberately NOT
-             here yet. #183 is still open and its `warning` logic changed
-             once already during review (a proven high-severity opening was
-             being suppressed by an unrelated error), so building the
-             rendering against that shape now would be building against a
-             contract that has moved this week. -->
-        <hr class="pane-divider" />
+             The response rendering landed with #253 once #183 settled. This
+             comment used to say "#183 is still open, so building against
+             that shape would be building against a contract that has moved
+             this week" -- correct when written, and #183 merged on 27
+             August. The caution was right and the reason it gave has
+             expired. -->
+          </div>
+        </section>
 
-        <h2 id="propose-heading">Propose a change</h2>
+        <!-- ---- AREA 4: Propose (#279) ----
+             Was separated from "Ask" by a bare <hr>, which is a horizontal
+             line rather than a boundary: nothing about it told a screen
+             reader, or a hurried eye, that a different activity starts
+             here. A section with its own heading does. -->
+        <section class="area" id="area-propose" aria-labelledby="propose-heading">
+          <div class="area-head">
+            <h2 id="propose-heading">Propose a change</h2>
+          </div>
+          <div class="area-body">
+
         <p class="hint">
           Describe one change in plain English and Netwise will write the
           config line, simulate it, and warn you if it opens something.
@@ -314,7 +390,9 @@
           />
           <button type="submit">Propose</button>
         </form>
-      </section>
+          </div>
+        </section>
+      </div>
     </main>
 
     <script src="/static/app.js"></script>
