@@ -8,7 +8,7 @@ Things I cannot produce are marked in the document with a visible ACTION box
 rather than left blank or invented -- above all the signed client letter the
 template asks for at 10.2.
 
-Measured at commit 00243fb, 7 September 2026.
+Measured at commit d3879b4, 8 September 2026.
 """
 import pathlib
 
@@ -124,7 +124,7 @@ table(["", ""], [
     ["Supervisor / lecturer", "Dr Asanthika Imbulpitiya; Dr Sonia Gul"],
     ["Submission date", "10 September 2026"],
     ["Document version", "Final v1.0"],
-    ["Measured at", "commit 00243fb, 7 September 2026"],
+    ["Measured at", "commit d3879b4, 8 September 2026"],
 ], widths=[1.7, 4.6], fs=10)
 
 action("student IDs",
@@ -161,8 +161,8 @@ table(["Measure", "Result"], [
     ["Automated tests", "1,305 passing across 62 files"],
     ["Python written", "32,245 lines across 97 Python files "
                        "(195 tracked files in all)"],
-    ["Commits / pull requests", "638 commits, 205 pull requests, 196 merged"],
-    ["Code review", "367 reviews; every merged change was reviewed"],
+    ["Commits / pull requests", "640 commits, 207 pull requests, 197 merged"],
+    ["Code review", "373 reviews; every merged change was reviewed"],
     ["Sprints", "6 run, 5 closed"],
     ["Planted faults detected", "5 of 5"],
     ["False alarms on clean configurations", "0 of 2"],
@@ -286,6 +286,10 @@ table(["ID", "Requirement", "How it is met"], [
     ["N-6", "The test suite must not need the analysis engine or the model",
      "1,302 of the 1,305 tests run with neither. The three that do not are "
      "integration tests and they skip"],
+    ["N-7", "One user's upload, scan and policy must not reach another",
+     "Per-session upload directories, analysis cache and staged policy. Added "
+     "after #242 found a single process-wide flag made one person's upload "
+     "change what every other browser analysed"],
 ], widths=[0.5, 2.1, 3.7])
 p("N-1 is the requirement that shaped everything. It removed the obvious "
   "choice at two separate layers: a hosted language model, and any cloud "
@@ -580,7 +584,7 @@ table(["Test / validation", "Requirement", "Expected", "Actual", "Outcome"], [
     ["Someone else's network (device renamed)", "R-12",
      "Honest reduction, no false clean", "6 findings drop to 3; the rest report "
      "could not check", "Pass, with a known gap"],
-    ["Two users at once", "N-1", "Each sees only their own scan",
+    ["Two users at once", "N-7", "Each sees only their own scan",
      "Verified live with two sessions; no leakage either way", "Pass"],
 ], widths=[1.6, 0.9, 1.3, 1.6, 0.9])
 
@@ -589,10 +593,10 @@ p("What we are confident about: the tool does not report a configuration clean "
   "when it could not read it, and it has never done so in testing. Zero false "
   "alarms on the two clean configurations. Every merged change was reviewed by "
   "somebody other than its author.")
-p("What we are not claiming: the five-of-five figure is about faults we "
-  "planted ourselves. Nothing here demonstrates that Netwise would find an "
-  "unknown fault in a configuration nobody on the team had seen. That is a "
-  "real limit and section 10.3 measures it.")
+p("What we are not claiming is set out in the executive summary and "
+  "measured in section 10.3: the five-of-five figure is about faults we "
+  "planted ourselves, and nothing here shows Netwise would find an unknown "
+  "one.")
 
 d.add_page_break()
 
@@ -625,15 +629,15 @@ bullets([
 
 h("8.3  Team effectiveness", 2)
 table(["Member", "Commits", "Pull requests", "Reviews given"], [
-    ["Arsh", "201", "108", "86"],
-    ["Ankeet", "84", "36", "127"],
-    ["Samika", "62", "27", "73"],
-    ["Shubham", "30", "23", "81"],
+    ["Arsh", "202", "110", "89"],
+    ["Ankeet", "86", "36", "128"],
+    ["Samika", "66", "27", "73"],
+    ["Shubham", "30", "23", "83"],
 ], widths=[1.6, 1.4, 1.6, 1.7])
 p("Commits exclude merge commits and the automated accounts. The distribution "
   "is uneven and we are not going to smooth it over. The thing worth noticing "
   "is that the member who wrote the most code did not do the most reviewing: "
-  "Ankeet gave 127 reviews against Arsh's 86. On this project the reviews are "
+  "Ankeet gave 128 reviews against Arsh's 89. On this project the reviews are "
   "where the real defects were caught, so that is arguably the more valuable "
   "half.")
 p("Disagreement is in the repository with the reasoning attached. The merge "
@@ -691,8 +695,8 @@ p("Two material changes. The client's export reordered the roadmap in August, "
   "as described in 1.3. And the user-policy feature was split: we had planned "
   "for all three checks to read a user policy in one piece of work, and "
   "delivered it for one check only, with the other two changed to say clearly "
-  "that they had not read it. Being told you are not covered is not the same "
-  "as being covered, but it is much better than a green tick that is wrong.")
+  "that they had not read it. Section 10.3 measures what that costs.")
+
 
 d.add_page_break()
 
@@ -852,11 +856,15 @@ h("Appendices", 1)
 h("Appendix A — How to reproduce every figure in this report", 2)
 code("python -m tools.preflight                            # check the machine\n"
      "pytest tests/ -q                                     # 1,305 tests\n"
-     "git log --no-merges --format='%an' | sort | uniq -c  # commits per member\n"
+     "git log --no-merges --format='%aN' | sort | uniq -c  # commits per member\n"
      "gh pr list --state all --json author,reviews         # pull requests and reviews\n"
      "python -m tools.stranger_config                      # the gap in section 10.3\n"
      "python -m tools.make_diagrams                        # Figures 1 and 2\n"
      "python -m analysis.pipeline tests/fixtures/rtr-us5-insecure")
+p("These commands report the repository as it is when you run them, not as "
+  "it was at the commit named on the cover. The two move apart every time "
+  "something merges, which is why the cover names a commit at all -- check "
+  "out that commit first if you want the exact figures in this report.")
 p("The test count depends on whether the analysis engine is running: 1,305 "
   "pass with it up, three fewer with it down. Those three are integration tests "
   "and they skip when the engine is absent, because they will not claim a "
