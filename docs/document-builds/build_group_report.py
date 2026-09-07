@@ -733,13 +733,17 @@ p("The client gave us requirements in person, an anonymised copy of his "
 p("Four questions are currently with him, and one of them blocks the other "
   "three: the WAN interface that carries rules has no fixed address, and a "
   "Cisco access list needs an address to attach rules to.")
-action("signed client letter",
-       "The template asks for a letter signed by the client indicating "
-       "satisfaction. We do not have one. Ask Senaka for a short signed note "
-       "confirming he gave us the requirements and the firewall export, and "
-       "whether he is satisfied with what was delivered. Attach it as Appendix "
-       "C. This is the only item in this report that cannot be reconstructed "
-       "later, so it should be requested first.")
+p("The template asks for a letter from the client confirming satisfaction. "
+  "We drafted one and sent it to him on 7 September 2026, and it had not come "
+  "back before this report was submitted. So this report does not claim it, "
+  "and nothing here is stated on his behalf.")
+p("What he actually did is recorded and can be checked. He gave us the "
+  "requirements in person, supplied an anonymised export of his own firewall "
+  "on 10 August, and corrected us when our converter assumed something about "
+  "his rule order that turned out to be wrong. Four questions are open with "
+  "him now. He also has write access to this repository, so every file and "
+  "issue cited in this report is visible to him rather than described to him.")
+p("Appendix C lists each of those with the place it is recorded.")
 
 h("10.3  Project limitations", 2)
 p("Two, stated plainly.")
@@ -899,10 +903,31 @@ p("The report header names the file as device.cfg although the upload was "
   "dashboard shows the name the user chose; the report names the file we "
   "staged.")
 h("Appendix C — Client confirmation", 2)
-action("client letter",
-       "Empty until Senaka provides the signed note described in section 10.2. "
-       "This is the single item in the report that cannot be produced later by "
-       "anyone on the team.")
+p("There is no signed letter. One was drafted and sent to the client on "
+  "7 September 2026 and had not been returned when this report was submitted. "
+  "Rather than leave this appendix empty or describe a document that does not "
+  "exist, what follows is the client engagement itself, with the place each "
+  "item is recorded so it can be checked rather than taken on trust.")
+table(["What the client did", "When", "Where it is recorded"], [
+    ["Gave the project requirements in person, including the two directions "
+     "the AI layer had to work in", "Project start",
+     "CLAUDE.md section 4; section 1.2 of this report"],
+    ["Supplied an anonymised export of his own PF Sense firewall",
+     "10 August 2026",
+     "CLAUDE.md section 7; structure measured with tools/pfsense_shape.py, "
+     "which reports shape and never a value"],
+    ["Corrected an assumption our converter had been built on — none of his "
+     "seven filter rules used the setting we had assumed",
+     "August 2026", "CLAUDE.md section 7; section 10.2 of this report"],
+    ["Four open questions currently with him, one of which blocks the other "
+     "three", "Raised 3 September 2026",
+     "GitHub Discussion #294 in this repository"],
+    ["Holds write access to this repository, so the evidence in this report "
+     "is directly available to him", "Throughout",
+     "GitHub collaborators: senakasjp"],
+], widths=[2.5, 1.3, 2.5])
+p("No statement about the client's satisfaction is made anywhere in this "
+  "report, because we do not have one in writing.")
 
 h("Appendix D — Acknowledgement of AI assistance", 2)
 p("AI assistance was used on this project. It is declared here, in the "
