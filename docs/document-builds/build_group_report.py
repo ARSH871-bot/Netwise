@@ -541,7 +541,7 @@ table(["Technology", "Why it suited the project", "Limitations we hit"], [
     ["FastAPI", "Generated API documentation, useful as review evidence; async for "
                 "the chat pane", "None that affected us"],
     ["pytest", "Fast, and the whole suite runs without the engine or the model",
-     "Four integration tests genuinely need the engine; they skip when it is absent"],
+     "Three integration tests genuinely need the engine; they skip when it is absent"],
     ["GitHub Actions", "Runs the suite on two Python versions on every pull request",
      "It cannot block a merge on a private repository without a paid plan, so it "
      "is a signal and not a gate"],
@@ -858,7 +858,7 @@ code("python -m tools.preflight                            # check the machine\n
      "python -m tools.make_diagrams                        # Figures 1 and 2\n"
      "python -m analysis.pipeline tests/fixtures/rtr-us5-insecure")
 p("The test count depends on whether the analysis engine is running: 1,305 "
-  "pass with it up, four fewer with it down. Those four are integration tests "
+  "pass with it up, three fewer with it down. Those three are integration tests "
   "and they skip when the engine is absent, because they will not claim a "
   "result they could not verify.")
 
@@ -920,7 +920,8 @@ OUT.parent.mkdir(parents=True, exist_ok=True)
 import sys as _sys, pathlib as _pl                          # noqa: E402
 _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
 from _guard import refuse_if_edited                         # noqa: E402
-refuse_if_edited(OUT, [p.text for p in d.paragraphs])
+import _guard                                               # noqa: E402
+refuse_if_edited(OUT, _guard.blocks(d))
 d.save(str(OUT))
 print(f"wrote: {OUT.name}")
 print(f"  paragraphs {len(d.paragraphs)}  tables {len(d.tables)}  "

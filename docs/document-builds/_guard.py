@@ -26,11 +26,32 @@ import pathlib
 import sys
 
 
-def _paragraphs(path):
+def blocks(document):
+    """Every piece of text in a .docx: paragraphs AND table cells.
+
+    TABLE CELLS ARE NOT OPTIONAL HERE, and leaving them out was the first
+    version's bug. The cover sheet of every one of these documents is a table,
+    and the cover sheet is exactly where a hand edit lands -- a student ID
+    typed straight into Word is a table-cell edit and nothing else. A guard
+    that compared paragraphs only would have watched Thursday's rebuild
+    silently discard the two IDs we are still waiting on, while reporting that
+    it had checked.
+
+    Which is the same defect this whole project is about, built into the thing
+    meant to prevent it.
+    """
+    out = [p.text.strip() for p in document.paragraphs]
+    for t in document.tables:
+        for row in t.rows:
+            out.extend(c.text.strip() for c in row.cells)
+    return out
+
+
+def _on_disk(path):
     """Text of an existing .docx, or None if it cannot be read as one."""
     try:
         from docx import Document
-        return [p.text.strip() for p in Document(str(path)).paragraphs]
+        return blocks(Document(str(path)))
     except Exception:                                   # noqa: BLE001
         return None
 
@@ -46,7 +67,7 @@ def refuse_if_edited(out, new_paragraphs, argv=None):
     if "--force" in argv or not out.exists():
         return
 
-    old = _paragraphs(out)
+    old = _on_disk(out)
     if old is None:
         return                                  # not a readable .docx; let it write
     new = [str(p).strip() for p in new_paragraphs]

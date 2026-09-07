@@ -144,7 +144,8 @@ OUT.parent.mkdir(parents=True, exist_ok=True)
 import sys as _sys, pathlib as _pl                          # noqa: E402
 _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
 from _guard import refuse_if_edited                         # noqa: E402
-refuse_if_edited(OUT, [p.text for p in d.paragraphs])
+import _guard                                               # noqa: E402
+refuse_if_edited(OUT, _guard.blocks(d))
 d.save(str(OUT))
 print(f"wrote: {OUT.name}")
 print(f"  paragraphs {len(d.paragraphs)}  "
