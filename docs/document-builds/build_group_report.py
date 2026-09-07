@@ -162,7 +162,7 @@ table(["Measure", "Result"], [
     ["Python written", "32,245 lines across 97 Python files "
                        "(195 tracked files in all)"],
     ["Commits / pull requests", "640 commits, 207 pull requests, 197 merged"],
-    ["Code review", "373 reviews; every merged change was reviewed"],
+    ["Code review", "375 reviews; every merged change was reviewed"],
     ["Sprints", "6 run, 5 closed"],
     ["Planted faults detected", "5 of 5"],
     ["False alarms on clean configurations", "0 of 2"],
@@ -629,7 +629,7 @@ bullets([
 
 h("8.3  Team effectiveness", 2)
 table(["Member", "Commits", "Pull requests", "Reviews given"], [
-    ["Arsh", "202", "110", "89"],
+    ["Arsh", "202", "110", "91"],
     ["Ankeet", "86", "36", "128"],
     ["Samika", "66", "27", "73"],
     ["Shubham", "30", "23", "83"],
@@ -637,7 +637,7 @@ table(["Member", "Commits", "Pull requests", "Reviews given"], [
 p("Commits exclude merge commits and the automated accounts. The distribution "
   "is uneven and we are not going to smooth it over. The thing worth noticing "
   "is that the member who wrote the most code did not do the most reviewing: "
-  "Ankeet gave 128 reviews against Arsh's 89. On this project the reviews are "
+  "Ankeet gave 128 reviews against Arsh's 91. On this project the reviews are "
   "where the real defects were caught, so that is arguably the more valuable "
   "half.")
 p("Disagreement is in the repository with the reasoning attached. The merge "
