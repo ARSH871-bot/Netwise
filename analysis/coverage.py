@@ -32,11 +32,25 @@ SEPARATELY RATHER THAN INFERRED (#302 review, @SamikaPerera)
     `CLAUDE.md` section 7 for the direction analysis. A reader who trusted
     "nothing was skipped" would have no way to know that risk exists for
     this specific report.
+
+`None` MEANS SOMETHING DIFFERENT FROM `()`, AND FROM A NON-EMPTY LIST
+(#302 review, @ARSH871-bot)
+    `web.main._staged_pfsense_skips()` returns three distinct things: `[]`
+    when it VERIFIED nothing was excluded, a non-empty list when it read
+    real skip notes, and `None` when a skip record exists but could not be
+    read -- truncated, wrong type, unparseable. Before this distinction
+    existed, an unreadable record and a verified-empty one both collapsed to
+    `[]` here, so a corrupted skip file produced the exact same "nothing was
+    skipped" claim as a config that genuinely excluded nothing. Passing
+    `None` through lets this function tell a reader the true thing: not
+    "nothing was skipped", but "whether anything was skipped could not be
+    determined" -- and `complete` is `False` in that case for the same
+    reason it is `False` when something genuinely was skipped.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 def _label(finding: Dict[str, Any]) -> Tuple[str, str]:
@@ -48,7 +62,7 @@ def _label(finding: Dict[str, Any]) -> Tuple[str, str]:
 
 def summarise(
     findings: Iterable[Dict[str, Any]],
-    conversion_gaps: Sequence[str] = (),
+    conversion_gaps: Optional[Sequence[str]] = (),
 ) -> Dict[str, Any]:
     """Return the coverage/certainty view implied by a findings list.
 
@@ -58,6 +72,11 @@ def summarise(
     converter excluded anything, so the statement below can stop claiming
     nothing was skipped when something genuinely was -- just not something a
     check could have reported on.
+
+    Pass `None` rather than `()` when the CALLER genuinely does not know
+    whether anything was excluded -- see this module's own docstring for why
+    that is a third, distinct state rather than the same thing as "verified
+    empty".
 
     The result is intentionally plain dicts, matching the rest of the analysis
     layer's F-1 data. It is derived, not cached; if the findings change, the
@@ -90,7 +109,10 @@ def summarise(
         {"check": check, "device": device}
         for check, device in sorted(checked)
     ]
-    conversion_gap_rows = [str(note) for note in conversion_gaps]
+    conversion_gaps_unreadable = conversion_gaps is None
+    conversion_gap_rows = (
+        [] if conversion_gaps is None else [str(note) for note in conversion_gaps]
+    )
 
     if not checked and not gaps:
         # THE THIRD STATE, AND IT IS NOT COMPLETENESS.
@@ -110,6 +132,22 @@ def summarise(
             f"{len(gaps)} reported check/device blind spot"
             f"{'' if one else 's'} {'remains' if one else 'remain'}. "
             f"Findings may be incomplete."
+        )
+        complete = False
+    elif conversion_gaps_unreadable:
+        # THE CASE #302's REVIEW (ROUND TWO, @ARSH871-bot) FOUND. Every
+        # check ran and none of them reported a blind spot, but the record
+        # of what a converter may have excluded before any check ran could
+        # not be read -- truncated, wrong type, unparseable. Complete is
+        # False here for the same reason it is False when the record names
+        # a real exclusion below: this report cannot say analysis was
+        # exhaustive when it does not know whether part of the source file
+        # was dropped before any check ever saw it.
+        statement = (
+            "Every reported check ran, but the record of what a converter "
+            "may have excluded before any check ran could not be read. "
+            "Whether anything was excluded is unknown, so this report "
+            "cannot claim the analysis is complete."
         )
         complete = False
     elif conversion_gap_rows:
@@ -136,4 +174,5 @@ def summarise(
         "checked": checked_rows,
         "gaps": gaps,
         "conversion_gaps": conversion_gap_rows,
+        "conversion_gaps_unreadable": conversion_gaps_unreadable,
     }

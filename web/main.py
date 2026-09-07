@@ -670,15 +670,38 @@ def _staged_policy():
         return None
 
 
-def _staged_pfsense_skips() -> List[str]:
+def _staged_pfsense_skips() -> Optional[List[str]]:
     """The PF Sense conversion skip notes for the current session's staged
-    config, or [] if there are none -- either because the upload was not a
-    PF Sense export, or because nothing was excluded.
+    config.
 
-    Same degrade-quietly reasoning as `_staged_policy()`: a file that will
-    not parse here is not this endpoint's problem to raise about, and the
-    honest fallback ("we don't know of anything excluded") is the same
-    answer a normal, non-PF-Sense upload gives.
+    THREE STATES, NOT TWO (#302 review, @ARSH871-bot)
+        `[]` means WE KNOW nothing was excluded -- either there is no skip
+        record at all (a plain Cisco upload, or a PF Sense conversion that
+        excluded nothing), a genuine, verified absence.
+
+        `None` means WE CANNOT TELL -- a skip record exists but could not be
+        read: truncated, the wrong JSON type, or simply unparseable. Before
+        this distinction existed, this case also returned `[]`, and
+        `coverage.summarise()` turned that into "Every reported check ran.
+        Nothing was skipped." -- a positive claim of completeness resting on
+        a record that was never actually read. See `CLAUDE.md` section 7's
+        skip-direction analysis for why that specific false claim matters
+        here: excluding a `pass` rule makes the analysed ACL STRICTER than
+        the real device, which can make a policy check that would report a
+        real violation report `none` instead, with nothing anywhere saying
+        the record behind that claim could not be read.
+
+        A non-empty list means the record was read and names what it
+        excluded.
+
+    UNLIKE `_staged_policy()`, WHOSE `None` IS SAFE
+        `_staged_policy()`'s docstring explains why ITS `None` fallback is
+        safe: `policy_compliance` announces, in every finding's evidence,
+        which of two known-good options was actually used. There is no
+        equivalent second option here -- an unreadable skip record is not a
+        safe default to fall back to, it is a fact that has to reach the
+        coverage statement as its own claim. Callers must handle `None`
+        explicitly rather than treating it as just another empty list.
     """
     path = pfsense_skips_path()
     if not path.exists():
@@ -686,9 +709,9 @@ def _staged_pfsense_skips() -> List[str]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return []
+        return None
     if not isinstance(data, list):
-        return []
+        return None
     return [str(note) for note in data]
 
 
@@ -1056,7 +1079,7 @@ def download_report(format: str = "html") -> Response:
 
 
 @app.get("/api/findings")
-def get_findings() -> List[Dict[str, Any]]:
+def get_findings(http_response: Response = None) -> List[Dict[str, Any]]:
     """Return the current findings, in the F-1 format, plus a plain-English
     "explanation" on every status="found" finding (US-19 / #31).
 
@@ -1067,12 +1090,45 @@ def get_findings() -> List[Dict[str, Any]]:
     Note snapshot_dir(), not CONFIG_ROOT: analyse() wants the snapshot root, the
     folder that CONTAINS `configs/`. See the layout diagram at the top.
 
+    `http_response` IS OPTIONAL BECAUSE THIS FUNCTION IS ALSO CALLED DIRECTLY.
+        FastAPI injects a real `Response` only when this runs as the actual
+        route handler. `download_report()` above calls `get_findings()` as a
+        plain Python function to reuse its exact result, with no HTTP
+        response for FastAPI to inject -- and no need for one, since that
+        path already carries the same fact into the download directly via
+        `conversion_gaps=_staged_pfsense_skips()`. `tests/test_analysis_
+        cache.py` also calls it bare, the same way.
+
+    CONVERSION GAPS REACH THE SCREEN VIA HEADERS, NOT THE BODY (#302 review,
+    @shubhamkataria2005)
+        The body here is a bare F-1 list, not an object -- widening it to
+        `{findings: [...], conversion_gaps: [...]}` would break every
+        existing caller of this endpoint, and a synthetic status="error"
+        finding for "part of the source file was excluded before any check
+        ran" would blur a boundary this project has kept clean (see
+        `analysis/coverage.py`'s own docstring on why a conversion gap is not
+        a check's claim to make). `X-Netwise-Conversion-Gap-Count` and
+        `X-Netwise-Conversion-Gaps-Unreadable` carry the same fact the
+        downloaded report already states under "Coverage and certainty".
+        The dashboard reads them on every fetch, including a reload followed
+        by Scan Now -- the exact case Shubham's review named as the one the
+        original, upload-time-only disclosure never covered.
+
     Mock findings are NOT explained. #31's acceptance criterion is about a
     real finding from a real uploaded config; explaining fabricated demo
     data risks a viewer mistaking a rephrased invention for a rephrased
     fact, which is exactly the distinction this whole project exists to
     keep clear.
     """
+    skips = _staged_pfsense_skips()
+    if http_response is not None:
+        http_response.headers["X-Netwise-Conversion-Gap-Count"] = (
+            "0" if skips is None else str(len(skips))
+        )
+        http_response.headers["X-Netwise-Conversion-Gaps-Unreadable"] = (
+            "true" if skips is None else "false"
+        )
+
     if not _is_uploaded():
         return mock_findings.get_mock_findings()
 
@@ -1310,11 +1366,21 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     # PF Sense one cannot leave a stale note pointing at a config that is no
     # longer there (#302 review). Only written when non-empty; a missing
     # file and an empty list mean the same thing to `_staged_pfsense_skips()`.
+    #
+    # WRITTEN VIA A TEMP FILE + REPLACE, NOT write_text() DIRECTLY (#302
+    # review, @ARSH871-bot). `_staged_pfsense_skips()` now treats a file that
+    # exists but fails to parse as `None` -- "we cannot tell what was
+    # excluded" -- rather than silently reading as `[]`. A process
+    # interrupted mid-write is exactly how a truncated file happens, and
+    # `Path.replace()` is atomic on both POSIX and Windows, so a reader can
+    # only ever see the old complete file or the new complete file, never a
+    # partial one.
     _discard_staged_pfsense_skips()
     if skipped:
-        pfsense_skips_path().write_text(
-            json.dumps(skipped), encoding="utf-8"
-        )
+        target = pfsense_skips_path()
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(json.dumps(skipped), encoding="utf-8")
+        tmp.replace(target)
 
     # Records THIS session, rather than putting the whole process into an
     # uploaded state. Before #242 this was `global _uploaded; _uploaded =

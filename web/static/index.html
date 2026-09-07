@@ -166,6 +166,13 @@
              problems and no clean results is the expected shape, not a
              failure of the scan -- and every fixture in this project is
              built that way. -->
+        <!-- Persistent, not the transient upload-message flash
+             addSkippedNotes() shows once at upload time -- rebuilt from
+             /api/findings response headers on every fetch, including a
+             page reload followed by Scan Now, which the upload-time-only
+             version never covered (#302 review, @shubhamkataria2005). -->
+        <p id="conversion-gaps-notice" class="notice" role="status" hidden></p>
+
         <p class="hint" id="results-explainer">
           <strong>Three independent counts.</strong> They are not shares of one
           total and do not need to add up.

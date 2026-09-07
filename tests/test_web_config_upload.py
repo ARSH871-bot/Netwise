@@ -110,6 +110,9 @@ def clean_staging():
         if main.CONFIGS_DIR.exists():
             shutil.rmtree(main.CONFIGS_DIR)
         main.pfsense_skips_path().unlink(missing_ok=True)
+        main.pfsense_skips_path().with_name(
+            main.pfsense_skips_path().name + ".tmp"
+        ).unlink(missing_ok=True)
 
     _clear()
     yield
@@ -296,6 +299,122 @@ def test_a_clean_pfsense_uploads_report_is_unaffected():
 
     response = client.get("/api/report?format=html")
     assert "Excluded during conversion" not in response.text
+
+
+# ---------------------------------------------------------------------------
+# PF Sense: an unreadable skip record is a THIRD state, not the same as a
+# verified-empty one (#302 review, round two, @ARSH871-bot)
+#
+# Before this, `_staged_pfsense_skips()` returned [] both when there was
+# genuinely nothing to disclose AND when the skip record existed but could
+# not be parsed -- a truncated write, a corrupted file, valid JSON of the
+# wrong type. coverage.summarise() then said "Every reported check ran.
+# Nothing was skipped." in both cases, which is a real, positive claim of
+# completeness in the second case built on a record nobody actually read.
+# ---------------------------------------------------------------------------
+
+
+def test_an_unreadable_skip_record_returns_none_not_an_empty_list():
+    _post_config(_LAN_AND_DHCP_WAN_XML, "config.xml", "application/xml")
+    assert main._staged_pfsense_skips()  # sanity: the file is genuinely there
+
+    main.pfsense_skips_path().write_text("{not valid json", encoding="utf-8")
+    assert main._staged_pfsense_skips() is None
+
+
+def test_a_skip_record_of_the_wrong_json_type_is_also_none():
+    """Valid JSON, but not a list -- e.g. a stray object or a bare string.
+    Silently returning [] here would be the same false-completeness claim
+    the truncated-file case makes, just reached a different way."""
+    main.pfsense_skips_path().write_text('{"not": "a list"}', encoding="utf-8")
+    assert main._staged_pfsense_skips() is None
+
+
+def test_a_missing_skip_file_is_still_a_verified_empty_list():
+    """The one case that must NOT become None: no file at all means no
+    PF Sense conversion happened (or it excluded nothing), which is a real,
+    verified absence -- not "we don't know"."""
+    assert not main.pfsense_skips_path().exists()
+    assert main._staged_pfsense_skips() == []
+
+
+def test_an_unreadable_skip_record_makes_the_report_say_so_not_claim_clean():
+    _post_config(_LAN_AND_DHCP_WAN_XML, "config.xml", "application/xml")
+    main.pfsense_skips_path().write_text("not json", encoding="utf-8")
+
+    response = client.get("/api/report?format=html")
+    assert response.status_code == 200
+    assert "Every reported check ran. Nothing was skipped." not in response.text
+    assert "could not be read" in response.text
+
+
+def test_the_upload_write_is_atomic_no_tmp_file_survives():
+    """#302 review's secondary suggestion: write via a temp file + replace
+    so an interrupted write cannot leave a truncated skip record in the
+    first place. Checked here as an observable property -- no leftover
+    .tmp file after a normal upload -- since a real kill-mid-write is not
+    reproducible in a unit test."""
+    _post_config(_LAN_AND_DHCP_WAN_XML, "config.xml", "application/xml")
+    tmp_path = main.pfsense_skips_path().with_name(
+        main.pfsense_skips_path().name + ".tmp"
+    )
+    assert not tmp_path.exists()
+    assert main._staged_pfsense_skips() is not None
+
+
+# ---------------------------------------------------------------------------
+# /api/findings discloses conversion gaps via headers, persistently
+# (#302 review, @shubhamkataria2005)
+#
+# Before this, `skipped` reached the user exactly once, in the upload
+# response, rendered into the transient #upload-message box by
+# addSkippedNotes(). A page reload followed by Scan Now showed clean tiles
+# with no trace anything had been excluded -- /api/findings itself said
+# nothing about it. These two headers are read on every /api/findings
+# fetch, so the disclosure survives a reload the same way the count itself
+# does.
+# ---------------------------------------------------------------------------
+
+
+def test_api_findings_sets_a_zero_count_header_for_a_plain_upload():
+    _post_config(b"hostname rtr-us5\n", "device.cfg")
+    response = client.get("/api/findings")
+    assert response.status_code == 200
+    assert response.headers["X-Netwise-Conversion-Gap-Count"] == "0"
+    assert response.headers["X-Netwise-Conversion-Gaps-Unreadable"] == "false"
+
+
+def test_api_findings_sets_a_zero_count_header_before_any_upload():
+    response = client.get("/api/findings")
+    assert response.status_code == 200
+    assert response.headers["X-Netwise-Conversion-Gap-Count"] == "0"
+    assert response.headers["X-Netwise-Conversion-Gaps-Unreadable"] == "false"
+
+
+def test_api_findings_reports_the_real_count_after_a_pfsense_upload_with_skips():
+    _post_config(_LAN_AND_DHCP_WAN_XML, "config.xml", "application/xml")
+    response = client.get("/api/findings")
+    assert response.headers["X-Netwise-Conversion-Gap-Count"] == "1"
+    assert response.headers["X-Netwise-Conversion-Gaps-Unreadable"] == "false"
+
+
+def test_api_findings_reports_unreadable_not_zero_for_a_corrupted_record():
+    """The exact case #302's second review round found: a corrupted skip
+    record must never present itself as 'nothing was excluded'."""
+    _post_config(_LAN_AND_DHCP_WAN_XML, "config.xml", "application/xml")
+    main.pfsense_skips_path().write_text("not json", encoding="utf-8")
+
+    response = client.get("/api/findings")
+    assert response.headers["X-Netwise-Conversion-Gaps-Unreadable"] == "true"
+    assert response.headers["X-Netwise-Conversion-Gap-Count"] == "0"
+
+
+def test_get_findings_called_directly_with_no_response_does_not_raise():
+    """download_report() and several tests call get_findings() as a plain
+    Python function, with no FastAPI-injected Response to attach headers
+    to -- http_response must default to something that makes that safe."""
+    result = main.get_findings()
+    assert isinstance(result, list)
 
 
 # ---------------------------------------------------------------------------

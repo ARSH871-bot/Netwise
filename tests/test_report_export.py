@@ -367,6 +367,61 @@ def test_the_could_not_check_sections_own_empty_text_also_stops_claiming_nothing
     assert "Every check that ran found nothing, but part" in html
 
 
+# ---------------------------------------------------------------------------
+# conversion_gaps=None -- a THIRD state, distinct from () and from a
+# non-empty list (#302 review, round two, @ARSH871-bot)
+#
+# None means "we do not know whether anything was excluded", not "verified
+# empty". Before this, None and () were indistinguishable everywhere they
+# were tested -- the truthiness checks below (`if conversion_gaps:`) treat
+# both as falsy, so without an explicit `is None` branch this would have
+# silently fallen through to "Every reported check ran. Nothing was
+# skipped." -- the exact false-completeness claim this whole feature exists
+# to prevent, now reachable through an unreadable record instead of a
+# genuinely empty one.
+# ---------------------------------------------------------------------------
+
+
+def test_coverage_summarise_none_is_distinct_from_a_verified_empty_list():
+    known_empty = coverage.summarise([CLEAN], conversion_gaps=())
+    unknown = coverage.summarise([CLEAN], conversion_gaps=None)
+
+    assert known_empty["complete"] is True
+    assert known_empty["statement"] == "Every reported check ran. Nothing was skipped."
+
+    assert unknown["complete"] is False
+    assert unknown["conversion_gaps_unreadable"] is True
+    assert "could not be read" in unknown["statement"]
+    assert "Nothing was skipped" not in unknown["statement"]
+
+
+def test_coverage_summarise_conversion_gaps_unreadable_key_is_false_by_default():
+    """Every existing caller omits the parameter or passes (); both must
+    keep reading as 'verified nothing was excluded', not 'unknown'."""
+    assert coverage.summarise([CLEAN])["conversion_gaps_unreadable"] is False
+    assert coverage.summarise([CLEAN], conversion_gaps=())["conversion_gaps_unreadable"] is False
+
+
+def test_render_html_conversion_gaps_none_does_not_claim_nothing_was_skipped():
+    html = report.render_html([CLEAN], conversion_gaps=None)
+    assert "Every reported check ran. Nothing was skipped." not in html
+    assert "Every check ran. Nothing was skipped." not in html
+    assert "could not be read" in html
+
+
+def test_render_html_conversion_gaps_none_is_distinguishable_from_a_real_gap_list():
+    """Two different unknowns must not be conflated in the rendered text --
+    'we know it excluded something' and 'we don't know if it excluded
+    anything' are different claims with different words."""
+    unreadable = report.render_html([CLEAN], conversion_gaps=None)
+    known_gap = report.render_html(
+        [CLEAN], conversion_gaps=["rule 1 on 'lan': bad alias"]
+    )
+    assert "Excluded during conversion" not in unreadable
+    assert "Excluded during conversion" in known_gap
+    assert "bad alias" not in unreadable
+
+
 def test_a_single_blind_spot_reads_as_one():
     """The plural branch was tested; the singular one was not.
 

@@ -214,7 +214,7 @@ def _section_html(title: str, lede: str, items: List[Dict], css_class: str,
 
 def _coverage_html(
     findings: Sequence[Dict[str, Any]],
-    conversion_gaps: Sequence[str] = (),
+    conversion_gaps: Optional[Sequence[str]] = (),
 ) -> str:
     """The first-class coverage statement (#235), derived from status values.
 
@@ -226,7 +226,10 @@ def _coverage_html(
     `conversion_gaps` (#302 review) is rendered as its OWN list, never merged
     into `gaps` -- a check that could not run and a rule a converter excluded
     before any check ran are different claims, and merging them would lose
-    which one happened.
+    which one happened. Passing `None` (#302 review, round two) is a THIRD
+    claim again, distinct from an empty list -- see `coverage.summarise()`'s
+    own docstring -- and is rendered as its own warning line, not silently
+    folded into "nothing was skipped".
     """
     summary = coverage.summarise(findings, conversion_gaps)
     css = "complete" if summary["complete"] else "incomplete"
@@ -271,7 +274,13 @@ def _coverage_html(
             f'<p class="meta-line">Checked: {esc(names)}.</p>'
         )
 
-    if summary["conversion_gaps"]:
+    if summary["conversion_gaps_unreadable"]:
+        parts.append(
+            '<p class="meta-line"><strong>The record of what a converter '
+            "excluded before analysis could not be read.</strong> Whether "
+            "anything was excluded is unknown.</p>"
+        )
+    elif summary["conversion_gaps"]:
         parts.append(
             '<p class="meta-line"><strong>Excluded during conversion, '
             "before any check ran:</strong></p>"
@@ -288,12 +297,14 @@ def _coverage_html(
 def render_html(findings: Sequence[Dict[str, Any]],
                 source: Optional[str] = None,
                 generated_at: Optional[str] = None,
-                conversion_gaps: Sequence[str] = ()) -> str:
+                conversion_gaps: Optional[Sequence[str]] = ()) -> str:
     """A complete, self-contained HTML report. No external files, no scripts.
 
     `conversion_gaps` (#302 review) names anything a converter (pfSense's,
     today) excluded before this findings list ever existed -- optional, and
-    omitting it reproduces this function's exact prior output.
+    omitting it reproduces this function's exact prior output. `None` (#302
+    review, round two) is a third, distinct state -- "we do not know whether
+    anything was excluded" -- see `coverage.summarise()`'s own docstring.
     """
     s = _sections(findings)
     when = generated_at or _now()
@@ -318,7 +329,21 @@ def render_html(findings: Sequence[Dict[str, Any]],
     # everything-ran -- the same F-4 confusion the coverage box above was
     # fixed for, in a sentence that predates it. One claim, two places; both
     # now read from the same conditions.
-    if conversion_gaps:
+    #
+    # `conversion_gaps is None` MUST BE CHECKED BEFORE THE PLAIN TRUTHINESS
+    # TEST BELOW (#302 review, round two, @ARSH871-bot). `None` and `()` are
+    # both falsy, so `if conversion_gaps:` alone cannot tell "we verified
+    # nothing was excluded" from "we do not know" -- and folding the second
+    # into the `elif findings:` branch below would print "Every check ran.
+    # Nothing was skipped." while the actual answer is unknown, the exact
+    # false-completeness claim this round of review exists to remove.
+    if conversion_gaps is None:
+        blind_empty_text = (
+            "Every check that ran found nothing, but the record of what a "
+            "converter may have excluded before any check ran could not be "
+            "read -- see Coverage and certainty above."
+        )
+    elif conversion_gaps:
         blind_empty_text = (
             "Every check that ran found nothing, but part of the uploaded "
             "configuration was excluded before any check saw it -- see "
