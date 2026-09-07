@@ -718,7 +718,70 @@ def test_full_scan_uses_a_network_name_that_collides_with_nothing_else(monkeypat
     propose.propose_and_scan(GOOD_REQUEST, before_dir)
 
     assert captured["network_name"] not in ("netwise", "netwise-change", "netwise-propose")
-    assert captured["network_name"] == propose.FULL_SCAN_NETWORK_NAME
+    assert captured["network_name"].startswith(propose.FULL_SCAN_NETWORK_NAME)
+
+
+# ---------------------------------------------------------------------------
+# Full-scan network name uniqueness (#298 review, @ARSH871-bot)
+#
+# Before this, EVERY call to propose_and_scan() loaded its snapshot under
+# the exact same Batfish network AND snapshot name, with overwrite=True. Two
+# concurrent calls -- two browser tabs, two people, the client clicking
+# while someone demos -- could have the second overwrite the first's
+# snapshot while it was still being read, so the first call's findings
+# would silently describe the SECOND caller's config, with "grounded": True.
+# Same family as #242/#243 (a process-global upload flag serving one
+# person's config to every browser); the fix here is the same idea at
+# Batfish-network granularity.
+# ---------------------------------------------------------------------------
+
+
+def test_full_scan_network_name_is_unique_per_call(monkeypatch, tmp_path):
+    """The actual safety property: two calls must never collide, not just
+    'the name looks distinctive'. A fixed suffix or a name derived only from
+    the request text would still collide on two identical or concurrent
+    requests -- the case that matters most, since a race is likeliest when
+    many people propose the SAME obvious change against the SAME demo
+    config during a live demonstration."""
+    before_dir = _write_snapshot(tmp_path)
+    _stub_batfish(monkeypatch)
+    _stub_change_impact(monkeypatch, [_none_finding()])
+
+    seen_names = []
+
+    def fake_analyse(config_dir, host="localhost", network_name="netwise",
+                      snapshot_name="current", policy=None):
+        seen_names.append(network_name)
+        return []
+
+    monkeypatch.setattr("analysis.pipeline.analyse", fake_analyse)
+    for _ in range(5):
+        propose.propose_and_scan(GOOD_REQUEST, before_dir)
+
+    assert len(set(seen_names)) == 5, (
+        f"expected 5 distinct network names, got {seen_names}"
+    )
+
+
+def test_full_scan_network_name_still_carries_the_documented_prefix(monkeypatch, tmp_path):
+    """The uniqueness fix must not throw away the human-readable prefix that
+    makes a Batfish network listing legible -- only append to it."""
+    before_dir = _write_snapshot(tmp_path)
+    _stub_batfish(monkeypatch)
+    _stub_change_impact(monkeypatch, [_none_finding()])
+
+    captured = {}
+
+    def fake_analyse(config_dir, host="localhost", network_name="netwise",
+                      snapshot_name="current", policy=None):
+        captured["network_name"] = network_name
+        return []
+
+    monkeypatch.setattr("analysis.pipeline.analyse", fake_analyse)
+    propose.propose_and_scan(GOOD_REQUEST, before_dir)
+
+    assert captured["network_name"].startswith("netwise-propose-scan-")
+    assert len(captured["network_name"]) > len("netwise-propose-scan-")
 
 
 def test_full_scan_passes_the_policy_through(monkeypatch, tmp_path):

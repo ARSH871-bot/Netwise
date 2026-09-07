@@ -91,6 +91,7 @@ import ipaddress
 import re
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -533,14 +534,40 @@ def propose_change(
     }
 
 
-# A network of its own, distinct from every other Batfish network this
-# project uses -- default analyse() ("netwise"), change_impact.py
+# A network PREFIX of its own, distinct from every other Batfish network
+# this project uses -- default analyse() ("netwise"), change_impact.py
 # ("netwise-change"), and propose_change()'s own validation load above
 # ("netwise-propose"). A full scan run under any of those names could
-# overwrite a snapshot a concurrent real scan is mid-read of; a name used
-# nowhere else cannot collide with anything.
+# overwrite a snapshot a concurrent real scan is mid-read of; a prefix used
+# nowhere else cannot collide with anything ACROSS features.
+#
+# THAT ARGUMENT SAYS NOTHING ABOUT COLLISIONS WITHIN THIS ONE FEATURE
+# (#298 review, @ARSH871-bot). Before the per-call suffix below existed,
+# every call to propose_and_scan() -- two browser tabs, two people, or the
+# client clicking while someone demos -- loaded its snapshot under this
+# exact same network AND snapshot name, with overwrite=True. A second
+# concurrent call's init_snapshot() could overwrite the first one's
+# snapshot while pipeline.analyse() was still reading it, so the first
+# call's findings would describe the SECOND caller's config -- with
+# "grounded": True, the worst possible shape for a wrong answer. Same
+# family as #242/#243 (a process-global `_uploaded` flag meant one
+# person's upload made every other browser analyse a config it never
+# sent); the fix there was per-session state, and this is the same fix
+# at Batfish-network granularity instead.
 FULL_SCAN_NETWORK_NAME = "netwise-propose-scan"
 FULL_SCAN_SNAPSHOT_NAME = "full"
+
+
+def _full_scan_network_name() -> str:
+    """A fresh, unique Batfish network name for ONE call to
+    propose_and_scan() -- see the module comment above for why a shared
+    name is not safe here even though it is safe for every other network
+    name in this project. `uuid4` rather than a counter: this process may
+    already be serving concurrent requests when this is first called, and a
+    counter shared across threads needs its own lock to be safe, which a
+    random id does not.
+    """
+    return f"{FULL_SCAN_NETWORK_NAME}-{uuid.uuid4().hex[:12]}"
 
 
 def propose_and_scan(
@@ -616,7 +643,7 @@ def propose_and_scan(
         scan_findings = analysis_pipeline.analyse(
             scan_dir,
             host=host,
-            network_name=FULL_SCAN_NETWORK_NAME,
+            network_name=_full_scan_network_name(),
             snapshot_name=FULL_SCAN_SNAPSHOT_NAME,
             policy=policy,
         )
