@@ -62,21 +62,30 @@ def load():
 
 
 def team_members_line(data=None):
-    """"Name (id); Name (id); Name" — a member with no ID renders as the name.
+    """All four names with IDs, or all four names with none. Never a mixture.
 
-    Not an error, because two of the four IDs genuinely were not known when
-    this was written, and a cover sheet that lists two of four with IDs and
-    says nothing about it was itself raised in review on #311. A name with no
-    ID at least reads as incomplete.
+    ALL OR NOTHING, AND BOTH TEAMMATES WHO RAISED THIS WERE RIGHT
+        @shubhamkataria2005 objected on #311 that the cover named two of four
+        members with IDs and two without, and that this was an accident
+        rather than a decision. @patelankeet2 then hand-removed every ID from
+        the cover in his edit of the report, which is the same objection
+        arriving as a fix.
+
+        So the rule is: if every member has an ID, show them all. If any is
+        missing, show names only and let the ACTION box say which are
+        outstanding. A partial list is the one option nobody wanted, and it
+        was the only one the previous version could produce.
+
+        Ankeet's outcome is what this returns today. The moment the last ID
+        lands in identity.json it becomes ours again, with no code change.
     """
     data = load() if data is None else data
-    parts = []
-    for m in data["team_members"]:
-        name, sid = str(m.get("name", "")).strip(), str(m.get("student_id", "")).strip()
-        if not name:
-            continue
-        parts.append(f"{name} ({sid})" if sid else name)
-    return "; ".join(parts)
+    people = [(str(m.get("name", "")).strip(), str(m.get("student_id", "")).strip())
+              for m in data["team_members"]]
+    people = [(n, sid) for n, sid in people if n]
+    if people and all(sid for _, sid in people):
+        return "; ".join(f"{n} ({sid})" for n, sid in people)
+    return "; ".join(n for n, _ in people)
 
 
 def missing_ids(data=None):
