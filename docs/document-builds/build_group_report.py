@@ -5,8 +5,13 @@ Written plainly: short sentences, ordinary words, numbers where a number is
 better than an adjective.
 
 Things I cannot produce are marked in the document with a visible ACTION box
-rather than left blank or invented -- above all the signed client letter the
-template asks for at 10.2.
+rather than left blank or invented. One is left: Shubham's and Samika's
+student IDs.
+
+The signed client letter the template asks for at 10.2 ARRIVED on 8 September
+and is reproduced in Appendix C, both pages, with the original PDF submitted
+alongside. Three passages written while it was outstanding said it was not
+coming; all three are gone.
 
 Measured at commit d3879b4, 8 September 2026.
 """
@@ -830,9 +835,17 @@ p("Four questions are currently with him, and one of them blocks the other "
   "three: the WAN interface that carries rules has no fixed address, and a "
   "Cisco access list needs an address to attach rules to.")
 p("The template asks for a letter from the client confirming satisfaction. "
-  "We drafted one and sent it to him on 7 September 2026, and it had not come "
-  "back before this report was submitted. So this report does not claim it, "
-  "and nothing here is stated on his behalf.")
+  "We drafted one, sent it to him on 7 September 2026, and he returned it "
+  "signed on 8 September. It is reproduced in full as Appendix C. He wrote "
+  "that he is satisfied with what was delivered against what he asked for.")
+p("Two things about that letter are worth saying plainly. The sentence about "
+  "satisfaction was his to keep, change or delete, and the draft said so in a "
+  "note addressed to him; he removed the note and kept the sentence. And he "
+  "also kept the paragraph naming what the tool does NOT yet do, including "
+  "that two of its three analyses do not read a user policy and that the "
+  "converter for his own firewall refuses constructs it cannot model. The "
+  "letter corroborates the limits in section 10.3 rather than smoothing them "
+  "over, which is the part of it we would point at.")
 p("What he actually did is recorded and can be checked. He gave us the "
   "requirements in person, supplied an anonymised export of his own firewall "
   "on 10 August, and corrected us when our converter assumed something about "
@@ -999,11 +1012,22 @@ p("The report header names the file as device.cfg although the upload was "
   "dashboard shows the name the user chose; the report names the file we "
   "staged.")
 h("Appendix C: Client confirmation", 2)
-p("There is no signed letter. One was drafted and sent to the client on "
-  "7 September 2026 and had not been returned when this report was submitted. "
-  "Rather than leave this appendix empty or describe a document that does not "
-  "exist, what follows is the client engagement itself, with the place each "
-  "item is recorded so it can be checked rather than taken on trust.")
+p("The client returned the signed letter on 8 September 2026. It is "
+  "reproduced below in full, both pages, exactly as he signed it. The "
+  "original PDF is submitted alongside this report as \u201cClient "
+  "Confirmation Letter - SIGNED by Senaka.pdf\u201d, document ID "
+  "CA70A9BB67E6AE63984B189A54CD3F91.")
+figure("client-letter-signed-p1.png",
+       "Appendix C, page 1. The signed client confirmation as returned on "
+       "8 September 2026.", width=5.6)
+figure("client-letter-signed-p2.png",
+       "Appendix C, page 2. The signature block. Cropped to the signed area; "
+       "the remainder of the page is blank.", width=5.6)
+p("The engagement behind that letter is set out below, with the place each "
+  "item is recorded, so it can be checked rather than taken on trust. This "
+  "table was written before the letter arrived, to stand in for it. It is "
+  "kept because it is independent of the letter: every row names a file, an "
+  "issue or a setting a marker can open.")
 table(["What the client did", "When", "Where it is recorded"], [
     ["Gave the project requirements in person, including the two directions "
      "the AI layer had to work in", "Project start",
@@ -1022,8 +1046,9 @@ table(["What the client did", "When", "Where it is recorded"], [
      "is directly available to him", "Throughout",
      "GitHub collaborators: senakasjp"],
 ], widths=[2.5, 1.3, 2.5])
-p("No statement about the client's satisfaction is made anywhere in this "
-  "report, because we do not have one in writing.")
+p("The only statement about the client's satisfaction anywhere in this "
+  "report is his own, in the letter above, in his words. We make none on "
+  "his behalf.")
 
 h("Appendix D: Acknowledgement of AI assistance", 2)
 p("AI assistance was used on this project. It is declared here, in the "
