@@ -373,3 +373,78 @@ two incidents above are the argument, and both were in code with tests.
 > Recorded rather than backdated silently: the tick goes in now, the date it
 > was actually given is stated, and the gap is left visible because the gap
 > is the finding.
+
+
+### A-4 — `cve_mapping` joins the check vocabulary
+
+**PROPOSED, not ratified. The name is in the codebase; nothing runs it, and
+nothing should until the table below is full.**
+
+Adds one value to `VALID_CHECKS` and one to `PREFIX_BY_CHECK` in
+`analysis/findings.py`:
+
+```python
++    "cve_mapping",          # Samika -- #239
++    "cve_mapping": "CV",
+```
+
+That file says of the tuple: *"Add to this ONLY by team agreement — the
+dashboard and the AI layer both switch on these names."* §7a of `CLAUDE.md`
+says the same about the field vocabulary. This is that agreement being asked
+for, in the one place the answer can be checked rather than inferred.
+
+`CV` rather than `CM`: `CM` reads as a second `change_impact` prefix beside
+`CH`, and A-2's whole argument was that two checks sharing a prefix makes
+`id` uniqueness a matter of discipline instead of a property of the contract.
+
+#### The name exists and the registration does not, deliberately
+
+`cve_mapping` is **not** in `pipeline.CHECKS`. It does not run in any scan,
+and no finding it could produce reaches any surface.
+
+The name had to exist for the check to be written or tested at all —
+`make_finding()` validates `check` against `VALID_CHECKS` and raises
+otherwise — so the entry exists so the work can be *reviewed*, and the
+registration does not, so nothing *runs* before this table is full.
+
+The full reasoning, and the two open questions this leaves, are in
+[`docs/design/cve-mapping-open-decisions.md`](design/cve-mapping-open-decisions.md).
+`tests/test_cve_mapping.py::test_the_check_is_deliberately_not_registered_in_CHECKS`
+enforces the gap, and that test should be deleted **in the same commit** that
+adds the registration — not before, and not separately. If it ever fails on
+its own, somebody wired the check in without this table.
+
+#### Why it is raised now rather than at registration
+
+Because A-2 was not, and this file spends two paragraphs on the consequence.
+A-2's code sat on `main` for eighteen days at two of four signatures, and the
+record then drifted in both directions — claiming ratified while the table
+said three, then claiming three after the fourth tick landed.
+
+Raised by @shubhamkataria2005 in review on #304, whose objection is the exact
+shape of that history: an unratified addition with **no record of being
+unratified** is inferable-only, and the failure mode is not that someone
+wires it in tomorrow — the guard stops that — but that a status line
+somewhere later reports it as agreed, sourced from nothing.
+
+| Member | Why it touches them | Agreed |
+|---|---|---|
+| **Arsh** | Owns `analysis/findings.py`, where the vocabulary is validated, and `pipeline.CHECKS`, which would dispatch it | ⬜ |
+| **Ankeet** | The AI layer switches on `check`; `ai/explain.py` and `ai/Modelfile` would meet a name they have never seen, and this is the first check whose `found` means "worth checking" rather than "this is wrong" | ⬜ |
+| **Shubham** | `policy_compliance` shares the results list, and a new check changes what a scan's totals mean | ⬜ |
+| **Samika** | Wrote it; the dashboard and `analysis/report.py` render by check, and `risk` now carries a severity ceiling keyed on this name | ⬜ |
+
+> **NOT RATIFIED — zero of four, as of 8 September.** Merging #304 means the
+> code is worth having and is safe to sit inert. It does **not** mean the
+> amendment is agreed, and **`cve_mapping` must not be added to
+> `pipeline.CHECKS` until this table is full.**
+>
+> Written by the author of the change rather than waiting for someone else to
+> write it. @shubhamkataria2005 offered to push this section and then
+> approved #304 before doing so, which left his own objection standing over
+> an unrecorded gap — the offer was conditional on a reply I never sent, so
+> the omission is mine. Recorded here rather than in a PR comment, because a
+> comment is the thing this table exists to replace.
+>
+> **A ⬜ here is not a disagreement.** It is the absence of a recorded answer,
+> which is the only state this file is able to distinguish from agreement.
