@@ -66,6 +66,35 @@ missing output regenerates, a missing input does not.
 The inputs these scripts read — the images in `docs/screenshots/` and
 `docs/Demo/team-architecture.png` — are therefore committed alongside them.
 
+## The documents are AHEAD of these scripts (9 September)
+
+One day before submission, both submitted `.docx` files carry changes the
+builders do not have, and were edited in place rather than rebuilt. This is
+deliberate and recorded here so nobody rebuilds over it.
+
+**Group Final Report.** Arsh hand-edited the .docx: the student-ID ACTION box
+removed, the install code block dropped from 5.3, "Three screenshots" changed
+to "Four", and a GitHub Insights screenshot added with its own caption. A
+"Meeting and communication records" subsection was then added to 8.1.
+`build_group_report.py` has none of that.
+
+**Individual Evidence Portfolio.** `build_sub_portfolio.py` was lost when
+`docs/document-builds/` was deleted during a branch switch, and the copy
+recovered from a scratchpad is dated 7 September 10:33, before the repathing,
+the guard, the "four to three integration tests" correction, and the figure
+re-pin to `d3879b4`. The BUILT document has all of those; the recovered script
+does not. It also now carries a new section 3.1 (meeting records, renumbering
+the old 3.1 and 3.2 to 3.2 and 3.3) and an E21 row.
+
+**So `_guard.py` will refuse to rebuild either one, and that is correct.** The
+refusal is the mechanism working, not a fault to force past. Anyone
+reconciling these after submission should treat the .docx as the source of
+truth and bring the scripts up to it, checking each difference the guard
+prints rather than assuming.
+
+`build_reflection.py` was lost and recovered the same way. Its document was
+not edited afterwards, but the script is equally stale.
+
 ## The rebuild guard
 
 Every builder writes its document from scratch, so a rebuild discards anything
