@@ -136,11 +136,20 @@ STORIES = [
  ("US-27", "Analyse a vendor that is not Cisco, end to end",
   "As an engineer with a mixed estate, I want Arista, NX-OS and Juniper to work "
   "as well as IOS does.",
-  ["The three existing vendor fixtures run through the full pipeline, not just parsing",
+  ["`vendor-asa` joins the other three: a deliberate fault, and an end-to-end "
+   "test that finds it. It is the only fixture Batfish reports as "
+   "`PARTIALLY_UNRECOGNIZED`, so this depends on resolving parse strictness",
    "Any check that is IOS-specific says so as `status=\"error\"`, per F-4",
-   "A per-vendor support table in `README.md`, generated rather than typed"],
-  "Fixtures for three vendors already exist. The pipeline has only ever been "
-  "proven on one of them.",
+   "A per-vendor support table in `README.md`, generated rather than typed -- "
+   "nothing a user reads currently says which vendors work",
+   "The table distinguishes *parses* from *produces findings*, because "
+   "`tests/test_vendor_fixtures.py` is emphatic that these are different claims"],
+  "RESCOPED after measuring, and the original scope was wrong in our favour "
+  "twice. Discussion #296 asked for \"the three existing vendor fixtures\" to "
+  "run through the full pipeline. There are four fixtures, and three of them "
+  "already do -- `pytest tests/test_vendor_fixtures.py` passes 10 tests "
+  "against real Batfish today. What remains is `vendor-asa`, which parses only "
+  "partially, and the fact that no user-facing document says any of this.",
   N, "Vendors", "L", [], "#296"),
 
  ("US-29", "Explain related findings as one story",
@@ -482,8 +491,9 @@ EPIC_WHY = {
             "into writing their own.",
  "Remediation": "Finding the problem is half the value. The other half is the "
                 "line of config that fixes it.",
- "Vendors": "Three vendor fixtures exist. One vendor has ever been proven end "
-            "to end.",
+ "Vendors": "Four vendor fixtures exist and three of them -- Arista, Juniper "
+            "and NX-OS -- already produce a real finding end to end. What is "
+            "left is the fourth, and saying so anywhere a user can see it.",
  "AI": "The layer with the most attention on it and the least measurement "
        "behind it.",
  "Policy": "The user's own rules are a first-class artefact and deserve the "

@@ -122,7 +122,7 @@ The honest summary: **three people are being asked to write less and read more.*
 
 ### Vendors
 
-*Three vendor fixtures exist. One vendor has ever been proven end to end.*
+*Four vendor fixtures exist and three of them -- Arista, Juniper and NX-OS -- already produce a real finding end to end. What is left is the fourth, and saying so anywhere a user can see it.*
 
 | | Story | Issue | Size | Owner |
 |---|---|---|---|---|
