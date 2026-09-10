@@ -41,6 +41,7 @@ RUN IT
 """
 
 import json
+import os
 import socket
 import sys
 from pathlib import Path
@@ -74,8 +75,30 @@ CHECKS = {
 BATFISH_V2_PORT = 9996
 
 
+#: Environment variable naming the Batfish host, for deployments where Batfish
+#: is not on this machine's loopback -- a container beside this one, most of
+#: all. Introduced for US-41 (#333); see `resolve_batfish_host()`.
+BATFISH_HOST_ENV = "NETWISE_BATFISH_HOST"
+
+#: What a host of `None` means: nobody chose one.
+DEFAULT_BATFISH_HOST = "localhost"
+
+
+def resolve_batfish_host(host: "str | None") -> str:
+    """The host to use, given what the caller asked for.
+
+    `None` means the caller expressed no preference, so the environment gets
+    a say and falls back to loopback. **Anything else is honoured exactly**,
+    including the literal string "localhost" -- a caller that named a host is
+    not overridden by configuration, or the argument would be a lie.
+    """
+    if host is not None:
+        return host
+    return os.environ.get(BATFISH_HOST_ENV, "").strip() or DEFAULT_BATFISH_HOST
+
+
 def connect(
-    host: str = "localhost",
+    host: "str | None" = None,
     probe_timeout: float = 2.0,
     probe_port: int = BATFISH_V2_PORT,
 ) -> Session:
@@ -102,6 +125,7 @@ def connect(
     non-default port would be reachable to pybatfish and closed to the probe.
     Pass the real port, or `probe_timeout=0` to skip the probe entirely.
     """
+    host = resolve_batfish_host(host)
     if probe_timeout > 0:
         _require_port_open(host, probe_port, probe_timeout)
 
@@ -270,7 +294,7 @@ def run_check(bf: Session, name: str) -> List[Dict[str, Any]]:
 def analyse(
     config_dir: str | Path,
     check_names: Optional[Sequence[str]] = None,
-    host: str = "localhost",
+    host: "str | None" = None,
     network_name: str = "netwise",
     snapshot_name: str = "current",
     policy: Optional["policy_module.Policy"] = None,
@@ -315,7 +339,7 @@ def analyse(
 def _analyse(
     config_dir: str | Path,
     check_names: Optional[Sequence[str]] = None,
-    host: str = "localhost",
+    host: "str | None" = None,
     network_name: str = "netwise",
     snapshot_name: str = "current",
 ) -> List[Dict[str, Any]]:
