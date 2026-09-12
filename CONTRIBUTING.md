@@ -444,6 +444,41 @@ Board fields that get forgotten: **Start date and Target date** — the Roadmap
 view is blank without them — plus Priority, Size, and adding open PRs as items.
 Merged PRs move themselves; the seven automation workflows are enabled.
 
+### What each column means, and who moves an item into it
+
+This was missing, and its absence showed. On 12 September the **In review**
+column held **zero items** while seven pull requests were open and waiting —
+none of them on the board at all. The rule above already said to add open PRs
+as items. It was written down and not performed, which is this project's
+oldest failure shape arriving through process rather than code.
+
+| Column | What it means | Who moves it there |
+|---|---|---|
+| **Backlog** | Agreed it should happen. Nobody has started. | automation, on issue creation |
+| **Ready** | Scoped enough to start without asking anything first | whoever scoped it |
+| **In progress** | Someone is writing the code now | the author, when they branch |
+| **In review** | The work exists and is waiting on a person | **the author, when they open the PR** |
+| **Done** | Merged | automation, on merge |
+
+**The only row anyone gets wrong is `In review`, so it is worth saying twice.**
+Opening a pull request is two board actions, not zero:
+
+```bash
+gh project item-add 3 --owner ARSH871-bot --url <pr-url>   # the PR
+# then set BOTH the PR and the issue it closes to "In review"
+```
+
+An empty `In review` column does not mean nothing is waiting. It means nobody
+recorded what is waiting — and a queue nobody can see is a queue nobody clears.
+That is how this project reached eight open pull requests and read, to anyone
+glancing at the board, as though it had none.
+
+**Automation will not save you here.** All seven workflows are enabled and
+`Auto-add to project` still did not add a single one of those seven pull
+requests, because its filter covers issues. Whether that filter should be
+widened is a setting somebody has to click; until it is, this is a human
+step and the table above is the rule.
+
 ### But the real fix is removing the duplicate
 
 Every one of those incidents had the same cause: **a fact stored in two places
