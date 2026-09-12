@@ -24,8 +24,23 @@
 name: tests
 
 on:
+  # NO `branches:` FILTER ON pull_request, AND THAT IS DELIBERATE.
+  #
+  # It used to say `branches: [main]`, which meant a pull request targeting
+  # anything else ran NO tests at all. That is not a hypothetical: #351 is
+  # stacked on #350, and `gh pr checks 351` reported "no checks reported on
+  # the branch" -- zero jobs, silently.
+  #
+  # The dangerous part is how it presents. A PR with no checks shows no red
+  # cross, which reads as "nothing wrong" rather than "nothing ran". That is
+  # F-4 arriving in the pipeline instead of in a finding: `none` and `error`
+  # rendered identically, on the surface a reviewer uses to decide whether to
+  # trust a branch.
+  #
+  # Every pull request now runs the suite, whatever it targets. `push` stays
+  # limited to main, because a push to a feature branch with an open PR would
+  # otherwise run the same jobs twice.
   pull_request:
-    branches: [main]
   push:
     branches: [main]
 
