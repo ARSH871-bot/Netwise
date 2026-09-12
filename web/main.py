@@ -34,7 +34,7 @@ from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi import Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -45,7 +45,7 @@ from ai.explain import (
     local_model_boundary_notice,
     remediate_with_source,
 )
-from ai.propose import propose_change
+from ai.propose import propose_and_scan, propose_change
 from ai.query import answer_question
 from analysis import findings, pipeline as analysis_pipeline, report
 from analysis.business_context import (
@@ -1005,7 +1005,7 @@ def download_report(format: str = "html") -> Response:
 
 
 @app.get("/api/findings")
-def get_findings() -> List[Dict[str, Any]]:
+def get_findings(response: Response = None) -> List[Dict[str, Any]]:
     """Return the current findings, in the F-1 format, plus a plain-English
     "explanation" on every status="found" finding (US-19 / #31).
 
@@ -1021,8 +1021,24 @@ def get_findings() -> List[Dict[str, Any]]:
     data risks a viewer mistaking a rephrased invention for a rephrased
     fact, which is exactly the distinction this whole project exists to
     keep clear.
+
+    THE MOCK/REAL DISTINCTION IS ALSO CARRIED IN A RESPONSE HEADER.
+        Before this, nothing on the live dashboard ever said these were
+        invented demo findings rather than a real scan -- only a downloaded
+        report's subject line ever admitted it ("example findings (no
+        upload yet)"), which nobody sees before uploading anything. The
+        header (not a field in the JSON body) keeps the F-1 list shape
+        exactly as every existing caller already expects -- download_report()
+        calls this function directly, as a plain Python call with no
+        Response to inject, which is why the parameter defaults to None
+        and a throwaway Response absorbs the header in that case rather
+        than the call failing.
     """
+    if response is None:
+        response = Response()
+
     if not _is_uploaded():
+        response.headers["X-Netwise-Mock-Data"] = "true"
         return mock_findings.get_mock_findings()
 
     # #92b: re-analysing an unchanged snapshot costs ~3.6s of real Batfish
@@ -1281,12 +1297,12 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
         message = (
             f"'{display_name}' is a PF Sense export -- converted to Cisco "
             f"IOS ({size:,} bytes read) and staged. Nothing has been "
-            "analysed yet — click Scan Now to check it."
+            "analysed yet -- click Scan Now to check it."
         )
     else:
         message = (
             f"'{display_name}' accepted ({size:,} bytes) and staged. "
-            "Nothing has been analysed yet — click Scan Now to check it."
+            "Nothing has been analysed yet -- click Scan Now to check it."
         )
 
     audit_event(
@@ -1496,7 +1512,7 @@ async def upload_policy(file: UploadFile) -> Dict[str, Any]:
         # the overclaim this message was originally written to avoid.
         "message": (
             f"'{display_name}' accepted ({size:,} bytes) and staged. {summary} "
-            "Applied to the checks that read a policy — policy compliance. "
+            "Applied to the checks that read a policy -- policy compliance. "
             "Access control and routing still use our built-in rules (#87)."
         ),
     }
@@ -1780,6 +1796,251 @@ def propose_change_endpoint(body: ProposeRequest) -> Dict[str, Any]:
     result = propose_change(body.request, snapshot_dir())
     result["impact"] = _attach_explanations(result["impact"])
     return result
+
+
+@app.post("/api/propose/full-scan")
+def propose_full_scan_endpoint(body: ProposeRequest) -> Dict[str, Any]:
+    """The recommended strengthening of propose-a-change: run every check
+    against the proposed config, not just change_impact's narrow diff.
+
+    WHY THIS IS A SEPARATE ENDPOINT, NOT A FLAG ON /api/propose
+        A full scan connects to Batfish, loads a whole extra snapshot under
+        its own network, and runs every registered check -- multiple
+        seconds of real work, against /api/propose's own change_impact-only
+        path being fast enough to run on every keystroke-adjacent submit.
+        Making it opt-in, a second click, keeps the common case cheap and
+        makes the expensive case visible as a deliberate choice rather than
+        a silent cost added to the button everyone already uses.
+
+    Reuses the same JSON body shape as /api/propose (ProposeRequest), unlike
+    /api/propose/download's form-encoded field -- this endpoint returns JSON
+    for the dashboard to render inline, not a file for the browser to save,
+    so there is no reason to depart from the JSON convention every other
+    endpoint on this page already follows.
+
+    The user's own policy, if one is staged, applies to the full scan the
+    same as it would to a real upload -- ai.propose.propose_and_scan()'s
+    own docstring gives the reason: two runs of "the same config" silently
+    disagreeing about what counts as a violation would be worse than either
+    being wrong alone.
+
+    `findings` gets the same explanation/remediation attachment /api/findings
+    gives a real scan, for the same reason /api/propose already reuses
+    _attach_explanations() for its impact list -- a plain-English reading is
+    more useful than a raw Batfish result, here as much as anywhere else.
+    """
+    if not _is_uploaded():
+        return {
+            "proposed_change": None,
+            "findings": [],
+            "grounded": False,
+            "answer": (
+                "Upload a config first, there is nothing to propose a "
+                "change against yet."
+            ),
+        }
+
+    result = propose_and_scan(
+        body.request, snapshot_dir(), policy=_staged_policy()
+    )
+    result["findings"] = _attach_remediation(
+        _attach_explanations(result["findings"])
+    )
+    return result
+
+
+@app.post("/api/propose/download")
+def download_proposed_config(request: str = Form(...)) -> Response:
+    """The proposed change, as a downloadable config file (strengthening of
+    US-13/US-14): a reviewer can inspect the whole resulting file, not just
+    the one line and the affected block the dashboard already shows.
+
+    A REAL FORM POST, NOT FETCH + BLOB. Same reasoning as `download_report()`
+    above -- a native form submission lets the browser handle the download
+    (Content-Disposition) itself, with no object URL to build or revoke. The
+    field is `request: str = Form(...)`, not the JSON `ProposeRequest` body
+    `/api/propose` takes, because a plain HTML `<form>` posts
+    `application/x-www-form-urlencoded`, not JSON -- the two endpoints
+    necessarily take the request text two different ways for that reason.
+
+    RECOMPUTES RATHER THAN REUSING A STORED RESULT. propose_change() is a
+    pure function of (request text, uploaded snapshot) and nothing here
+    persists a proposal between the JSON call that renders it and this call
+    that downloads it -- the same "no server-side state for something this
+    cheap to recompute" choice /api/propose itself already makes for the
+    Batfish comparison. Two calls with the same request text produce the
+    same file, so there is nothing to keep in sync.
+
+    A REFUSED REQUEST IS A 422, NOT A BROKEN FILE. The download button only
+    ever appears on the dashboard after a successful proposal already
+    rendered, so hitting this with a request that refuses should not happen
+    through the UI -- but if it does (a stale form, a direct POST), the
+    honest answer is an error response naming why, never a file whose
+    content is silently the refusal text with a .cfg extension.
+    """
+    if not _is_uploaded():
+        raise HTTPException(
+            status_code=422,
+            detail="Upload a config first, there is nothing to propose a change against yet.",
+        )
+
+    result = propose_change(request, snapshot_dir())
+    change = result.get("proposed_change")
+    if change is None:
+        raise HTTPException(status_code=422, detail=result["answer"])
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    filename = f"netwise-proposed-{change['device']}-{stamp}.cfg"
+    return Response(
+        content=change["after_config_text"],
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+_COMPARISON_REPORT_FORMATS = {
+    "html": ("text/html", "html"),
+    "csv": ("text/csv", "csv"),
+}
+
+
+@app.post("/api/propose/comparison-report")
+def download_comparison_report(
+    findings_json: str = Form(...), format: str = Form(...)
+) -> Response:
+    """Download the before/after comparison itself -- what a proposed change
+    actually does to the reader's own scan -- as HTML or CSV.
+
+    WHY THIS TAKES ALREADY-COMPUTED DATA RATHER THAN RE-RUNNING ANYTHING
+        Unlike download_proposed_config() above, which cheaply recomputes
+        propose_change() on every call, a full comparison means a whole
+        second Batfish snapshot and explanations for whatever it finds --
+        real seconds to minutes of work (see /api/propose/full-scan's own
+        docstring). The browser already has the exact introduced/resolved/
+        unchanged split it computed to show the comparison on screen; this
+        endpoint renders THAT, so a download can never disagree with what
+        is already on the reader's screen, and never pays for the scan a
+        second time.
+
+    A REAL FORM POST, NOT FETCH + BLOB, same reasoning as every other
+    download on this page -- the browser handles Content-Disposition
+    itself. `findings_json` carries a JSON blob because a comparison is
+    structured data (finding lists plus a count and a description), not
+    the one flat field the other propose-download endpoint needs.
+    `newly_blind`/`newly_sighted` are optional lists, defaulting to empty
+    for a caller that predates them -- a check going blind or sighted is a
+    status TRANSITION, not a problem introduced or resolved, and belongs
+    in its own disclosure rather than either of those two buckets (#298
+    review, round two).
+
+    VALIDATED, NOT TRUSTED. The payload originates in the browser, built
+    from data this server sent it -- but a request is still a request.
+    Malformed JSON, or JSON that is not the shape this expects, is a 422
+    naming what was wrong, never a 500 from a renderer handed something it
+    did not expect.
+    """
+    if format not in _COMPARISON_REPORT_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Unknown format {format!r}. "
+                    f"Choose one of: {', '.join(sorted(_COMPARISON_REPORT_FORMATS))}."),
+        )
+
+    try:
+        payload = json.loads(findings_json)
+    except (json.JSONDecodeError, TypeError) as error:
+        raise HTTPException(
+            status_code=422,
+            detail=f"findings_json is not valid JSON: {error}",
+        ) from error
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="findings_json must be a JSON object.")
+
+    introduced = payload.get("introduced")
+    resolved = payload.get("resolved")
+    unchanged_count = payload.get("unchanged_count")
+    description = payload.get("description")
+    newly_blind = payload.get("newly_blind", [])
+    newly_sighted = payload.get("newly_sighted", [])
+
+    if not isinstance(introduced, list) or not all(isinstance(f, dict) for f in introduced):
+        raise HTTPException(status_code=422, detail="findings_json.introduced must be a list of findings.")
+    if not isinstance(resolved, list) or not all(isinstance(f, dict) for f in resolved):
+        raise HTTPException(status_code=422, detail="findings_json.resolved must be a list of findings.")
+    if not isinstance(unchanged_count, int) or isinstance(unchanged_count, bool) or unchanged_count < 0:
+        raise HTTPException(status_code=422, detail="findings_json.unchanged_count must be a non-negative integer.")
+    if not isinstance(description, str) or not description:
+        raise HTTPException(status_code=422, detail="findings_json.description must be a non-empty string.")
+    if not isinstance(newly_blind, list) or not all(isinstance(f, dict) for f in newly_blind):
+        raise HTTPException(status_code=422, detail="findings_json.newly_blind must be a list of findings.")
+    if not isinstance(newly_sighted, list) or not all(isinstance(f, dict) for f in newly_sighted):
+        raise HTTPException(status_code=422, detail="findings_json.newly_sighted must be a list of findings.")
+
+    # F-4, enforced here rather than trusted from the browser (#298 review,
+    # @shubhamkataria2005 and @ARSH871-bot). "introduced" and "resolved" mean
+    # a PROBLEM appearing or disappearing; a status="none" or "error" finding
+    # in either list is a status TRANSITION, a different and more urgent
+    # claim, and rendering it under either heading here is exactly the bug
+    # review caught in app.js's diffFindings(). The browser now filters to
+    # status="found" before ever building this payload, but this endpoint is
+    # a real POST a request can still reach directly, and the artefact this
+    # produces is what a reader keeps after the screen is gone.
+    for field_name, field_findings in (("introduced", introduced), ("resolved", resolved)):
+        offenders = [f.get("status") for f in field_findings if f.get("status") != "found"]
+        if offenders:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"findings_json.{field_name} must contain only status=\"found\" "
+                    f"findings; got status={offenders[0]!r}. A status transition "
+                    "(none/error) is not a problem introduced or resolved."
+                ),
+            )
+
+    # The other half of the same F-4 discipline, in the other direction
+    # (#298 review, round two, @shubhamkataria2005): newly_blind IS the
+    # status transition the block above excludes from introduced/resolved,
+    # so it must be status="error" -- a check that stopped running, not a
+    # problem. newly_sighted is the reverse: a check that now runs clean,
+    # status="none". Getting either backwards here would relabel exactly
+    # the transition this endpoint exists to disclose correctly.
+    for field_name, field_findings, required_status in (
+        ("newly_blind", newly_blind, "error"),
+        ("newly_sighted", newly_sighted, "none"),
+    ):
+        offenders = [f.get("status") for f in field_findings if f.get("status") != required_status]
+        if offenders:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"findings_json.{field_name} must contain only "
+                    f'status="{required_status}" findings; got status={offenders[0]!r}.'
+                ),
+            )
+
+    media_type, extension = _COMPARISON_REPORT_FORMATS[format]
+    if format == "html":
+        subject = configs_dir().name if _is_uploaded() else "an uploaded configuration"
+        body = report.render_comparison_html(
+            introduced, resolved, unchanged_count, description, source=subject,
+            newly_blind=newly_blind, newly_sighted=newly_sighted,
+        )
+    else:
+        body = report.render_comparison_csv(
+            introduced, resolved, unchanged_count,
+            newly_blind=newly_blind, newly_sighted=newly_sighted,
+        )
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={
+            "Content-Disposition":
+                f'attachment; filename="netwise-comparison-{stamp}.{extension}"'
+        },
+    )
 
 
 class NoCacheStatic(StaticFiles):
