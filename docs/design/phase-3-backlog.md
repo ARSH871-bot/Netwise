@@ -74,11 +74,11 @@ The honest summary: **three people are being asked to write less and read more.*
 
 ### Scale
 
-*We have never run this on a network larger than a handful of devices. Every performance claim we might make is currently a guess.*
+*Speed was measured in #218 and is not the problem: fifty devices analyse in 6.9 seconds. What `docs/scale.md` found instead is that the analysis does not GROW with the network -- fifty devices in, one device examined. These stories are about that.*
 
 | | Story | Issue | Size | Owner |
 |---|---|---|---|---|
-| `US-21` | Analyse my whole network at once, not device by device | [#314](https://github.com/ARSH871-bot/Netwise/issues/314) | L | Arsh |
+| `US-21` | Analyse my whole network at once, not device by device | [#314](https://github.com/ARSH871-bot/Netwise/issues/314) | M | Arsh |
 | `US-43` | Tell me how big a network you can actually handle | [#335](https://github.com/ARSH871-bot/Netwise/issues/335) | L | Arsh |
 | `US-44` | Run a long scan in the background | [#336](https://github.com/ARSH871-bot/Netwise/issues/336) | L | Arsh |
 

@@ -68,11 +68,24 @@ STORIES = [
  ("US-21", "Analyse my whole network at once, not device by device",
   "As an engineer with forty switches, I want one scan over all of them, so I "
   "see problems that only exist between devices.",
-  ["A snapshot of N devices produces findings scoped per device with no cross-talk",
-   "Wall-clock time and memory recorded in `docs/scale.md` at 10, 50 and 100 devices",
-   "The existing `multi-device-10` fixture is extended rather than replaced"],
-  "Everything in the product today is shaped around one or two devices.",
-  A, "Scale", "L", [], "#296"),
+  ["**Already true, verified:** a snapshot of N devices is analysed, scoped "
+   "per device, with wall-clock recorded at 10 and 50 in `docs/scale.md`",
+   "Still missing: 100 devices, and MEMORY at every size -- only time was taken",
+   "Still missing: the finding that matters. At 50 devices the analysis "
+   "returns 3 findings, the same as at one, because every rule names a "
+   "specific device. Fifty devices in, one device examined",
+   "So the real deliverable is that a multi-device scan reports coverage "
+   "honestly: N devices present, M examined, and the difference stated",
+   "`tests/fixtures/multi-device-10` and `tools/make_scale_fixture.py` already "
+   "exist and are extended rather than replaced"],
+  "RESCOPED after reading `docs/scale.md`, which #218 already produced. "
+  "Discussion #296 asked for timings that had been taken six weeks earlier: "
+  "10 devices in 4.3 s, 50 in 6.9 s, roughly linear. Speed was never the risk. "
+  "The document's own second half says so -- the analysis does not grow with "
+  "the network, which is #87 wearing a different hat. What is genuinely "
+  "outstanding is memory, 100 devices, and making the coverage gap visible "
+  "rather than leaving a user to infer it from a suspiciously short list.",
+  A, "Scale", "M", [87, 218], "#296"),
 
  ("US-22", "Tell me only what changed since the last scan",
   "As someone who scans weekly, I want the diff, so I am not re-reading forty "
@@ -318,9 +331,12 @@ STORIES = [
    "Measured and published: time, memory, and where it degrades",
    "A documented supported ceiling rather than an unstated one",
    "Beyond it, a clear refusal -- never a partial result presented as whole"],
-  "US-21 measures 10, 50 and 100. This asks the question that follows: what is "
-  "the number we are willing to put in writing? Unknown is not sellable, and a "
-  "silent partial result is F-4 at estate scale.",
+  "`docs/scale.md` already measures 10 and 50 devices and is careful to call "
+  "its figure \"a floor, not an estimate\" -- the fixtures are fifty copies of "
+  "one router with no topology between them. This is the story that turns that "
+  "floor into a number we are willing to put in writing, on an estate that is "
+  "not synthetic. Unknown is not sellable, and a silent partial result is F-4 "
+  "at estate scale.",
   A, "Scale", "L", [], "new"),
 
  ("US-44", "Run a long scan in the background",
@@ -414,7 +430,11 @@ STORIES = [
    "Reported through the same three-state contract as everything else",
    "Shipped as a first-class check, not a script somebody remembers to run"],
   "A security product that has never been pointed at itself is a fair thing for "
-  "a buyer to ask about, and an embarrassing thing to be asked in a demo.",
+  "a buyer to ask about, and an embarrassing thing to be asked in a demo. Note "
+  "that `tools/preflight.py` already checks whether this machine can RUN "
+  "Netwise -- Python, dependencies, Docker, Batfish, Ollama, Node. That is a "
+  "readiness check, not a security one, and this story must extend it rather "
+  "than grow a second thing that looks like it.",
   A, "Trust", "S", [], "new"),
 
  ("US-52", "Tell me what you keep, and delete it when I say",
@@ -481,8 +501,10 @@ EPIC_WHY = {
             "means “unchecked”. These are the places that claim is "
             "still only half-kept.",
  "Distribution": "Nobody can buy something they cannot install.",
- "Scale": "We have never run this on a network larger than a handful of "
-          "devices. Every performance claim we might make is currently a guess.",
+ "Scale": "Speed was measured in #218 and is not the problem: fifty devices "
+          "analyse in 6.9 seconds. What `docs/scale.md` found instead is that "
+          "the analysis does not GROW with the network -- fifty devices in, "
+          "one device examined. These stories are about that.",
  "Multi-tenant": "One person on one laptop is a tool. Several people in one "
                  "company is a product.",
  "Automation": "A scan somebody has to remember to run is a scan that stops "
