@@ -236,6 +236,85 @@ Batfish runs in Docker container `batfish` (image `batfish/allinone`), exposing
   > missing `<type>`/`<protocol>` question (#80) are unaffected by this and
   > remain open.
 
+  > **UPDATE, 5 September.** The rest of #78 was picked up without waiting
+  > for Senaka's answers to the four questions now written out in Discussion
+  > #294, on the reasoning that a decision genuinely blocked on him should
+  > stay blocked, but nothing else should sit idle in the meantime. That
+  > split the remaining work into two very different piles.
+  >
+  > **The blast radius, fixed.** A single rule failing to convert for ANY
+  > reason (missing or unsupported `<type>`, an unsupported `<protocol>`
+  > value, an unresolved alias, a bad port, an unresolvable network
+  > reference) used to abort the entire file, not just the interface or rule
+  > it was on. At the client's real scale — 1,998 XML elements against this
+  > project's 54-element fixture — one anomaly anywhere meant zero analysis
+  > of anything. Re-scoped the same way the DHCP-WAN/undeclared-VPN case was:
+  > the one failing rule is excluded and named, everything else converts
+  > exactly as if it were never there. This required no guess about what any
+  > field means — every refusal still names the same cause it always did,
+  > only its blast radius shrank from "the whole file" to "this one rule".
+  >
+  > **`<protocol>`'s semantic question, still untouched.** #80 itself says
+  > "do not fix this before the client answers" — that instruction stands,
+  > unconditionally. What DID move: missing `<type>` now gets its own precise
+  > message, split from present-but-invalid the same way the two interface
+  > causes were split earlier, because there is no safe default for
+  > pass/block/reject the way "any" is one for protocol. `<protocol>`'s
+  > existing default-to-`"any"` behaviour was not touched at all.
+  >
+  > **NAT, reaffirmed rather than left stale.** Checked against the same
+  > "no guessing" bar the blast-radius fix cleared: it does not clear it.
+  > There is no version of "convert the NAT rule" that does not invent
+  > translation semantics this module has never observed. Detection and
+  > exclusion (#264) is unchanged, and `docs/design/pfsense-nat-support.md`
+  > records that this was revisited today, not simply never revisited.
+  >
+  > A separate idea — disclosing an inferred `<protocol>` with a comment,
+  > #80's own preferred Option C, which changes no behaviour, only makes the
+  > existing silent default visible — was drafted as a question for the team
+  > rather than built solo, precisely because it touches the one issue
+  > marked blocked on the client. Not yet decided.
+
+  > **UPDATE, 6 September — the blast-radius fix has a direction, and one
+  > direction is dangerous.** @SamikaPerera's review on #302 found what the
+  > entry above did not name: excluding a rule changes what the emitted ACL
+  > decides, and the two directions are not equally safe.
+  >
+  > **Skipping a `block` rule makes the emitted ACL MORE permissive than the
+  > real device.** Netwise then reports traffic as reachable that the real
+  > firewall denies — noisy, but safe, because the false finding gets
+  > investigated and dismissed.
+  >
+  > **Skipping a `pass` rule makes the emitted ACL STRICTER than the real
+  > device**, and this is the direction that matters. A policy rule asserting
+  > *"this traffic must be denied"* can then report `none` (clean) against
+  > the emitted ACL, while the real firewall actually permits that traffic —
+  > a real policy violation, reported as a pass. That is F-4's exact failure,
+  > reached through the converter instead of through a check: the report says
+  > "we checked and it is fine" about something nobody actually verified.
+  >
+  > Not new IN KIND — #104's interface-level skip made the identical trade,
+  > accepted at the time. What changed is conspicuousness: a whole excluded
+  > interface is visible in the skip list as a named gap; a single dropped
+  > `pass` rule inside an otherwise-normal ACL is not, unless someone reads
+  > the skip notes and reasons through what they mean for a specific policy
+  > rule.
+  >
+  > **Fixed, not just documented**: `analysis/coverage.py` and
+  > `analysis/report.py` (PR #302) now carry the skip list through to the
+  > downloaded report as its own "excluded during conversion" section, and
+  > the report's coverage statement stops claiming "nothing was skipped"
+  > when a conversion excluded a rule, even when every check ran clean. That
+  > closes the disclosure gap Samika also found — before this, the skip list
+  > reached the user exactly once, at upload, and was gone by the time a
+  > report was generated. It does not close the underlying modelling gap
+  > above: a skipped `pass` rule is still excluded, not modelled, and a
+  > policy check can still report `none` where the real firewall would not.
+  > Carrying skips into F-1 findings directly (an `error` card per skip,
+  > visible on the dashboard itself, not only in a downloaded report) was
+  > raised as the more complete fix and deliberately left for a separate,
+  > properly scoped change rather than folded into this one -- see #306.
+
 ## 7a. The finding format (F-1) — the one contract
 
 **`docs/finding-format.md` is authoritative.** It was agreed by all four team

@@ -754,6 +754,19 @@ body {
   color: var(--ink-soft);
 }
 
+/* Persistent disclosure that a pfSense conversion excluded part of the
+   uploaded file, or that the record of what it excluded could not be read
+   (#302 review). Amber, same as the base .notice -- this is the on-screen
+   twin of the "Coverage and certainty" box the downloaded report already
+   shows, not a new tone. */
+#conversion-gaps-notice {
+  margin: 0 0 0.75rem;
+}
+
+#conversion-gaps-notice[hidden] {
+  display: none;
+}
+
 /* --- Chat ---------------------------------------------------------------- */
 .pane-chat {
   background: var(--card);

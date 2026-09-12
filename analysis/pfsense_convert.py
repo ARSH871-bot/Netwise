@@ -195,6 +195,11 @@ REFUSALS: Dict[str, str] = {
         "likely a named alias group"
     ),
     "unsupported_rule_type": "a rule's <type> is not pass, block or reject",
+    "missing_rule_type": (
+        "a rule's <type> element is absent -- cannot tell whether it is "
+        "meant to pass, block or reject, and guessing either direction "
+        "would misstate what the rule does"
+    ),
     "unsupported_protocol": (
         "a rule's <protocol> is not tcp, udp, icmp or any -- combined forms "
         "like 'tcp/udp' need two Cisco ACL lines and are not handled"
@@ -730,7 +735,13 @@ def _check_rule_order_is_unambiguous(
 def _rule_to_acl_line(rule_el: ET.Element, interfaces: Dict[str, Dict[str, str]]) -> str:
     """Convert one PF Sense <rule> element into one Cisco extended-ACL line."""
     pf_type = _text(rule_el, "type")
-    action = _PFSENSE_TO_CISCO_ACTION.get(pf_type or "")
+    # Absent gets its own message, distinct from present-but-invalid (#78
+    # item 4) -- "<type> is None" was the same confusing string either way,
+    # and the two are different questions: one is a value this module does
+    # not recognise, the other is a value that was never written at all.
+    if pf_type is None:
+        raise PfSenseConversionError(REFUSALS["missing_rule_type"])
+    action = _PFSENSE_TO_CISCO_ACTION.get(pf_type, None)
     if action is None:
         raise PfSenseConversionError(
             f"{REFUSALS['unsupported_rule_type']}: <type> is {pf_type!r}"
@@ -974,15 +985,52 @@ def convert(xml_path: Union[str, Path]) -> ConversionResult:
     #   module still refuses rather than guesses, because the general case
     #   -- some rules quick, some not, in no particular pattern -- does not
     #   reduce to a single reordering the way the all-or-nothing cases do.
+    # SKIPPED, NOT REFUSED (#78 item 4, re-scoped the same way item 1/2 were
+    # in #104): a rule that _rule_to_acl_line() cannot convert -- missing or
+    # unsupported <type>, an unsupported <protocol> value, a named alias
+    # where an address or port is expected, an out-of-range port, an
+    # unresolvable network reference -- used to abort THIS ENTIRE FILE, not
+    # just the interface it was on or the rule itself. At the client's real
+    # scale (1,998 XML elements against this project's 54-element fixture,
+    # per CLAUDE.md section 7), one anomaly anywhere meant zero analysis of
+    # anything. That is the same shape #104 fixed for an unmodellable
+    # interface, just one level deeper -- so it gets the same fix: exclude
+    # the one rule, name the real reason in `skipped`, convert everything
+    # else exactly as if it were never there.
+    #
+    # This changes NOTHING about what any field is interpreted to mean --
+    # every REFUSALS message below still names the same cause it always did.
+    # It only shrinks the blast radius of that cause from "the whole file"
+    # to "this one rule". In particular this does NOT touch <protocol>'s
+    # existing default-to-"any" behaviour, which is issue #80's own open
+    # question (blocked on the client) and is not this change's to answer.
     acl_lines_by_role: Dict[str, List[str]] = {}
     for role, rules in rules_by_role.items():
-        if not any(_is_quick(r) for r in rules):
-            rules = list(reversed(rules))
-            acl_lines_by_role[role] = [_rule_to_acl_line(r, interfaces) for r in rules]
-            continue
-        lines_for_role = [_rule_to_acl_line(r, interfaces) for r in rules]
-        _check_rule_order_is_unambiguous(rules, interfaces, lines_for_role)
-        acl_lines_by_role[role] = lines_for_role
+        no_quick_rules_at_all = not any(_is_quick(r) for r in rules)
+        # Position in a skip note is counted from ORIGINAL document order,
+        # before any reversal -- so the number matches what a human reading
+        # the XML top to bottom would count, not this function's internal
+        # processing order.
+        original_order = rules
+        ordered = list(reversed(rules)) if no_quick_rules_at_all else rules
+
+        kept_rules: List[ET.Element] = []
+        kept_lines: List[str] = []
+        for r in ordered:
+            try:
+                kept_lines.append(_rule_to_acl_line(r, interfaces))
+            except PfSenseConversionError as error:
+                position = original_order.index(r) + 1
+                skipped.append(
+                    f"rule {position} of {len(original_order)} on {role!r} "
+                    f"could not be converted: {error} -- skipped, not converted"
+                )
+                continue
+            kept_rules.append(r)
+
+        if not no_quick_rules_at_all:
+            _check_rule_order_is_unambiguous(kept_rules, interfaces, kept_lines)
+        acl_lines_by_role[role] = kept_lines
 
     lines: List[str] = [f"hostname {hostname}", "!"]
     for role, info in interfaces.items():
@@ -1004,7 +1052,15 @@ def convert(xml_path: Union[str, Path]) -> ConversionResult:
     for role in interfaces:
         acl_name = _acl_name(role, rule_bearing_roles=modelled_roles)
         lines.append(f"ip access-list extended {acl_name}")
-        if role in acl_lines_by_role:
+        # TRUTHINESS, NOT MEMBERSHIP (#78 item 4). A role can now be a key in
+        # acl_lines_by_role with an EMPTY list -- every one of its rules
+        # failed to convert and was skipped -- which used to be impossible:
+        # before the per-rule skip above, a role either had every rule
+        # convert or the whole file aborted, so a present key always meant
+        # real content. `role in acl_lines_by_role` alone would then emit an
+        # ACL with no lines in it at all, not even a fail-closed deny -- the
+        # exact fail-OPEN inversion the deny-all fallback exists to prevent.
+        if acl_lines_by_role.get(role):
             lines.extend(f" {line}" for line in acl_lines_by_role[role])
         else:
             lines.append(" deny ip any any")

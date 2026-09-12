@@ -611,6 +611,54 @@ function renderFindingSections(findings) {
 }
 
 /**
+ * Show or hide the persistent pfSense-conversion disclosure above the
+ * summary tiles, from the two headers /api/findings always sets (#302
+ * review, @shubhamkataria2005 and @ARSH871-bot).
+ *
+ * PERSISTENT AND HEADER-DRIVEN, NOT THE UPLOAD-TIME addSkippedNotes()
+ *     That one appends to the transient #upload-message box once, at
+ *     upload. It disappears on the next upload message, and it never
+ *     reappears after a page reload -- so a reload followed by Scan Now
+ *     showed clean tiles with no trace anything had been excluded. This
+ *     notice is rebuilt from the response headers on EVERY /api/findings
+ *     fetch, so it is correct on first load, after Scan Now, and after a
+ *     reload alike.
+ *
+ * A MISSING/UNPARSEABLE HEADER HIDES THE NOTICE, IT DOES NOT WARN.
+ *     `count` and `unreadable` come from `Response.headers.get()`, which
+ *     returns `null` for an absent header (an older server, or the mock-
+ *     findings path before either header existed) -- treated as "nothing to
+ *     disclose" rather than "something is wrong", the same degrade-quietly
+ *     choice `_staged_pfsense_skips()` already makes for a plain, non-PF
+ *     Sense upload.
+ */
+function updateConversionGapsNotice(countHeader, unreadableHeader) {
+  const notice = document.getElementById("conversion-gaps-notice");
+  if (!notice) return;
+
+  const unreadable = unreadableHeader === "true";
+  const count = parseInt(countHeader, 10);
+
+  if (unreadable) {
+    notice.textContent =
+      "The record of what a pfSense conversion excluded before analysis " +
+      "could not be read. Whether anything was excluded is unknown -- see " +
+      "the downloaded report.";
+    notice.hidden = false;
+  } else if (Number.isFinite(count) && count > 0) {
+    const plural = count === 1 ? "part" : "parts";
+    notice.textContent =
+      `${count} ${plural} of the uploaded configuration were excluded ` +
+      `before any check ran and are not reflected in these findings -- ` +
+      `see the downloaded report for details.`;
+    notice.hidden = false;
+  } else {
+    notice.textContent = "";
+    notice.hidden = true;
+  }
+}
+
+/**
  * Fetch findings and render them.
  *
  * If the request fails we show a warning and NO findings list. We do not fall
@@ -623,6 +671,15 @@ async function loadFindings() {
   try {
     const response = await fetch("/api/findings");
     if (!response.ok) throw new Error(`server returned ${response.status}`);
+    // response.headers is absent in every test harness's fetch stub (none
+    // of them model it, and none need to for what they test) -- guarded
+    // rather than assumed, so this feature cannot break a fetch mock that
+    // has no reason to know about it.
+    const headers = response.headers;
+    updateConversionGapsNotice(
+      headers ? headers.get("X-Netwise-Conversion-Gap-Count") : null,
+      headers ? headers.get("X-Netwise-Conversion-Gaps-Unreadable") : null
+    );
     renderFindings(await response.json());
 
     // Findings are on screen, so there is something to export.
@@ -639,6 +696,10 @@ async function loadFindings() {
     );
   } catch (error) {
     document.getElementById("summary").replaceChildren();
+    // Nothing was loaded, so there is nothing to disclose about it either --
+    // the notice would otherwise keep showing a fact about the PREVIOUS
+    // successful load.
+    updateConversionGapsNotice(null, null);
     container.replaceChildren(
       el(
         "div",
