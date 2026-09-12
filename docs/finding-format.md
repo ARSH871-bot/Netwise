@@ -259,8 +259,25 @@ amendment nobody had scheduled. A-1 took six days to collect four signatures.
 
 ### A-3 — an OPTIONAL `subject`, so findings can be joined without parsing prose
 
-**PROPOSED, not ratified. Nothing depends on this yet and nothing should
-until the table below is full.**
+**RATIFIED — four of four. The table below is full; `subject` may be used.**
+
+> This line read **"PROPOSED, not ratified. Nothing depends on this yet and
+> nothing should until the table below is full"** until 7 September, while
+> the ratification note under the table said **"RATIFIED — four of four"**.
+> Both were in this file at once, seventy lines apart, and the stale one was
+> the one directly under the heading — so it is the one a reader meets
+> first. #238 is gated on A-3, so anyone checking whether they could start
+> would have read "not ratified" and stopped.
+>
+> Found while verifying the *result* of merging #309 rather than trusting
+> the merge. #309 corrected the ratification **date** and did not touch this
+> header, because nobody was looking at the header.
+>
+> This is the third time in this file, and the shape has not varied: A-2
+> claimed ratified while its table said three of four, then claimed three of
+> four after the fourth tick landed. One fact in two places; only one copy
+> moves. The status is now stated ONCE at the top and ONCE under the table,
+> and if a fourth amendment happens the status belongs in the table alone.
 
 Raised because **#238** (attack-path chaining) cannot start without it, and
 that issue's own acceptance criteria say so: *"Any finding-format change is
