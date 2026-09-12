@@ -307,42 +307,22 @@ def run(bf: Session) -> List[Dict[str, Any]]:
     results.extend(_check_dead_rules(bf, numbering))
     results.extend(_check_undefined_references(bf, numbering))
 
-    # A supplied policy this check does not read (#196).
+    # THE "WE DID NOT READ YOUR RULES" CARD IS GONE, BECAUSE WE NOW DO.
     #
-    # `policy_compliance` reads a user's policy since #181; this check does
-    # not. Before this, a user who supplied access-control rules was told
-    # NOTHING here -- the entries were silently discarded.
+    # #196 added an error finding here saying "N supplied rule(s) for this
+    # check were not read", and its comment said it "goes away when the check
+    # learns to read a policy properly". #316 taught it, four hundred lines
+    # above, and left the card in place.
     #
-    # Reported as `error` rather than folded into another card, because it is
-    # a distinct fact. Not "we could not check your rules" but "we did not
-    # read them" -- and F-4's whole point is that two different claims must
-    # not be made to look like one. Nothing here says the built-in rules are
-    # wrong; it says whose rules ran.
+    # For one commit, a user supplying access_control rules got their rules
+    # checked, their findings produced, AND an amber card saying their rules
+    # had been ignored -- two contradictory claims from one run of one check.
+    # That is worse than a stale comment: it is a FINDING making a false
+    # statement about what Netwise did, next to the findings that disprove it.
     #
-    # APPENDED LAST, deliberately. This module's ids are positional -- see the
-    # KNOWN WEAKNESS note beside `numbering` above -- so a card inserted
-    # earlier would renumber every other finding the moment a policy is
-    # supplied. At the end it takes the next free number and shifts nothing.
-    #
-    # This block goes away when the check learns to read a policy properly,
-    # which is the capability half of #196 and needs its own issue.
-    ignored = policy_module.entries_supplied_for(CHECK_NAME)
-    if ignored:
-        results.append(
-            findings.error_finding(
-                check=CHECK_NAME,
-                device="unknown",
-                summary=f"{ignored} supplied rule(s) for this check were not read",
-                detail=(
-                    f"You supplied {ignored} rule(s) for access control. This "
-                    "check does not yet read a supplied policy, so Netwise's "
-                    "built-in rules were checked instead. Nothing is claimed "
-                    "about your rules either way (#196)."
-                ),
-                source="analysis/checks/access_control.py",
-                number=next(numbering),
-            )
-        )
+    # tests/test_unread_policy_is_reported.py now asserts the card is ABSENT
+    # for a check that reads a policy. Nothing asserted that before, which is
+    # why the contradiction survived its own commit.
 
     # BEFORE the clean-sentinel return below, deliberately. Appending after it
     # meant this card was skipped in exactly the case that matters most: the

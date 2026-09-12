@@ -87,8 +87,28 @@ def test_a_check_with_no_entries_in_a_supplied_policy_is_not_told_off(supplied):
     assert policy_module.entries_supplied_for("policy_compliance") == 0
 
 
-def test_access_control_says_the_rules_were_not_read(supplied, monkeypatch):
-    """It used to say nothing at all."""
+def test_access_control_no_longer_says_the_rules_were_not_read(
+        supplied, monkeypatch):
+    """INVERTED ON #316, and the inversion is the point.
+
+    This used to assert the card was PRESENT -- correct while the check
+    ignored a supplied policy, which was the whole subject of #196.
+
+    #316 taught `access_control` to read one, and left the card in place.
+    For one commit a user supplying access-control rules got their rules
+    checked, their findings produced, AND an amber card saying their rules
+    had been ignored: two contradictory claims from a single run of a single
+    check. Worse than a stale comment -- a FINDING stating something false
+    about what Netwise did, printed beside the findings that disprove it.
+
+    Nothing caught it, because this file only ever asserted the card was
+    there. A test that pins a true statement becomes a test that pins a
+    false one the day the code catches up, and the pinning is invisible
+    either way.
+
+    So the assertion is now the opposite one, and it is the assertion that
+    would have failed on #316 the moment it was written.
+    """
     monkeypatch.setattr(access_control.snapshot, "device_names", lambda bf: {"rtr-us5"})
     monkeypatch.setattr(access_control, "_check_policy_statements", lambda *a, **k: [])
     monkeypatch.setattr(access_control, "_check_guarantees", lambda *a, **k: [])
@@ -98,10 +118,28 @@ def test_access_control_says_the_rules_were_not_read(supplied, monkeypatch):
     results = access_control.run(bf=None)
     card = next((f for f in results if "not read" in f["summary"]), None)
 
-    assert card is not None, "a supplied access-control rule was silently discarded"
-    assert card["status"] == "error", "not read is a could-not-check, never a clean result"
-    assert "1 rule(s) for access control" in card["evidence"]["detail"]
-    assert "#196" in card["evidence"]["detail"]
+    assert card is None, (
+        "access_control reads a supplied policy since #316, and still told "
+        f"the user it had not: {card['summary'] if card else ''}"
+    )
+
+
+def test_access_control_actually_uses_the_supplied_rules(supplied):
+    """The positive half, so absence of the card is not the whole claim.
+
+    Deleting the card would satisfy the test above on its own. It would not
+    mean the rules were read. This asserts the resolver returns the USER's
+    entry rather than our two built-in statements.
+    """
+    statements, label, user_supplied = access_control.statements_in_use()
+
+    assert user_supplied is True
+    assert label == access_control.USER_POLICY_LABEL
+    assert len(statements) == 1, (
+        "expected the one supplied access_control entry, got "
+        f"{len(statements)} -- our built-in list has two"
+    )
+    assert statements[0]["description"] == "Guests must not reach finance"
 
 
 def test_routing_says_the_assertions_were_not_read(supplied, monkeypatch):
