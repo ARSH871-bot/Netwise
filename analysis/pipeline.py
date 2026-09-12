@@ -838,6 +838,13 @@ def _print_summary(results: List[Dict[str, Any]]) -> None:
 
 
 def main() -> None:
+    # N-1, enforced rather than promised (US-40, #332). Imported here rather
+    # than at module scope because analysis/egress.py imports this module --
+    # at module scope that is a cycle -- and because the command line is the
+    # only thing in this file that is an entry point.
+    from analysis import egress
+    egress.install()
+
     if len(sys.argv) < 2:
         sys.exit(
             "usage: python -m analysis.pipeline <config-folder> "

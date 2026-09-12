@@ -387,6 +387,47 @@ No network configuration data is committed to this repository, and none is ever
 sent to a cloud service. `configs/` and common config file extensions are
 git-ignored by design.
 
+### And that is now checkable rather than promised
+
+Until recently this claim rested on four people having read the source
+carefully. That is a fair basis for trusting your own code and a poor one for
+handing to somebody else's security team.
+
+`analysis/egress.py` wraps `socket.connect` and **refuses** any destination
+that is not Batfish, not the local model, and not this machine. It is
+installed automatically by the dashboard and by the command line. To see what
+it saw:
+
+```bash
+python -m tools.egress_audit
+```
+
+That runs a real scan and prints every outbound connection attempted, with the
+file that attempted it. A clean run reports `refused: 0`.
+
+**What it does not prove is printed with every result**, because `refused: 0`
+is a narrower statement than *nothing left this machine*, and the gap between
+those two sentences is where a security claim goes wrong:
+
+- it observes this process, so a subprocess is not covered
+- it guards `connect`, where bytes flow; a bare DNS lookup is not intercepted
+- Python-level patching stops Python-level sockets — this is **evidence, not a
+  sandbox**
+
+Set `NETWISE_EGRESS_GUARD=0` to turn it off. That is an environment variable
+rather than a dashboard control on purpose: a browser user must not be able to
+switch off the offline guarantee by clicking something convenient.
+
+Measured in the container deployment, where Batfish is a sibling container
+rather than loopback:
+
+```
+batfish resolves to 172.23.0.2 (not loopback)
+172.23.0.2:9996     ALLOWED     Batfish for this deployment
+172.23.0.2:443      REFUSED     allowed by host AND port, never host alone
+93.184.216.34:443   REFUSED     not Batfish, not the model, not this machine
+```
+
 ## Usage
 
 **Analyse a config folder from the command line:**
