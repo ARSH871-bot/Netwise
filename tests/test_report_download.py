@@ -63,18 +63,42 @@ def rendered():
 
 @needs_node
 @pytest.mark.parametrize(
-    "case", ["afterSuccessfulRender", "afterRescan", "afterEmptyResult"]
+    "case", ["afterSuccessfulRender", "afterRescan", "afterCleanResult"]
 )
 def test_the_links_are_available_once_findings_are_on_screen(rendered, case):
     assert rendered[case]["ariaDisabled"] == ["false", "false"]
 
 
 @needs_node
-def test_an_empty_but_successful_result_is_still_exportable(rendered):
+def test_a_clean_result_is_still_exportable(rendered):
     """"We checked and found nothing" is a real result, not an absence of
-    one. It renders as three zero tiles, and a report of it is a report
-    somebody may need to hand to whoever asked."""
-    assert rendered["afterEmptyResult"]["ariaDisabled"] == ["false", "false"]
+    one, and a report of it is one somebody may need to hand to whoever
+    asked.
+
+    RENAMED AND RE-BODIED, and the reason matters more than the rename.
+    This asserted the same thing about a response of `[]`, which the server
+    cannot send for a completed scan: every registered check contributes a
+    found, none or error finding, so a clean run arrives as `status="none"`
+    findings. Measured -- rtr-us5-secure returns 0 found, 2 none, 1 error.
+
+    The old encoding was not merely inaccurate. It said an empty body should
+    render three zero tiles with a live export button -- a completed scan of
+    a clean network, from a response that measured nothing. Nothing could
+    reach that state, so nothing objected.
+    """
+    assert rendered["afterCleanResult"]["ariaDisabled"] == ["false", "false"]
+
+
+@needs_node
+def test_nothing_uploaded_is_not_exportable(rendered):
+    """The state that IS now reachable, and the opposite claim.
+
+    An empty body means no config has been staged in this session. There is
+    nothing to export, and an available Download button beside "nothing has
+    been checked" contradicts the sentence next to it -- the same reasoning
+    the failed-load path already applies.
+    """
+    assert rendered["afterNothingUploaded"]["ariaDisabled"] == ["true", "true"]
 
 
 @needs_node

@@ -623,7 +623,41 @@ async function loadFindings() {
   try {
     const response = await fetch("/api/findings");
     if (!response.ok) throw new Error(`server returned ${response.status}`);
-    renderFindings(await response.json());
+    const findings = await response.json();
+
+    // NOTHING UPLOADED YET. Not a clean result, and it must not look like one.
+    //
+    // An empty list means exactly one thing: no config has been staged in
+    // this session. A real analysis can never produce one -- every
+    // registered check contributes a found, none or error finding, and the
+    // server emits one per check even when Batfish is unreachable. That
+    // invariant is pinned in tests/test_first_load_claims_nothing.py rather
+    // than assumed.
+    //
+    // Rendering the tiles here would print "0 problems found, 0 checked
+    // clean, 0 could not check", which reads as a completed scan of a clean
+    // network. That is the same lie this function's catch block already
+    // refuses to tell when the request fails -- see its comment. This is
+    // that rule reaching the case the mock findings used to hide.
+    if (!Array.isArray(findings) || findings.length === 0) {
+      document.getElementById("summary").replaceChildren();
+      container.replaceChildren(
+        el(
+          "div",
+          "notice",
+          "No configuration has been uploaded yet, so nothing has been " +
+            "checked. This is not a clean result. Upload a config file " +
+            "above and press Scan Now to begin."
+        )
+      );
+      setDownloadAvailable(
+        false,
+        "Nothing to export — no configuration has been analysed yet."
+      );
+      return;
+    }
+
+    renderFindings(findings);
 
     // Findings are on screen, so there is something to export.
     //
