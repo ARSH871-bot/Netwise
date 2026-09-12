@@ -49,7 +49,7 @@ HOW IT DECIDES WHAT TO REPORT
 """
 
 from itertools import count
-from typing import Any, Dict, Iterator, List
+from typing import Any, Dict, Iterator, List, Tuple
 
 from pybatfish.client.session import Session
 from pybatfish.datamodel.flow import HeaderConstraints
@@ -63,10 +63,14 @@ CHECK_NAME = "access_control"
 
 # --- 1. Policy statements: single flows that must be allowed or blocked -----
 #
-# PLACEHOLDER: these describe the rtr-us5 test fixture. The real client policy
-# will replace them -- that is why the policy lives here as plain data rather
-# than being buried in the code. Editing this list should not require
-# understanding anything below it.
+# OUR EXAMPLE STATEMENTS, USED ONLY WHEN THE USER SUPPLIED NO POLICY (#316).
+# They describe the rtr-us5 test fixture. Since #316 a user's own statements
+# replace them -- see rules_in_use() below, and note that the fallback is
+# keyed on whether a policy was supplied, never on whether it is empty.
+#
+# This list stopped being a PLACEHOLDER and became a documented default. The
+# distinction matters: a placeholder is waiting to be replaced by us, a
+# default is what runs when the user chose not to decide.
 POLICY: List[Dict[str, Any]] = [
     {
         "description": "DNS lookups to the approved DNS server must be allowed",
@@ -116,6 +120,61 @@ GUARANTEES: List[Dict[str, Any]] = [
 ]
 
 
+# --- Whose statements are we checking? (#87 / #316) -------------------------
+
+BUILTIN_POLICY_LABEL = (
+    "Netwise's built-in example policy (analysis/checks/access_control.py) "
+    "-- no policy file was supplied"
+)
+USER_POLICY_LABEL = "the policy file you supplied"
+
+
+def statements_in_use() -> Tuple[List[Dict[str, Any]], str, bool]:
+    """The policy statements this run should check, and where they came from.
+
+    WHY THIS EXISTS (#87)
+        `analysis/policy.py` has validated an `access_control` section since
+        #173 and no check has ever read it. Measured before this change with
+        `python -m tools.stranger_config`: rename the device in a config and
+        detection falls from 12 findings to 3, because every statement here
+        names `rtr-us5`.
+
+    THE THREE STATES, WHICH ARE NOT TWO
+        no policy supplied      -> POLICY below, LABELLED as ours
+        policy with entries     -> the user's statements
+        policy with NO entries  -> the user's (empty) policy, NOT ours
+
+        Keyed on `active_policy() is None`, exactly as policy_compliance
+        does, and never on emptiness. An empty policy is a valid, deliberate
+        state meaning "I assert nothing", which is a different claim from
+        "I did not give you a policy". Falling back to ours there would
+        enforce assertions the user explicitly declined to make, and label
+        them as theirs by omission.
+
+    WHAT THIS DOES NOT COVER
+        GUARANTEES are unaffected and remain ours. The policy format has no
+        way to express a whole flow space, so a user cannot yet state one.
+        Their guarantees therefore still report "could not check" on a
+        snapshot without our devices -- honest, and not yet useful. Widening
+        the schema is a separate change needing the team, not something to
+        invent here.
+    """
+    active = policy_module.active_policy()
+    if active is None:
+        return POLICY, BUILTIN_POLICY_LABEL, False
+    return active.entries_for(CHECK_NAME), USER_POLICY_LABEL, True
+
+
+def _with_provenance(detail: str, policy_label: str) -> str:
+    """Say whose statements produced this finding.
+
+    A finding from the user's rules and one from our example look identical
+    on screen otherwise, and "your network violates a policy" means
+    something very different depending on whose policy it was.
+    """
+    return f"{detail} [Statements checked: {policy_label}.]"
+
+
 def run(bf: Session) -> List[Dict[str, Any]]:
     """Run all four analyses and return F-1 findings.
 
@@ -133,7 +192,41 @@ def run(bf: Session) -> List[Dict[str, Any]]:
     # dashboard show what changed since the previous run. Worth adopting here.
     numbering = count(1)
 
-    # Which of our statements can this snapshot actually answer?
+    # WHOSE statements? (#316) Resolved once, here, so every branch below
+    # agrees. `statements` replaces the module-level POLICY everywhere in
+    # this function; POLICY is now only the fallback that statements_in_use()
+    # may return, not something run() reads directly.
+    statements, policy_label, user_supplied = statements_in_use()
+
+    # An empty policy is valid and must be LOUD -- the same rule
+    # policy_compliance follows. Returning nothing here would be read by the
+    # pipeline as this check being broken, which is the wrong status and the
+    # wrong message for a check that ran perfectly and had nothing to assert.
+    #
+    # The dead-rule and undefined-reference analyses need no policy at all,
+    # so they still run below and this is a note rather than an early return.
+    if user_supplied and not statements:
+        results_empty_policy = [
+            findings.no_issues_finding(
+                check=CHECK_NAME,
+                device="n/a",
+                summary="No access-control statements to check",
+                detail=(
+                    "Your policy file has no access_control entries, so "
+                    "nothing was asserted about which flows must be allowed "
+                    "or blocked. This is not a problem with the config -- it "
+                    "is what an empty section means. The analyses that need "
+                    "no policy, dead rules and undefined references, still "
+                    "ran."
+                ),
+                source=policy_label,
+                number=next(numbering),
+            )
+        ]
+    else:
+        results_empty_policy = []
+
+    # Which of these statements can this snapshot actually answer?
     #
     # POLICY and GUARANTEES name specific devices. On a snapshot that does not
     # contain them, every statement would report "could not check" -- correct
@@ -145,8 +238,8 @@ def run(bf: Session) -> List[Dict[str, Any]]:
     # F-4 exists to prevent, and a device may be absent because someone forgot
     # to upload it.
     present = snapshot.device_names(bf)
-    total = len(POLICY) + len(GUARANTEES)
-    results: List[Dict[str, Any]] = []
+    total = len(statements) + len(GUARANTEES)
+    results: List[Dict[str, Any]] = list(results_empty_policy)
 
     if present is None:
         # We could not find out what is in this snapshot. Note what this does
@@ -176,14 +269,15 @@ def run(bf: Session) -> List[Dict[str, Any]]:
             )
         )
     else:
-        policy = [s for s in POLICY if s["node"] in present]
+        policy = [s for s in statements if s["node"] in present]
         guarantees = [g for g in GUARANTEES if g["node"] in present]
         absent = sorted(
-            {s["node"] for s in POLICY if s["node"] not in present}
+            {s["node"] for s in statements if s["node"] not in present}
             | {g["node"] for g in GUARANTEES if g["node"] not in present}
         )
         if absent:
-            skipped = (len(POLICY) - len(policy)) + (len(GUARANTEES) - len(guarantees))
+            skipped = ((len(statements) - len(policy))
+                       + (len(GUARANTEES) - len(guarantees)))
             results.append(
                 findings.error_finding(
                     check=CHECK_NAME,
@@ -264,13 +358,13 @@ def run(bf: Session) -> List[Dict[str, Any]]:
         return [
             findings.no_issues_finding(
                 check=CHECK_NAME,
-                device=POLICY[0]["node"] if POLICY else "unknown",
+                device=statements[0]["node"] if statements else "unknown",
                 summary="No issues found by access control",
                 detail=(
-                    f"{len(POLICY)} policy statement(s) hold, {len(GUARANTEES)} "
+                    f"{len(statements)} policy statement(s) hold, {len(GUARANTEES)} "
                     "guarantee(s) proven, no dead rules, no undefined references"
                 ),
-                source=", ".join(sorted({s["node"] for s in POLICY})),
+                source=", ".join(sorted({s["node"] for s in statements})),
             )
         ]
 

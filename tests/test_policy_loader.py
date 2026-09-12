@@ -31,10 +31,29 @@ from analysis.policy import (POLICY_SECTIONS, Policy, PolicyError, load_policy,
 
 
 def _entry(**overrides):
+    """A minimal VALID access_control entry.
+
+    It grew on #316. Until then `access_control` was in `POLICY_SECTIONS` but
+    no check read it, so `_SECTION_REQUIRED` listed nothing for it and four
+    of these keys were unnecessary. `policy.py` predicted this exactly -- the
+    comment above `_SECTION_REQUIRED` records that adding the section
+    speculatively "broke five of #173's own loader tests, which build minimal
+    access_control entries precisely because nothing dereferences the rest
+    yet."
+
+    Those five are these. The keys below are the ones the check now actually
+    dereferences, so an entry without them would be accepted here and raise
+    inside `access_control.run()` -- which is the failure `_SECTION_REQUIRED`
+    exists to move forward to load time.
+    """
     base = {
         "description": "DNS lookups to the approved server must be allowed",
         "node": "acme-edge-fw",
         "filter": "acl_in",
+        "headers": {"srcIps": "10.10.10.0/24", "dstIps": "218.8.104.58"},
+        "expected": "PERMIT",
+        "violation_severity": "medium",
+        "violation_summary": "DNS to the approved server is blocked",
     }
     base.update(overrides)
     return base
@@ -193,7 +212,9 @@ def test_an_empty_file_is_an_empty_policy_not_a_parse_error(tmp_path):
 
 def test_the_top_level_device_supplies_node_for_entries_that_omit_it():
     policy = load_policy(
-        {"device": "acme-edge-fw", "access_control": [{"description": "d", "filter": "acl_in"}]}
+        {"device": "acme-edge-fw",
+         "access_control": [{k: v for k, v in _entry().items()
+                             if k != "node"}]}
     )
     assert policy.entries_for("access_control")[0]["node"] == "acme-edge-fw"
 
@@ -261,7 +282,9 @@ def test_malformed_json_names_the_line_and_column(tmp_path):
 def test_a_real_file_round_trips(tmp_path):
     path = tmp_path / "policy.json"
     path.write_text(
-        json.dumps({"device": "acme-edge-fw", "access_control": [{"description": "d", "filter": "acl_in"}]}),
+        json.dumps({"device": "acme-edge-fw",
+                    "access_control": [{k: v for k, v in _entry().items()
+                                        if k != "node"}]}),
         encoding="utf-8",
     )
     policy = load_policy_file(path)
