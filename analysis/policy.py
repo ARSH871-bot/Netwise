@@ -145,7 +145,13 @@ _REQUIRED_KEYS = ("description", "node")
 #:     real. A green tick that becomes an error exactly when there is a
 #:     problem to report is F-4's worst shape, reached through the input.
 #:
-#:     `routing` is still absent. It does not read a user policy yet (#319).
+#:     `routing` joined on #319, the last of the three. Every section in
+#:     POLICY_SECTIONS is now wired, so this dict and POLICY_SECTIONS have
+#:     the same keys for the first time. tests/test_policy_wiring.py asserts
+#:     that they stay that way, and its drift guard -- which checked only
+#:     policy_compliance until #319 -- now runs against all three, because a
+#:     section wired in one place and not the other is this project's oldest
+#:     defect in a new costume.
 #:
 #: `number` is NOT here: see _assign_missing_numbers().
 _SECTION_REQUIRED: Dict[str, frozenset] = {
@@ -155,6 +161,10 @@ _SECTION_REQUIRED: Dict[str, frozenset] = {
     }),
     "policy_compliance": frozenset({
         "filter", "kind", "queries",
+        "violation_severity", "violation_summary",
+    }),
+    "routing": frozenset({
+        "src_ip", "dst_ip", "expected",
         "violation_severity", "violation_summary",
     }),
 }
