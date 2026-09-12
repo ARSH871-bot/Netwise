@@ -47,6 +47,7 @@ from ai.explain import (
 )
 from ai.propose import propose_change
 from ai.query import answer_question
+from analysis import egress
 from analysis import findings, pipeline as analysis_pipeline, report
 from analysis.business_context import (
     TIERS,
@@ -253,6 +254,24 @@ def _is_uploaded() -> bool:
         state on purpose.
     """
     return _uploaded or current_session_id() in _uploaded_sessions
+
+# ---------------------------------------------------------------------------
+# N-1, enforced rather than promised (US-40, #332)
+# ---------------------------------------------------------------------------
+#
+# Netwise's central claim is that configuration data never leaves the machine.
+# `analysis/egress.py` wraps socket.connect and REFUSES any destination that
+# is not Batfish, not the local model, and not loopback.
+#
+# Installed at import rather than on a startup event, because import is the
+# earliest point that exists here and a guard absent during startup is a guard
+# with a hole in it exactly where nobody is looking.
+#
+# `NETWISE_EGRESS_GUARD=0` turns it off. That is deliberately an environment
+# variable and not a dashboard control: a browser user must not be able to
+# switch off the offline guarantee by clicking something -- the same reasoning
+# ai/explain.py gives for NETWISE_ALLOW_REMOTE_OLLAMA.
+_EGRESS_GUARD_ACTIVE = egress.install()
 
 app = FastAPI(
     title="Netwise",
