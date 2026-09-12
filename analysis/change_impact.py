@@ -339,7 +339,7 @@ def _first_trace(traces: Any) -> str:
 def analyse_change(
     before_dir: str | Path,
     after_dir: str | Path,
-    host: str = "localhost",
+    host: "str | None" = None,
 ) -> List[Dict[str, Any]]:
     """Compare two config folders and return F-1 findings describing the change.
 
