@@ -1359,6 +1359,9 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     #     exists because a staged file and a checked one were once confused.
     #     Two files staged from two different intentions is that failure with
     #     one more moving part.
+    policy_was_staged = policy_path().exists()
+    _discard_staged_policy()
+
     # A REAL UPLOAD IS NO LONGER THE SAMPLE (#347).
     #     Cleared here, beside the policy and context, because it is the same
     #     rule: the moment a user stages their own file, anything staged from
@@ -1367,9 +1370,6 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     #     is the mislabel running in the safe-looking direction and still
     #     wrong.
     _discard_sample_marker()
-
-    policy_was_staged = policy_path().exists()
-    _discard_staged_policy()
 
     # A NEW NETWORK MUST NOT INHERIT THE OLD NETWORK'S BUSINESS CONTEXT.
     #     Exactly the policy's reasoning, and if anything sharper. A context

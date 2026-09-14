@@ -1282,3 +1282,73 @@ body {
   border-radius: 0;
   padding: 0;
 }
+
+/* ------------------------------------------------------------------------ *
+ * The sample network (US-56, #347)
+ *
+ * COLOURED LIKE A "COULD NOT CHECK", ON PURPOSE
+ *     Amber is already this product's colour for "do not read this as a
+ *     result about your network". The sample banner makes exactly that
+ *     claim, so it borrows the vocabulary rather than inventing a fourth
+ *     one. It is deliberately NOT green: nothing here is reassuring, and
+ *     it is deliberately not red: nothing has failed either.
+ *
+ * NOTHING HERE IS THE ONLY THING SAYING SO
+ *     Both the banner and the offer state their meaning in words. Strip the
+ *     stylesheet and a visitor still reads "This is the sample network, not
+ *     your data" -- which is the same rule tests/js/ enforces for findings,
+ *     and the reason the harness test can assert on this without any CSS.
+ * ------------------------------------------------------------------------ */
+
+.sample-offer {
+  margin: 0.6rem 0 0;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.sample-offer-note {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.8rem;
+}
+
+/* A button that reads as a link. Still a <button>, because it performs an
+   action rather than navigating -- an <a href="#"> here would announce
+   itself as a link to a screen reader and lie about what it does. */
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--low);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration: none;
+}
+
+.link-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+  text-decoration: none;
+}
+
+.sample-banner {
+  margin: 0 0 1rem;
+  padding: 0.7rem 1rem;
+  border-radius: 6px;
+  font-size: 0.88rem;
+  background: var(--blind-fill);
+  border: 1px solid var(--blind);
+  color: var(--blind-ink);
+}
+
+.notice-lead {
+  margin: 0 0 0.5rem;
+}
+
+.notice-next {
+  margin: 0;
+}
