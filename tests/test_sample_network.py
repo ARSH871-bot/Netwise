@@ -26,14 +26,18 @@ WHAT THESE TESTS PROTECT, AND WHY EACH ONE EXISTS
     names `rtr-us5` (#87). A friendlier name silently turned the sample into
     a demonstration of nothing, and nothing in the suite would have objected.
 
-The Batfish-dependent test skips when the engine is absent, matching the
-project's rule that a test never claims a result it could not verify.
+The Batfish-dependent tests skip when the engine is absent -- gated on a
+port probe shared with test_vendor_fixtures.py via conftest, NOT on catching
+an exception. See the fixture's own docstring: the exception version never
+fired, because a pipeline that cannot reach Batfish reports that as findings
+rather than raising.
 """
 
 import shutil
 from pathlib import Path
 
 import pytest
+from conftest import batfish_is_up
 
 SAMPLE = (Path(__file__).parent / "fixtures" / "sample-network"
           / "configs" / "sample-network.cfg")
@@ -88,17 +92,42 @@ def test_it_still_carries_the_planted_fault():
 
 @pytest.fixture(scope="module")
 def sample_findings(tmp_path_factory):
-    """Run the real pipeline over the sample, or skip if Batfish is absent."""
+    """Run the real pipeline over the sample.
+
+    GATED BY A PORT PROBE, NOT BY CATCHING AN EXCEPTION, AND THAT IS THE FIX.
+
+    The first version wrapped `pipeline.analyse()` in a try/except and skipped
+    on any exception. It never fired. `analyse()` does not raise when Batfish
+    is down -- it returns `status="error"` findings, deliberately, because
+    "we could not check" is a result rather than a crash (F-4). So on a
+    machine without Batfish this fixture returned three error findings and
+    the test below failed, reporting that the sample network had stopped
+    producing findings.
+
+    That message points at the sample and not at the absent engine, which is
+    the worst property a failure can have. It went red in CI on the very PR
+    that added it, having passed on my machine, where Batfish was running.
+
+    Requirement N-6 -- this suite runs without Batfish or Ollama -- is the
+    rule I broke, and the F-4 distinction the product enforces everywhere is
+    exactly what made the broken version look like it worked.
+    """
+    # A skipif MARKER cannot be applied to a fixture -- pytest rejects it at
+    # collection -- so the same probe is called here instead. One probe, used
+    # two ways; the marker form is what test_vendor_fixtures.py uses.
+    if not batfish_is_up():
+        pytest.skip(
+            "Batfish is not reachable on localhost:9996, so the sample "
+            "cannot be scanned. Requirement N-6: the rest of the suite "
+            "still runs. The file-level tests above already ran."
+        )
     pytest.importorskip("pybatfish")
     from analysis import pipeline
 
     snapshot = tmp_path_factory.mktemp("sample")
     (snapshot / "configs").mkdir()
     shutil.copy(SAMPLE, snapshot / "configs" / "device.cfg")
-    try:
-        return pipeline.analyse(snapshot)
-    except Exception as exc:  # noqa: BLE001 -- absent engine is a skip, not a failure
-        pytest.skip(f"Batfish not available: {exc}")
+    return pipeline.analyse(snapshot)
 
 
 def test_the_sample_produces_real_findings(sample_findings):
