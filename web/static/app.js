@@ -641,15 +641,38 @@ async function loadFindings() {
     // that rule reaching the case the mock findings used to hide.
     if (!Array.isArray(findings) || findings.length === 0) {
       document.getElementById("summary").replaceChildren();
-      container.replaceChildren(
+      // WHAT TO DO NEXT, NOT JUST WHAT IS ABSENT (US-56, #347).
+      //     The sentence #352 left here is correct and stays: nothing has
+      //     been checked, and that is not a clean result. What it did not do
+      //     is tell a first-time visitor what to actually do, which is the
+      //     difference between an honest empty screen and a useful one.
+      //
+      //     Two routes, in the order a visitor can act on them: their own
+      //     file, or the sample if they have nothing to hand. The sample
+      //     button here is the same control as the one beside the picker --
+      //     offered again at the moment the emptiness is visible, because
+      //     that is when somebody wonders what to do.
+      const empty = el("div", "notice");
+      empty.appendChild(
         el(
-          "div",
-          "notice",
+          "p",
+          "notice-lead",
           "No configuration has been uploaded yet, so nothing has been " +
-            "checked. This is not a clean result. Upload a config file " +
-            "above and press Scan Now to begin."
+            "checked. This is not a clean result."
         )
       );
+      const next = el("p", "notice-next", "To begin: ");
+      next.appendChild(
+        el("span", "", "choose a config file above and press Scan Now")
+      );
+      next.appendChild(el("span", "", " — or "));
+      const inlineSample = el("button", "link-button", "try the sample network");
+      inlineSample.setAttribute("type", "button");
+      inlineSample.addEventListener("click", loadSampleNetwork);
+      next.appendChild(inlineSample);
+      next.appendChild(el("span", "", "."));
+      empty.appendChild(next);
+      container.replaceChildren(empty);
       setDownloadAvailable(
         false,
         "Nothing to export — no configuration has been analysed yet."
@@ -824,6 +847,12 @@ function setUpUpload() {
 
   scanButton.addEventListener("click", runScan);
 
+  // The sample offer beside the picker (US-56, #347). The one rendered inside
+  // the empty-state notice is wired where it is built, since that node is
+  // replaced on every render.
+  const sampleButton = document.getElementById("load-sample");
+  if (sampleButton) sampleButton.addEventListener("click", loadSampleNetwork);
+
   input.addEventListener("change", async () => {
     const file = input.files[0];
     if (!file) return;
@@ -930,6 +959,15 @@ function setUpUpload() {
         }
 
         scanButton.disabled = false;
+
+        // NOT WHEN THE FILE WAS PICKED -- WHEN THE SERVER TOOK IT (#347).
+        //     The server clears its sample marker only on a known-good
+        //     upload, so hiding the banner any earlier would disagree with
+        //     it. A rejected upload leaves the sample staged and, if it had
+        //     been scanned, its findings on screen: dropping the banner
+        //     there would relabel real sample results as the user's own
+        //     network. Mirrored on the accept path so the two cannot drift.
+        setSampleBanner(false);
       } else {
         showUploadMessage(result.detail, false);
         input.value = "";
@@ -1750,3 +1788,78 @@ setUpChat();
 setUpProposeChange();
 setUpReportDownload();
 setUpDeviceFilter();
+
+/* ------------------------------------------------------------------------ *
+ * The bundled sample network (US-56, #347)
+ *
+ * #352 removed the fabricated findings that used to appear before any
+ * upload. This is the honest replacement: a real config the visitor CHOOSES
+ * to load, analysed exactly like their own file would be.
+ *
+ * The banner is not decoration. Every surface that shows a result has to say
+ * whose network it is about, because the findings themselves are real and
+ * give no clue either way -- see the same argument in web/main.py where the
+ * label is threaded into the downloaded report.
+ * ------------------------------------------------------------------------ */
+
+/** Show or hide the "this is the sample" banner. */
+function setSampleBanner(isSample) {
+  const banner = document.getElementById("sample-banner");
+  if (!banner) return;
+  if (isSample) {
+    banner.removeAttribute("hidden");
+  } else {
+    banner.setAttribute("hidden", "");
+  }
+}
+
+/**
+ * Stage the bundled sample, then leave the scan to the user.
+ *
+ * Deliberately does NOT scan. Staging and analysing are two acts (#82), and
+ * the sample gets no shortcut the user's own upload does not have.
+ */
+async function loadSampleNetwork() {
+  const button = document.getElementById("load-sample");
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch("/api/sample", { method: "POST" });
+    const result = await response.json();
+
+    if (!response.ok || !result.accepted) {
+      // An error state that says what happened and what to try (US-56).
+      showUploadMessage(
+        (result && result.detail) ||
+          "The sample network could not be loaded. You can still upload a " +
+            "config file of your own.",
+        false
+      );
+      setSampleBanner(false);
+      return;
+    }
+
+    showUploadMessage(result.message, true);
+    setSampleBanner(true);
+
+    // Exactly what a successful /api/upload does, and for the same reasons:
+    // the staged config changed, so Scan Now becomes available and anything
+    // on screen now describes a different network. Reusing the real helper
+    // rather than a sample-specific copy is what stops the two paths drifting
+    // -- a copy is how one of them ends up quietly not clearing (see the
+    // comment on clearStaleResults itself).
+    document.getElementById("scan-now").disabled = false;
+    clearStaleResults(
+      "The sample network is staged, nothing analysed yet. Click Scan Now " +
+        "to check it."
+    );
+  } catch (error) {
+    showUploadMessage(
+      "The sample network could not be loaded because the page could not " +
+        "reach Netwise. Check the server is still running, then try again.",
+      false
+    );
+    setSampleBanner(false);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}

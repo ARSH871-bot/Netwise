@@ -42,7 +42,6 @@ TWO PARTS, AND WHY
 
 from __future__ import annotations
 
-import socket
 from pathlib import Path
 
 import pytest
@@ -122,27 +121,10 @@ def test_we_have_more_than_one_vendor():
 # ---------------------------------------------------------------------------
 
 
-def _batfish_is_up(host="localhost", port=9996, timeout=1.5) -> bool:
-    """Can we open the port pybatfish talks to?
-
-    A connection test rather than a Session(), because constructing a session
-    against a dead host is slow and noisy, and the answer is the same.
-    """
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
-
-
-needs_batfish = pytest.mark.skipif(
-    not _batfish_is_up(),
-    reason=(
-        "Batfish is not reachable on localhost:9996. This is an INTEGRATION "
-        "test -- the claim it checks is 'Batfish parses this vendor', which "
-        "cannot be verified without Batfish. Part 1 above still ran."
-    ),
-)
+# The probe and the marker now live in tests/conftest.py. They were here
+# first and were the only copy; tests/test_sample_network.py needed the same
+# gate, and one shared copy is the alternative to two that drift.
+from conftest import needs_batfish  # noqa: E402
 
 
 @needs_batfish

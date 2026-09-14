@@ -33,6 +33,10 @@ EVENT_FIELDS: Final = {
         "unavailable_count": int,
     },
     "local_model_host_refused": {},
+    # The bundled sample was staged (#347). No fields: the sample is the
+    # same file every time and carries nothing configuration-derived, so
+    # there is nothing about it worth recording beyond that it happened.
+    "sample_loaded": {},
 }
 
 
