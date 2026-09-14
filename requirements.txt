@@ -7,7 +7,7 @@
 # Docker container should be on matching versions -- skew between them causes
 # confusing failures. This pin matches image batfish/allinone reporting
 # Batfish 2025.07.07.2423. If you pull a newer image, bump this to match.
-pybatfish==2025.7.7.2423
+pybatfish==2026.8.19.3660
 
 # Batfish answers come back as pandas DataFrames, and our analysis code works
 # with them directly, so pandas is a direct dependency rather than an
@@ -40,7 +40,7 @@ ollama>=0.6.2
 # Chosen over Flask for the auto-generated API docs at /docs (useful evidence
 # in a review) and native async, which the streaming chat pane will need.
 fastapi>=0.141.1
-uvicorn[standard]>=0.52.3
+uvicorn[standard]>=0.52.4
 
 # FastAPI needs this to parse multipart form data -- i.e. file uploads. Without
 # it, the config upload endpoint fails at import time rather than at request
