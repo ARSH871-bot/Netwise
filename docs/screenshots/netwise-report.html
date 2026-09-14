@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Netwise report — device.cfg</title><style>
+:root{--ink:#16181d;--dim:#5a5f68;--rule:#dfe2e6;--paper:#fff;--sunk:#f4f5f7;
+--bad:#a4291c;--bad-b:#fbe9e6;--warn:#8a5a12;--warn-b:#faf0dc;
+--good:#20663d;--good-b:#e6f1ea;}
+*{box-sizing:border-box}
+body{font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+color:var(--ink);background:var(--paper);margin:0;padding:2.5rem 1.5rem 4rem}
+.wrap{max-width:56rem;margin:0 auto}
+h1{font-size:1.75rem;margin:0 0 .35rem;letter-spacing:-.02em}
+.meta{color:var(--dim);font-size:.87rem;margin:0 0 1.5rem}
+.counts{display:flex;gap:1px;background:var(--rule);border:1px solid var(--rule);
+border-radius:6px;overflow:hidden;margin-bottom:1.75rem;flex-wrap:wrap}
+.count{background:var(--paper);padding:.75rem 1.1rem;flex:1;min-width:9rem}
+.count .n{font-size:1.5rem;font-weight:650;font-variant-numeric:tabular-nums;
+line-height:1;display:block;margin-bottom:.2rem}
+.count .k{font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:var(--dim)}
+.count.bad .n{color:var(--bad)}.count.warn .n{color:var(--warn)}
+.count.good .n{color:var(--good)}
+h2{font-size:1.08rem;margin:2rem 0 .3rem;padding-bottom:.35rem;border-bottom:2px solid var(--ink)}
+h2.warn{color:var(--warn);border-color:var(--warn)}
+.lede{color:var(--dim);font-size:.88rem;margin:.4rem 0 1rem}
+.coverage{border:1px solid var(--rule);border-radius:6px;padding:.85rem 1rem;
+margin:1rem 0 1.75rem;background:var(--sunk)}
+.coverage.complete{border-color:var(--good);background:var(--good-b)}
+.coverage.incomplete{border-color:var(--warn);background:var(--warn-b)}
+.coverage .statement{font-weight:650;margin:0 0 .35rem}
+.coverage ul{margin:.45rem 0 0;padding-left:1.2rem}
+.coverage li{margin:.25rem 0}
+.coverage .meta-line{font-size:.78rem;color:var(--dim)}
+.f{border:1px solid var(--rule);border-radius:6px;padding:.85rem 1rem;margin-bottom:.6rem;
+page-break-inside:avoid}
+.f.blind{background:var(--warn-b);border-color:var(--warn)}
+.f.found{background:var(--bad-b);border-color:var(--bad)}
+.f.clean{background:var(--good-b);border-color:var(--good)}
+/* Neither green nor amber: a third claim gets a third, deliberately
+   NEUTRAL look, so it cannot be misread as either. */
+.f.nothing{background:var(--sunk);border-color:var(--rule)}
+.f .claim{font-size:.8rem;font-weight:600;color:var(--dim);margin-top:.45rem}
+.f .top{display:flex;gap:.55rem;align-items:baseline;flex-wrap:wrap;margin-bottom:.3rem}
+.f .id{font-family:ui-monospace,Consolas,monospace;font-size:.78rem;font-weight:600}
+.f .sev{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;
+padding:.1rem .4rem;border-radius:3px;background:rgba(0,0,0,.07)}
+.f .dev{font-size:.78rem;color:var(--dim)}
+.f .sum{font-weight:600}
+.f .det{font-family:ui-monospace,Consolas,monospace;font-size:.76rem;
+background:var(--sunk);border-radius:4px;padding:.5rem .6rem;margin-top:.45rem;
+white-space:pre-wrap;word-break:break-word}
+.f .src{font-size:.74rem;color:var(--dim);margin-top:.35rem}
+.none{color:var(--dim);font-style:italic;font-size:.9rem;padding:.5rem 0}
+footer{margin-top:2.5rem;padding-top:1rem;border-top:1px solid var(--rule);
+color:var(--dim);font-size:.8rem}
+@media print{body{padding:0}.f{border-width:1px}}
+</style></head><body><div class="wrap"><h1>Netwise analysis report</h1><p class="meta">device.cfg &middot; generated 2026-09-06 23:07 UTC</p><div class="counts"><div class="count bad"><span class="n">5</span><span class="k">problems found</span></div><div class="count good"><span class="n">0</span><span class="k">checked, nothing found</span></div><div class="count warn"><span class="n">1</span><span class="k">could not check</span></div></div><h2>Coverage and certainty</h2><div class="coverage incomplete"><p class="statement">1 reported check/device blind spot remains. Findings may be incomplete.</p><ul><li><strong>routing</strong> on <strong>unknown</strong>: 2 route assertion(s) could not be checked against this config<div class="meta-line">They are written about rtr-branch, rtr-hq, which are not in this snapshot. Nothing is claimed about them either way. · source: analysis/checks/routing.py</div></li></ul></div><h2 class="warn">Could not check</h2><p class="lede">These checks did not run. Nothing is known about what they cover. This is not a pass.</p><div class="f blind"><div class="top"><span class="id">RT-050</span><span class="sev">high</span><span class="dev">unknown</span></div><div class="sum">2 route assertion(s) could not be checked against this config</div><div class="det">They are written about rtr-branch, rtr-hq, which are not in this snapshot. Nothing is claimed about them either way.</div><div class="src">analysis/checks/routing.py</div></div><h2>Problems found</h2><p class="lede">Issues the analysis identified, most serious first.</p><div class="f found"><div class="top"><span class="id">AC-001</span><span class="sev">high</span><span class="dev">rtr-us5</span></div><div class="sum">Unencrypted web traffic reaches the internal server</div><div class="det">Expected DENY but got PERMIT, decided by: permit ip any any</div><div class="src">rtr-us5:acl_in</div></div><div class="f found"><div class="top"><span class="id">AC-002</span><span class="sev">high</span><span class="dev">rtr-us5</span></div><div class="sum">Unencrypted web traffic is allowed out of the internal subnet</div><div class="det">Example permitted flow: start=rtr-us5 [10.10.10.0:49152-&gt;8.8.8.8:80 TCP (SYN)], allowed by: permit ip any any</div><div class="src">rtr-us5:acl_in</div></div><div class="f found"><div class="top"><span class="id">PC-001</span><span class="sev">high</span><span class="dev">rtr-us5</span></div><div class="sum">The internal network can reach servers it should not</div><div class="det">Flow start=rtr-us5 [10.10.10.0:49152-&gt;8.8.8.8:80 TCP (SYN)] is permitted but policy requires it to be DENIED. Decided by: permit ip any any [Rules checked: Netwise&#x27;s built-in example policy (analysis/checks/policy_compliance.py) -- no policy file was supplied.]</div><div class="src">rtr-us5:acl_in</div></div><div class="f found"><div class="top"><span class="id">PC-002</span><span class="sev">high</span><span class="dev">rtr-us5</span></div><div class="sum">The internal server accepts traffic other than HTTPS</div><div class="det">Flow start=rtr-us5 [10.10.10.0:49152-&gt;10.20.0.5:33434 UDP] is permitted but policy requires it to be DENIED. Decided by: permit ip any any (2 example flows matched) [Rules checked: Netwise&#x27;s built-in example policy (analysis/checks/policy_compliance.py) -- no policy file was supplied.]</div><div class="src">rtr-us5:acl_in</div></div><div class="f found"><div class="top"><span class="id">PC-003</span><span class="sev">medium</span><span class="dev">rtr-us5</span></div><div class="sum">Traffic with a forged source address is permitted</div><div class="det">Flow start=rtr-us5 [10.0.0.0:49152-&gt;8.8.8.8:80 TCP (SYN)] is permitted but policy requires it to be DENIED. Decided by: permit ip any any [Rules checked: Netwise&#x27;s built-in example policy (analysis/checks/policy_compliance.py) -- no policy file was supplied.]</div><div class="src">rtr-us5:acl_in</div></div><h2>Checked — nothing found</h2><p class="lede">These checks ran successfully and found no issues.</p><p class="none">No check completed with a clean result.</p><footer>Netwise analyses exported configuration files offline. It never connects to, scans, or modifies a live network. &ldquo;Could not check&rdquo; means exactly that: those checks did not run, and this report makes no claim about what they cover.</footer></div></body></html>

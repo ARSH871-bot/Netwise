@@ -112,6 +112,30 @@ snapshots/
 !docs/Progress Report Template.pptx
 !docs/Final Report Template - Studio 5.docx
 
+# --- Personal identifiers and individual assessment (#290, #311) ------------
+#
+# #290 excluded /docs/Feedback/ because it carries student IDs and a marker's
+# written assessment of an individual, and gave the deciding reason: this
+# repository was PUBLIC until 31 August and its visibility has changed twice.
+# A file that is only safe while a setting stays where it is should not be
+# tracked at all.
+#
+# #311 walked the same content back in through the GENERATOR rather than the
+# output -- a cover sheet line carrying two members' student IDs, one of them
+# somebody else's, and two builders whose whole content is one person's
+# written self-assessment. Caught in review before it merged.
+#
+# So: the STRUCTURE of every document is tracked and anyone can rebuild it.
+# The identifiers are not. docs/identity.example.json shows the shape.
+docs/identity.json
+
+# These two build an INDIVIDUAL's reflection and evidence portfolio. Splitting
+# the identifiers out is not enough for them -- the reflective prose IS the
+# document, and it is a written self-assessment of one person. They stay on
+# disk (out of the temp directory that #311 rescued them from) and out of git.
+docs/document-builds/build_reflection.py
+docs/document-builds/build_sub_portfolio.py
+
 # --- Secrets ---------------------------------------------------------------
 .env
 .env.*

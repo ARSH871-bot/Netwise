@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy to docs/identity.json (gitignored) and fill in. A member with an empty student_id renders as the name alone.",
+  "team_members": [
+    {"name": "Arsh Vhora",      "student_id": ""},
+    {"name": "Ankeet Patel",    "student_id": ""},
+    {"name": "Shubham Kataria", "student_id": ""},
+    {"name": "Samika Perera",   "student_id": ""}
+  ]
+}
