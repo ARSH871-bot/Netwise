@@ -48,7 +48,7 @@ from typing import Any, Dict, List
 import pytest
 
 from analysis import pipeline, policy
-from analysis.checks import policy_compliance
+from analysis.checks import access_control, policy_compliance
 
 
 @pytest.fixture(autouse=True)
@@ -352,6 +352,67 @@ def test_an_empty_policy_reports_none_not_nothing(monkeypatch):
     # And the pipeline must not then re-report it as a broken check.
     from analysis.pipeline import duplicate_id_findings
     assert duplicate_id_findings(results) == []
+
+
+def test_access_control_empty_section_does_not_fall_back_to_our_statements():
+    """THE ONE THAT MATTERS, for the second check (#316).
+
+    Added after @patelankeet2's review of #353. He mutated
+    `statements_in_use()` to fall back to `POLICY` whenever the supplied
+    section is empty -- the regression its own docstring names -- and the
+    whole suite stayed green. Reproduced before this test existed:
+
+        WITH THE MUTATION:  1414 passed, 8 skipped
+
+    The existing test above covers `policy_compliance.rules_in_use()` only.
+    The docstring saying "THE THREE STATES, WHICH ARE NOT TWO" was true and
+    nothing enforced it, which is how a true statement quietly becomes a
+    false one the next time somebody tidies the resolver.
+    """
+    policy.set_active_policy(policy.load_policy({"access_control": []}))
+
+    statements, label, user_supplied = access_control.statements_in_use()
+
+    assert statements == [], (
+        "an empty access_control section fell back to Netwise's own "
+        "statements -- enforcing assertions the user declined to make, and "
+        "labelling them as theirs"
+    )
+    assert user_supplied is True
+    assert label == access_control.USER_POLICY_LABEL
+
+
+def test_access_control_empty_section_reports_one_loud_none(monkeypatch):
+    """The run()-level half: an empty section is said out loud, once.
+
+    Unlike policy_compliance, access_control does NOT return early here --
+    dead rules and undefined references need no policy and still run. So
+    they are stubbed to nothing, and what remains must be exactly the one
+    "nothing to check" card: not silence, not an error, and not our
+    statements checked under the user's name.
+    """
+    policy.set_active_policy(policy.load_policy({"access_control": []}))
+    monkeypatch.setattr(access_control.snapshot, "device_names",
+                        lambda bf: {"rtr-us5"})
+    queried = []
+    monkeypatch.setattr(access_control, "_check_policy_statements",
+                        lambda bf, numbering, statements:
+                        queried.extend(statements) or [])
+    for name in ("_check_guarantees", "_check_dead_rules",
+                 "_check_undefined_references"):
+        monkeypatch.setattr(access_control, name, lambda *a, **k: [])
+
+    results = access_control.run(bf=None)
+
+    assert queried == [], (
+        f"{len(queried)} statement(s) were queried for a policy that asserts "
+        "nothing -- they can only be ours"
+    )
+    loud = [f for f in results if f["summary"] ==
+            "No access-control statements to check"]
+    assert len(loud) == 1, f"expected one loud none card, got {results}"
+    assert loud[0]["status"] == "none"
+    assert not [f for f in results if "not read" in f["summary"]]
 
 
 # --- The rules actually reach the check ---------------------------------------
