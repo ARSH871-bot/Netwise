@@ -128,7 +128,7 @@ def _stranger_policy(destination: Path):
     It goes through `load_policy()`, not straight into the check, so this
     exercises the real validation path a user's file would take.
     """
-    from analysis.checks import policy_compliance
+    from analysis.checks import access_control, policy_compliance
     from analysis.policy import load_policy
 
     names = set()
@@ -142,8 +142,28 @@ def _stranger_policy(destination: Path):
     # One device per fixture in practice; if a fixture ever has more, bind
     # every rule to the first by sorted name so the result is deterministic.
     node = sorted(names)[0]
-    rules = [dict(rule, node=node) for rule in policy_compliance.POLICY_RULES]
-    return load_policy({"policy_compliance": rules})
+
+    # BOTH WIRED CHECKS, NOT JUST ONE (#316).
+    #     This used to build a policy_compliance section and nothing else,
+    #     because policy_compliance was the only check that read a user
+    #     policy. `access_control` now does too, and a tool that supplies no
+    #     access_control entries reports the same FOUND column whether that
+    #     wiring works or not -- a blind spot, not a measurement.
+    #
+    #     The rule in this function's docstring is unchanged and is what
+    #     keeps this honest: the policy is OURS with only the device name
+    #     rebound. Both sections get the same transformation.
+    #
+    #     `routing` is absent because `routing` still does not read a user
+    #     policy (#319). A section joins when its check does.
+    return load_policy({
+        "policy_compliance": [
+            dict(rule, node=node) for rule in policy_compliance.POLICY_RULES
+        ],
+        "access_control": [
+            dict(statement, node=node) for statement in access_control.POLICY
+        ],
+    })
 
 
 def _counts(findings: List[Dict]) -> Counter:
