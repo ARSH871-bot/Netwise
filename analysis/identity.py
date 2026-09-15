@@ -64,16 +64,33 @@ SIMILARITY IS A HINT, NEVER A MERGE
     matcher that merged them would report one as "unchanged" on the day it
     was fixed and the other appeared.
 
-    So `compare()` never moves a finding out of `new` or `resolved` on a
+    So `compare()` never moves a finding out of `appeared` or `disappeared` on a
     guess. Similar pairs are reported alongside, in `possibly_same`, for a
     person to judge. Over-flagging costs a reader a glance; merging costs a
     user a false "unchanged" -- F-4's shape, arriving through history.
+
+WHY THE OUTPUT SAYS "appeared" AND "disappeared", NOT "new" AND "resolved"
+    compare() knows what was REPORTED in two scans. It does not know whether
+    a check could run -- that is coverage, one layer up (#223, #315). So it
+    must not name its output as if it did. Measured with Batfish down:
+
+        earlier scan   5 found
+        later scan     error, error, error     coverage.checked == []
+        with the old key names:   "resolved" 6  (5 of them status=found)
+
+    Rendered directly, that tells a user five problems were fixed when
+    nobody looked -- F-4's failure, arriving through history. The mirror
+    case is as real: a check that could not run before and runs now makes
+    its findings "new" when they are only newly visible. These keys were
+    named `new` and `resolved` until the #223 design work measured this; a
+    name that overclaims gets rendered as a verdict by the first caller who
+    trusts it.
 
 KNOWN LIMIT, STATED RATHER THAN DISCOVERED
     `evidence.source` and `evidence.detail` carry config-derived text -- a
     line number such as `configs/rtr-us5.cfg:[37]`, or an ACL line. Editing
     an UNRELATED part of a config can shift those, and the same problem then
-    appears as one `resolved` and one `new`. That is the conservative
+    appears as one `disappeared` and one `appeared`. That is the conservative
     failure: two real problems are never merged into one. `possibly_same`
     is where such a pair surfaces.
 
@@ -146,28 +163,32 @@ def similarity(a: Mapping[str, Any], b: Mapping[str, Any]) -> float:
 
 def compare(previous: Sequence[Mapping[str, Any]],
             current: Sequence[Mapping[str, Any]]) -> Dict[str, List[Any]]:
-    """Partition two scans into unchanged, new and resolved -- plus hints.
+    """What was reported in both scans, in only one, and what looks alike.
 
     Returns a dict with four keys:
 
         unchanged      findings from `current` whose problem was also in
                        `previous`
-        new            findings in `current` only
-        resolved       findings in `previous` only
-        possibly_same  (resolved, new, similarity) tuples: same check and
-                       device, summaries alike. Each finding in a pair is
-                       STILL in `resolved` or `new` -- nothing is moved on a
-                       guess.
+        appeared       findings reported in `current` only
+        disappeared    findings reported in `previous` only
+        possibly_same  (disappeared, appeared, similarity) tuples: same check
+                       and device, summaries alike. Each finding in a pair is
+                       STILL in `disappeared` or `appeared` -- nothing is
+                       moved on a guess.
+
+    "disappeared" IS NOT "fixed" AND "appeared" IS NOT "introduced". Both
+    depend on whether the check could run, which this function cannot see.
+    See the module docstring for the measurement that renamed these.
 
     Counts are honoured, not collapsed. If `previous` holds a fingerprint
-    twice and `current` once, one is unchanged and one is resolved. None of
+    twice and `current` once, one is unchanged and one disappeared. None of
     the six fixtures produces a duplicate today; this is so a future one
     cannot quietly swallow a problem.
 
     WHAT THIS DOES NOT DO
         It does not decide what a status change means. A check that went
         from finding problems to being unable to run is "newly blind", and
-        #315 requires that to be its own category rather than "resolved".
+        #315 requires that to be its own category rather than "fixed".
         That is the diff's job, one layer up; this function only says which
         problems are the same.
     """
@@ -177,7 +198,7 @@ def compare(previous: Sequence[Mapping[str, Any]],
 
     unmatched_prev = Counter({fp: len(items) for fp, items in prev_by_fp.items()})
     unchanged: List[Mapping[str, Any]] = []
-    new: List[Mapping[str, Any]] = []
+    appeared: List[Mapping[str, Any]] = []
 
     for finding in current:
         fp = fingerprint(finding)
@@ -185,19 +206,19 @@ def compare(previous: Sequence[Mapping[str, Any]],
             unmatched_prev[fp] -= 1
             unchanged.append(finding)
         else:
-            new.append(finding)
+            appeared.append(finding)
 
-    resolved: List[Mapping[str, Any]] = []
+    disappeared: List[Mapping[str, Any]] = []
     for fp, items in prev_by_fp.items():
         # The LAST n of each fingerprint are the unmatched ones; which copy
         # is reported does not matter, because they are identical problems.
         remaining = unmatched_prev[fp]
         if remaining:
-            resolved.extend(items[-remaining:])
+            disappeared.extend(items[-remaining:])
 
     possibly_same = []
-    for old in resolved:
-        for fresh in new:
+    for old in disappeared:
+        for fresh in appeared:
             if (_text(old.get("check")) == _text(fresh.get("check"))
                     and _text(old.get("device")) == _text(fresh.get("device"))):
                 score = similarity(old, fresh)
@@ -206,7 +227,7 @@ def compare(previous: Sequence[Mapping[str, Any]],
 
     return {
         "unchanged": unchanged,
-        "new": new,
-        "resolved": resolved,
+        "appeared": appeared,
+        "disappeared": disappeared,
         "possibly_same": possibly_same,
     }
