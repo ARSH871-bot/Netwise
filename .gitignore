@@ -157,3 +157,18 @@ Thumbs.db
 # logs, environment notes). Not team-facing documentation, so it stays local
 # rather than going into shared git history.
 docs/ankeet/
+
+# --- Personal identifiers ---------------------------------------------------
+# Student IDs and individual self-assessment prose. NOT ours to publish: the
+# repository is public, and an identifier in git history stays there after the
+# file is deleted -- #311 needed a history rewrite to remove exactly this.
+#
+# These three were BELIEVED ignored and were not. Nothing matched them in any
+# branch's .gitignore; they had simply never happened to be added. One
+# `git add -A` would have committed two people's student IDs.
+#
+# tests/test_no_identifiers_committed.py enforces the PROPERTY rather than
+# this list, because a list of instances is what let the gap sit open.
+docs/identity.json
+docs/document-builds/build_reflection.py
+docs/document-builds/build_sub_portfolio.py
