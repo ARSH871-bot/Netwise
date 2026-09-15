@@ -238,8 +238,10 @@ rule.
   modelled, and each is refused rather than approximated.
 - **Application-level blocking is out of scope.** "Block YouTube" is refused
   by design, not by omission.
-- **Two of the three checks do not yet read a supplied policy** —
-  `access_control` and `routing` still use our example rules.
+- **All three checks read a supplied policy** (#87, closed 12 September).
+  What no policy can express yet is a whole *flow space* — the guarantees that
+  prove no packet fitting a description is permitted. Those remain ours, and
+  on your network they report "could not check" rather than a green tick.
 - **Nothing is ever pushed to a live device.** That is a permanent
   guarantee, not a current limitation.
 

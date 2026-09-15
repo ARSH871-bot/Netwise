@@ -110,7 +110,7 @@ HOW IT DECIDES WHAT TO REPORT
     automatically "clean" -- see F-4 in docs/finding-format.md.
 """
 
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pybatfish.client.session import Session
 from pybatfish.datamodel.flow import HeaderConstraints
@@ -199,6 +199,50 @@ ROUTES: List[Dict[str, Any]] = [
 ]
 
 
+# --- Whose route assertions are we checking? (#87 / #319) -------------------
+
+BUILTIN_POLICY_LABEL = (
+    "Netwise's built-in example policy (analysis/checks/routing.py) "
+    "-- no policy file was supplied"
+)
+USER_POLICY_LABEL = "the policy file you supplied"
+
+
+def routes_in_use() -> Tuple[List[Dict[str, Any]], str, bool]:
+    """The route assertions this run should check, and where they came from.
+
+    THE LAST OF THE THREE (#87)
+        `policy_compliance` learned this in #181, `access_control` in #316,
+        and this is the third. With it, every section `analysis/policy.py`
+        validates is read by the check that owns it, which is what #87 asked
+        for.
+
+    THE THREE STATES, WHICH ARE NOT TWO
+        no policy supplied      -> ROUTES below, LABELLED as ours
+        policy with entries     -> the user's assertions
+        policy with NO entries  -> the user's (empty) policy, NOT ours
+
+        Keyed on `active_policy() is None`, never on emptiness -- the same
+        rule as the other two checks, and for the same reason. An empty
+        routing section means "I assert nothing about reachability", which
+        is a different claim from "I gave you no policy". Falling back to
+        ours there would check assertions about rtr-hq and rtr-branch that
+        the user explicitly declined to make, and label them as theirs.
+
+    WHY `number` IS NOT REQUIRED OF THE USER
+        ROUTES pins `number` to the statement so ids stay stable across
+        runs -- RT-001 is always the same assertion. A user's file may omit
+        it; `_assign_missing_numbers()` supplies one and records it in
+        `Policy.assigned`, so the value is reported rather than silent.
+        That is why `number` is absent from `_SECTION_REQUIRED["routing"]`
+        while the five keys this check actually dereferences are present.
+    """
+    active = policy_module.active_policy()
+    if active is None:
+        return ROUTES, BUILTIN_POLICY_LABEL, False
+    return active.entries_for(CHECK_NAME), USER_POLICY_LABEL, True
+
+
 def _evaluate(expected: str, traces: Sequence[Any]) -> Optional[str]:
     """Classify one route statement's traces against what was expected.
 
@@ -251,39 +295,39 @@ def run(bf: Session) -> List[Dict[str, Any]]:
     """
     results: List[Dict[str, Any]] = []
 
-    # A supplied policy this check does not read (#196).
+    # WHOSE assertions? (#319) Resolved once, here, so every branch below
+    # agrees. `routes` replaces the module-level ROUTES everywhere in this
+    # function; ROUTES is now only the fallback routes_in_use() may return.
+    routes, policy_label, user_supplied = routes_in_use()
+
+    # THE "WE DID NOT READ YOUR RULES" CARD IS GONE, BECAUSE WE NOW DO.
     #
-    # Measured before this, with a user policy naming their own device:
+    # #196 added an RT-050 saying "N supplied route assertion(s) were not
+    # read", and this module's comment said it "goes away when this check
+    # learns to read a policy properly". It has, so it does. Leaving it
+    # would be a check reporting a limitation it no longer has -- the same
+    # class of stale claim as the documents this project keeps correcting,
+    # arriving through a finding instead of a paragraph.
     #
-    #     RT-050  2 route assertion(s) could not be checked against this
-    #             config. They are written about rtr-branch, rtr-hq, which
-    #             are not in this snapshot.
-    #
-    # Every device and every count there is OURS. The user wrote about
-    # rtr-acme. F-4 held narrowly -- it says `error`, not `none`, so nobody
-    # was told they were safe -- but "we could not check YOUR rules" and
-    # "we never read your rules" are different claims and this was the
-    # wrong one.
-    #
-    # This block goes away when this check learns to read a policy properly,
-    # which is the capability half of #196 and needs its own issue.
-    ignored = policy_module.entries_supplied_for(CHECK_NAME)
-    if ignored:
+    # An empty routing section is still reported, loudly, just below: that
+    # is a different statement and it is still true.
+    if user_supplied and not routes:
         results.append(
-            findings.error_finding(
+            findings.no_issues_finding(
                 check=CHECK_NAME,
-                device="unknown",
-                summary=f"{ignored} supplied route assertion(s) were not read",
+                device="n/a",
+                summary="No route assertions to check",
                 detail=(
-                    f"You supplied {ignored} route assertion(s). This check "
-                    "does not yet read a supplied policy, so Netwise's "
-                    "built-in assertions were checked instead. Nothing is "
-                    "claimed about your assertions either way (#196)."
+                    "Your policy file has no routing entries, so nothing was "
+                    "asserted about which networks must reach which. This is "
+                    "not a problem with the config -- it is what an empty "
+                    "section means."
                 ),
-                source="analysis/checks/routing.py",
+                source=policy_label,
                 number=UNREAD_POLICY_NUMBER,
             )
         )
+        return results
 
     # --- Scope the statements to the devices actually in this snapshot -------
     #
@@ -314,7 +358,7 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                 check=CHECK_NAME,
                 device="unknown",
                 summary=(
-                    f"{len(ROUTES)} route assertion(s) could not be checked "
+                    f"{len(routes)} route assertion(s) could not be checked "
                     "against this config"
                 ),
                 detail=(
@@ -327,8 +371,8 @@ def run(bf: Session) -> List[Dict[str, Any]]:
             )
         ]
 
-    applicable = [r for r in ROUTES if r["node"] in present]
-    absent = sorted({r["node"] for r in ROUTES if r["node"] not in present})
+    applicable = [r for r in routes if r["node"] in present]
+    absent = sorted({r["node"] for r in routes if r["node"] not in present})
     if absent:
         results.append(
             findings.error_finding(
@@ -337,7 +381,7 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                 # so naming what is missing is an observation, not a guess.
                 device=absent[0] if len(absent) == 1 else "unknown",
                 summary=(
-                    f"{len(ROUTES) - len(applicable)} route assertion(s) could "
+                    f"{len(routes) - len(applicable)} route assertion(s) could "
                     "not be checked against this config"
                 ),
                 detail=(

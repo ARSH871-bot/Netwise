@@ -89,7 +89,11 @@ def test_a_legacy_key_is_corrected_and_reported_rather_than_silently_accepted():
     outright would punish someone who copied from our own check. So it is
     corrected AND reported.
     """
-    policy = load_policy({"routing": [{"description": "hq reaches branch", "start_node": "rtr-hq"}]})
+    policy = load_policy({"routing": [
+        {"description": "hq reaches branch", "start_node": "rtr-hq",
+              "src_ip": "10.10.10.5", "dst_ip": "10.20.20.5",
+              "expected": "REACHABLE", "violation_severity": "high",
+              "violation_summary": "cannot reach"}]})
 
     entry = policy.entries_for("routing")[0]
     assert entry["node"] == "rtr-hq"
@@ -226,8 +230,14 @@ def test_a_per_entry_node_overrides_the_top_level_default():
         {
             "device": "acme-edge-fw",
             "routing": [
-                {"description": "hq to branch", "node": "rtr-hq"},
-                {"description": "branch to hq", "node": "rtr-branch"},
+                {"description": "hq to branch", "node": "rtr-hq",
+              "src_ip": "10.10.10.5", "dst_ip": "10.20.20.5",
+              "expected": "REACHABLE", "violation_severity": "high",
+              "violation_summary": "cannot reach"},
+                {"description": "branch to hq", "node": "rtr-branch",
+              "src_ip": "10.10.10.5", "dst_ip": "10.20.20.5",
+              "expected": "REACHABLE", "violation_severity": "high",
+              "violation_summary": "cannot reach"},
             ],
         }
     )
