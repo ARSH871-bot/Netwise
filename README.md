@@ -165,6 +165,100 @@ Sprint records live in [`docs/`](docs/): [Sprint
   a violet *"AI explanation"* byline means a model wrote it, grey
   *"Plain-English summary"* means it did not.
 
+## Run it in one command
+
+If you only want to see what Netwise does, you do not need any of the eight
+steps below. You need Docker, and this:
+
+```bash
+docker compose up
+```
+
+Then open <http://127.0.0.1:8000>, upload a config, and press **Scan Now**.
+There is a bundled one to try at `tests/fixtures/rtr-us5-insecure/configs/`.
+
+That brings up two containers: Batfish, and Netwise itself. Both images are
+**pinned by digest** rather than by tag, so "one command" means the same thing
+next month as it does today — see the header of `docker-compose.yml` for why
+that is not fussiness.
+
+**Verified end to end on 10 September 2026**, through the running containers
+rather than by unit test:
+
+```
+uploaded rtr-us5-insecure  ->  5 found, 1 could not check
+uploaded rtr-us5-secure    ->  0 found, 2 checked clean, 1 could not check
+```
+
+Those are the same numbers section 11 of `CLAUDE.md` records for the
+non-container path, which is the point: this is a different way to start the
+same product, not a different product.
+
+### The plain-English explanations are opt-in, and here is the honest reason
+
+```bash
+docker compose --profile ai up
+```
+
+The default `docker compose up` gives you the analysis and **deterministic**
+plain-English summaries. It does not give you the model-written ones, because
+the model is a ~2 GB download on first run and that is not a reasonable thing
+to do to somebody who typed one command to see whether this is interesting.
+
+With `--profile ai`, Ollama runs **inside the app container's own network
+namespace**. That is deliberate and worth reading `docker-compose.yml`'s
+header about: `ai/explain.py` refuses to send config-derived evidence to a
+model that is not on loopback, and the correct answer to that was not to
+switch the refusal off. Sharing the namespace makes `127.0.0.1:11434`
+genuinely *be* Ollama, so the guard passes because what it checks is true.
+
+**Also verified end to end on 10 September 2026**, through the containers:
+
+```
+docker compose --profile ai up      first run: pulls llama3.2:3b (2.0 GB),
+                                    then builds netwise-warden from ai/Modelfile
+
+uploaded rtr-us5-insecure  ->  5 found, 1 could not check
+explanation_source         ->  4 model, 1 fallback, 1 absent
+```
+
+Read that last line carefully, because all three values are correct and they
+mean different things:
+
+- **4 model** — the containerised Ollama wrote them.
+- **1 fallback** — one explanation degraded to deterministic text. That is
+  `ai/explain.py` doing its job (#52), not a broken container.
+- **1 absent** — the `status="error"` finding has no explanation at all,
+  because the model is never *called* for a finding that could not be
+  checked. A card that could not be checked must never acquire prose that
+  reads as if it had been.
+
+The first scan after `--profile ai up` took **117 seconds**: the model is
+loaded into memory on first use, on top of Batfish's own warm-up. Later scans
+are much faster. That is slow, not broken — and it is the honest reason
+`--profile ai` is not the default.
+
+You can also tell which kind of explanation you got from the dashboard: a
+violet *"AI explanation"* byline means a model wrote it, grey *"Plain-English
+summary"* means it did not.
+
+### What this does not replace
+
+Developing on Netwise still wants the virtual environment and the test suite,
+so the eight steps below are not going anywhere. Two differences worth
+knowing:
+
+- The container reads `NETWISE_BATFISH_HOST` to find Batfish. Unset, it is
+  `localhost`, so nothing changes for the steps below. Passing a host
+  explicitly always wins over the variable.
+- Uploads inside the container live in a named Docker volume, not in your
+  repository folder. A real network configuration should never land next to
+  tracked files, and `.dockerignore` keeps `configs/` and `docs/` out of the
+  image for the same reason.
+
+Stop everything with `docker compose down`, or `docker compose down -v` to
+discard the uploaded configs and the downloaded model with it.
+
 ## Getting started
 
 **1. Clone the repository and enter it:**
@@ -292,6 +386,47 @@ explicitly rather than relying on the runner image happening to ship it.
 No network configuration data is committed to this repository, and none is ever
 sent to a cloud service. `configs/` and common config file extensions are
 git-ignored by design.
+
+### And that is now checkable rather than promised
+
+Until recently this claim rested on four people having read the source
+carefully. That is a fair basis for trusting your own code and a poor one for
+handing to somebody else's security team.
+
+`analysis/egress.py` wraps `socket.connect` and **refuses** any destination
+that is not Batfish, not the local model, and not this machine. It is
+installed automatically by the dashboard and by the command line. To see what
+it saw:
+
+```bash
+python -m tools.egress_audit
+```
+
+That runs a real scan and prints every outbound connection attempted, with the
+file that attempted it. A clean run reports `refused: 0`.
+
+**What it does not prove is printed with every result**, because `refused: 0`
+is a narrower statement than *nothing left this machine*, and the gap between
+those two sentences is where a security claim goes wrong:
+
+- it observes this process, so a subprocess is not covered
+- it guards `connect`, where bytes flow; a bare DNS lookup is not intercepted
+- Python-level patching stops Python-level sockets — this is **evidence, not a
+  sandbox**
+
+Set `NETWISE_EGRESS_GUARD=0` to turn it off. That is an environment variable
+rather than a dashboard control on purpose: a browser user must not be able to
+switch off the offline guarantee by clicking something convenient.
+
+Measured in the container deployment, where Batfish is a sibling container
+rather than loopback:
+
+```
+batfish resolves to 172.23.0.2 (not loopback)
+172.23.0.2:9996     ALLOWED     Batfish for this deployment
+172.23.0.2:443      REFUSED     allowed by host AND port, never host alone
+93.184.216.34:443   REFUSED     not Batfish, not the model, not this machine
+```
 
 ## Usage
 

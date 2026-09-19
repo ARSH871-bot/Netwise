@@ -1,0 +1,126 @@
+{
+  "_README": [
+    "Netwise CVE reference dataset for Cisco IOS / IOS-XE (#239).",
+    "",
+    "SHIPPED IN THE REPOSITORY AND NEVER FETCHED. Netwise is air-gapped by",
+    "requirement (CLAUDE.md section 5). Any design that phones a CVE API at scan",
+    "time is out of scope before it starts, so this file is the whole source of",
+    "truth and analysis/cve_data.py opens nothing else.",
+    "",
+    "WHAT A KEY IN `advisories` MEANS, AND WHAT IT DOES NOT.",
+    "Keys are IOS TRAINS -- 'major.minor' -- because a running-config's `version`",
+    "line carries a train and nothing more precise. The exact release (15.2(4)M6)",
+    "appears only in `show version` output, which is runtime state and is not in an",
+    "exported config at all.",
+    "",
+    "So a match here means THIS TRAIN APPEARS IN THESE ADVISORIES. It does not mean",
+    "the device is vulnerable. Most of these advisories also require a specific",
+    "feature to be enabled -- see each entry's `requires` -- and many were fixed in",
+    "later builds of the same train. Confirming needs the exact build and the",
+    "running feature set, neither of which a config export contains.",
+    "",
+    "THE `assessed` LIST IS NOT DECORATION. A train in `assessed` with no entry in",
+    "`advisories` means we looked and recorded nothing. A train absent from",
+    "`assessed` means we have no data at all. Those are different claims and the",
+    "check must never merge them: the first may show a clean result, the second",
+    "must not. That is #239's AC-2 and F-4's whole argument, arriving through a",
+    "reference dataset instead of through a check.",
+    "",
+    "EVERY CVE ID BELOW IS REAL AND PUBLISHED. None are invented. `url` is the NVD",
+    "detail page, which is derived mechanically from the id rather than transcribed,",
+    "so it cannot drift from the identifier beside it."
+  ],
+
+  "dataset_version": "2026.09-1",
+  "generated": "2026-09-05",
+  "source": "Cisco Security Advisories (cisco.com/go/psirt), transcribed by hand",
+  "scope": "Cisco IOS and IOS-XE, matched at major.minor train level only",
+
+  "assessed": ["12.4", "15.2", "15.9", "16.9", "17.3"],
+
+  "advisories": {
+    "12.4": [
+      {
+        "id": "CVE-2016-6415",
+        "title": "IKEv1 information disclosure (memory contents leaked to an unauthenticated peer)",
+        "cisco_severity": "high",
+        "cvss_v3": 7.5,
+        "requires": "IKEv1 enabled (crypto isakmp / IPsec VPN terminating on the device)",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2016-6415"
+      },
+      {
+        "id": "CVE-2017-3881",
+        "title": "Cluster Management Protocol remote code execution over Telnet",
+        "cisco_severity": "critical",
+        "cvss_v3": 9.8,
+        "requires": "Telnet enabled for incoming connections (CMP is processed on the telnet path)",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2017-3881"
+      }
+    ],
+
+    "15.2": [
+      {
+        "id": "CVE-2018-0171",
+        "title": "Smart Install remote code execution",
+        "cisco_severity": "critical",
+        "cvss_v3": 9.8,
+        "requires": "Smart Install client feature enabled",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2018-0171"
+      },
+      {
+        "id": "CVE-2017-3881",
+        "title": "Cluster Management Protocol remote code execution over Telnet",
+        "cisco_severity": "critical",
+        "cvss_v3": 9.8,
+        "requires": "Telnet enabled for incoming connections (CMP is processed on the telnet path)",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2017-3881"
+      },
+      {
+        "id": "CVE-2018-0151",
+        "title": "Quality of Service subsystem remote code execution",
+        "cisco_severity": "critical",
+        "cvss_v3": 9.8,
+        "requires": "QoS configured, and UDP port 18999 reachable on the device",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2018-0151"
+      }
+    ],
+
+    "16.9": [
+      {
+        "id": "CVE-2023-20198",
+        "title": "Web UI privilege escalation -- unauthenticated creation of a level 15 account",
+        "cisco_severity": "critical",
+        "cvss_v3": 10.0,
+        "requires": "the HTTP/HTTPS web UI enabled and reachable (ip http server / ip http secure-server)",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2023-20198"
+      },
+      {
+        "id": "CVE-2023-20273",
+        "title": "Web UI command injection, used together with CVE-2023-20198",
+        "cisco_severity": "high",
+        "cvss_v3": 7.2,
+        "requires": "the HTTP/HTTPS web UI enabled and reachable",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2023-20273"
+      }
+    ],
+
+    "17.3": [
+      {
+        "id": "CVE-2023-20198",
+        "title": "Web UI privilege escalation -- unauthenticated creation of a level 15 account",
+        "cisco_severity": "critical",
+        "cvss_v3": 10.0,
+        "requires": "the HTTP/HTTPS web UI enabled and reachable (ip http server / ip http secure-server)",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2023-20198"
+      },
+      {
+        "id": "CVE-2023-20273",
+        "title": "Web UI command injection, used together with CVE-2023-20198",
+        "cisco_severity": "high",
+        "cvss_v3": 7.2,
+        "requires": "the HTTP/HTTPS web UI enabled and reachable",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2023-20273"
+      }
+    ]
+  }
+}

@@ -1157,29 +1157,6 @@ body {
   color: var(--clean-ink);
 }
 
-/* --- Mock-data notice -------------------------------------------------------
-   Neutral, same reasoning as the comparison banner below: this is
-   wayfinding ("you have not uploaded anything yet"), not a severity or
-   status claim, so it stays out of every colour that already means one of
-   those. The [hidden] override is NOT optional -- see the comment on
-   .comparison-banner[hidden] just below for exactly why omitting it means
-   this notice shows on every page load regardless of the hidden
-   attribute. */
-.mock-data-notice {
-  margin-bottom: 0.75rem;
-  padding: 0.55rem 0.8rem;
-  background: var(--page);
-  border: 1px dashed var(--ink-soft);
-  border-radius: 6px;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.mock-data-notice[hidden] {
-  display: none;
-}
-
 /* --- Comparison mode banner ------------------------------------------------
    Deliberately NOT --ai (violet means "a model wrote this" and nothing else
    here means that), not a severity colour, not a status colour. This is

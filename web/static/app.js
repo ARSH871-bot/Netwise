@@ -1027,23 +1027,46 @@ function renderFindingSections(findings) {
  * reads as "nothing wrong" -- which would be the same lie the status field
  * exists to prevent, told at the frontend instead of the backend.
  */
-/** Show or hide the "this is demo data" notice -- read from the response
- * header /api/findings sets, never guessed at from the findings themselves.
- * A header, not a body field, so this stays a pure presentation decision
- * layered on top of the exact same F-1 list every other caller already
- * expects -- see get_findings()'s own docstring in web/main.py. */
-function setMockDataNotice(isMock) {
-  const notice = document.getElementById("mock-data-notice");
-  if (notice) notice.hidden = !isMock;
-}
-
 async function loadFindings() {
   const container = document.getElementById("findings");
   try {
     const response = await fetch("/api/findings");
     if (!response.ok) throw new Error(`server returned ${response.status}`);
-    setMockDataNotice(response.headers.get("X-Netwise-Mock-Data") === "true");
-    renderFindings(await response.json());
+    const findings = await response.json();
+
+    // NOTHING UPLOADED YET. Not a clean result, and it must not look like one.
+    //
+    // An empty list means exactly one thing: no config has been staged in
+    // this session. A real analysis can never produce one -- every
+    // registered check contributes a found, none or error finding, and the
+    // server emits one per check even when Batfish is unreachable. That
+    // invariant is pinned in tests/test_first_load_claims_nothing.py rather
+    // than assumed.
+    //
+    // Rendering the tiles here would print "0 problems found, 0 checked
+    // clean, 0 could not check", which reads as a completed scan of a clean
+    // network. That is the same lie this function's catch block already
+    // refuses to tell when the request fails -- see its comment. This is
+    // that rule reaching the case the mock findings used to hide.
+    if (!Array.isArray(findings) || findings.length === 0) {
+      document.getElementById("summary").replaceChildren();
+      container.replaceChildren(
+        el(
+          "div",
+          "notice",
+          "No configuration has been uploaded yet, so nothing has been " +
+            "checked. This is not a clean result. Upload a config file " +
+            "above and press Scan Now to begin."
+        )
+      );
+      setDownloadAvailable(
+        false,
+        "Nothing to export -- no configuration has been analysed yet."
+      );
+      return;
+    }
+
+    renderFindings(findings);
 
     // Findings are on screen, so there is something to export.
     //

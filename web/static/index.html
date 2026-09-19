@@ -195,29 +195,15 @@
 
         <p id="filter-notice" class="filter-notice" role="status" hidden></p>
 
-        <!-- ---- Mock-data notice ----
-             HIDDEN UNTIL loadFindings() SEES THE MOCK-DATA RESPONSE HEADER.
-             Before this existed, nothing on screen said the findings shown
-             before any upload are invented demo data -- only a downloaded
-             report's subject line ever admitted it, and nobody sees that
-             before uploading anything. Same F-4 instinct one layer up: a
-             viewer must never be left to believe an invented result is a
-             real one.
-
+        <!-- ---- Comparison mode (propose-a-change strengthening) ----
              ABOVE THE EXPLAINER, NOT BETWEEN IT AND THE TILES (#298 merge
              with #288). #288 fixed #219's exact regression -- something
              sitting between results-explainer and #summary pushes the
              explainer away from the thing it explains, and a reader skips
-             it. This notice and the comparison banner below recontextualise
-             everything under them (this is invented, or this is a
-             hypothetical), so both belong ABOVE the explainer they would
-             otherwise separate from the tiles, never between. -->
-        <div id="mock-data-notice" class="mock-data-notice" hidden>
-          Example findings -- upload a config and click Scan Now to see your
-          own results. This is demo data, not a real scan.
-        </div>
+             it. This banner recontextualises everything under it (this is a
+             hypothetical), so it belongs ABOVE the explainer it would
+             otherwise separate from the tiles, never between.
 
-        <!-- ---- Comparison mode (propose-a-change strengthening) ----
              HIDDEN UNTIL A FULL SCAN OF A PROPOSED CHANGE RUNS. Reuses this
              whole panel -- tiles, sections, renderFinding() -- for a
              before/after comparison instead of building a second, weaker

@@ -1,0 +1,49 @@
+# What must never enter a Netwise image.
+#
+# THIS IS A PRIVACY BOUNDARY BEFORE IT IS A SIZE ONE.
+#     `.gitignore` keeps real network configs out of the repository. An image
+#     is a second way to distribute a file, and it does not consult
+#     `.gitignore` -- `COPY . .` would put `configs/` and every submission
+#     document into a layer that can be pushed to a registry.
+#
+#     The Dockerfile also copies named directories rather than `.` for the
+#     same reason: two independent controls, because one of them will
+#     eventually be edited by someone who does not know about the other.
+
+# --- Real network data. Never. ---------------------------------------------
+configs/
+*.cfg
+*.conf
+
+# --- Personal identifiers and submission documents --------------------------
+docs/
+*.docx
+*.pptx
+*.pdf
+
+# --- Local environment ------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Version control and CI -------------------------------------------------
+.git/
+.github/
+.gitignore
+
+# --- Editors / OS -----------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- The compose file does not belong inside the image it builds ------------
+docker-compose.yml
+Dockerfile
+.dockerignore

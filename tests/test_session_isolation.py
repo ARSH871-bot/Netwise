@@ -230,8 +230,19 @@ def _key_for(client: TestClient) -> str:
 def test_one_session_uploading_does_not_put_others_into_the_uploaded_state(analysed):
     """`_uploaded` was one process-wide bool.
 
-    A brand-new browser must still get mock findings after somebody else
-    has uploaded -- not a real analysis of a config it never sent.
+    A brand-new browser must NOT be shown a real analysis of a config it
+    never sent, just because somebody else uploaded one.
+
+    THE ASSERTION CHANGED WITH THE MOCKS, AND IS NOW STRICTER.
+        This used to assert the fresh session got as many findings as
+        `web/mock_findings.py` held. Those six fabricated findings were
+        removed -- one of them a `status="none"` claiming policy compliance
+        had run clean on a config nobody uploaded.
+
+        So the fresh session now gets nothing at all, which is both the
+        correct answer and a stronger one: "no findings" cannot leak
+        another session's device, whereas "six findings" only happened not
+        to.
     """
     a = TestClient(main.app)
     _upload(a, "rtr-alpha")
@@ -240,8 +251,10 @@ def test_one_session_uploading_does_not_put_others_into_the_uploaded_state(analy
     devices = _devices(fresh)
 
     assert devices != ["hostname rtr-alpha"]
-    # Mock findings are what a session with no upload gets.
-    assert len(devices) == len(main.mock_findings.get_mock_findings())
+    assert devices == [], (
+        "a session that uploaded nothing was shown findings. Whatever they "
+        "say, they were not measured from that session's configuration."
+    )
 
 
 def test_each_session_stages_into_its_own_directory(analysed):
