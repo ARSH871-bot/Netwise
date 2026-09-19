@@ -1,14 +1,16 @@
 """
 Netwise -- Layer 2, turning a plain-English question into a grounded answer
-(US-11).
+(US-11), and letting a reachability follow-up reuse what the last one
+already resolved (US-25, #318).
 
 WHAT THIS DOES
-    answer_question(question: str, bf: Session) -> dict
+    answer_question(question: str, bf: Session, previous: dict | None = None) -> dict
     Takes ONE plain-English question and returns:
 
         {"question_understood": str | None,
          "answer": str,
-         "grounded": bool}
+         "grounded": bool,
+         "resolved_entities": dict | None}
 
     `ai/explain.py` already does the other direction, finding -> English.
     This module does English -> finding: before anything can be explained,
@@ -108,6 +110,60 @@ the live verification behind it, not committed to this repo)
     does not have yet (checked directly: the real Cisco fixtures carry no
     interface description text to match a name against). A real,
     incremental step, not the whole client ask.
+
+FOLLOW-UPS: ENTITIES CARRIED FORWARD, NEVER INTENT (#318)
+    #240 named the unscoped version of this as "multi-step deterministic
+    reasoning" -- a planner decomposing a compound question into an ordered
+    sequence of sub-queries. #240 itself says not to start that off the back
+    of the direction doc alone. #318 is the scoped piece that actually has
+    acceptance criteria, and it is much narrower: a REACHABILITY question
+    may omit its source device or its destination, and the missing side is
+    filled from the previous turn's resolved entities -- passed in via
+    `previous`, a dict shaped `{"source_device", "destination_ip",
+    "destination_display"}`, the same three values this module already
+    produces internally for every successful reachability resolution.
+
+    WHAT THIS DELIBERATELY DOES NOT DO
+        It does not relax intent CLASSIFICATION. A follow-up still needs a
+        reach-style keyword to be recognised as a reachability question at
+        all -- "does it reach 10.20.20.5" works, a bare "what about
+        rtr-branch" with no reach keyword does not, and refuses exactly as
+        before. The three-way classifier above is untouched. Only ENTITY
+        RESOLUTION, inside the reachability path specifically, gains a
+        fallback. CLAUDE.md 7c is explicit that this module's narrow scope
+        is what makes it safe rather than merely limited; widening the
+        classifier is a materially bigger decision than extending one
+        already-existing fallback inside one already-existing path, and
+        #318's own acceptance criteria say "entities", not "intents".
+
+    WHY THE CARRIED-FORWARD DEVICE IS RE-VALIDATED, NOT TRUSTED
+        `previous["source_device"]` is checked against THIS call's own
+        `snapshot.device_names(bf)` before being used, exactly like a
+        device named directly in the question text. A device from a
+        different, earlier upload must not silently survive into this one
+        just because the name happens to still exist -- reused state is
+        still state, and this module already refuses rather than trusts
+        everywhere else it can.
+
+    WHY EXPLICIT TEXT ALWAYS WINS, WITH NO SEPARATE OVERRIDE LOGIC
+        The fallback is only ever consulted when the question's own text
+        fails to resolve a side. If the current question names a device or
+        address directly, that is what gets used, `previous` is never
+        looked at for that side. This is a property of the order operations
+        happen in, not a rule enforced separately -- see
+        tests/test_query_translation.py for the test proving it holds.
+
+    WHAT resolved_entities MEANS ON THE WAY OUT
+        Populated whenever a reachability question's source AND destination
+        both resolved -- fresh, carried forward, or one of each -- so the
+        NEXT turn has something to reuse, independent of whether the
+        Batfish call itself then succeeded (resolution and querying are
+        different steps; a Batfish failure downstream does not undo a
+        genuine resolution). None for a refused question and for both
+        whole-snapshot intents, which have no per-question entity to carry.
+        A caller (see web/main.py's /api/ask) is expected to persist this
+        keyed by session and feed it back in as next turn's `previous` --
+        this module holds no state of its own between calls.
 """
 
 from __future__ import annotations
@@ -228,12 +284,14 @@ def _split_on_reach_keyword(question: str) -> Optional[tuple]:
 # ------------------------------------------------------------------------------
 
 
-def answer_question(question: str, bf: Session) -> Dict[str, Any]:
+def answer_question(
+    question: str, bf: Session, previous: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     """Answer ONE plain-English question, grounded strictly in a real
     Batfish result -- see the module docstring for the shape and why
     neither step here calls a model.
 
-    ALWAYS returns the same three keys:
+    ALWAYS returns the same four keys:
         question_understood -- what was actually run, in plain English, or
                                 None if nothing was understood well enough
                                 to run anything (shape C)
@@ -241,6 +299,15 @@ def answer_question(question: str, bf: Session) -> Dict[str, Any]:
         grounded              -- False on any refusal; lets a caller style
                                 a refusal the way a status="error" card
                                 already is, not as a normal answer
+        resolved_entities     -- dict or None; see the module docstring's
+                                "FOLLOW-UPS" section for exactly when this
+                                is populated and what a caller does with it
+
+    `previous`, if given, is that same resolved_entities dict from an
+    earlier call -- see "FOLLOW-UPS" in the module docstring. Omitted or
+    None, this behaves exactly as it always has; passing it never widens
+    which questions are UNDERSTOOD, only which reachability questions can
+    leave a side unresolved and still run.
 
     Never raises. A malformed question, an unresolvable name, or a Batfish
     failure are all refusals, not exceptions -- the same convention
@@ -267,7 +334,7 @@ def answer_question(question: str, bf: Session) -> Dict[str, Any]:
 
     split = _split_on_reach_keyword(question)
     if split is not None:
-        return _answer_reachability_question(split, bf)
+        return _answer_reachability_question(split, bf, previous)
 
     return _refuse(
         "This does not match a question I can answer yet: whether one "
@@ -277,7 +344,12 @@ def answer_question(question: str, bf: Session) -> Dict[str, Any]:
 
 
 def _refuse(reason: str) -> Dict[str, Any]:
-    return {"question_understood": None, "answer": reason, "grounded": False}
+    return {
+        "question_understood": None,
+        "answer": reason,
+        "grounded": False,
+        "resolved_entities": None,
+    }
 
 
 # ------------------------------------------------------------------------------
@@ -285,7 +357,9 @@ def _refuse(reason: str) -> Dict[str, Any]:
 # ------------------------------------------------------------------------------
 
 
-def _answer_reachability_question(split: tuple, bf: Session) -> Dict[str, Any]:
+def _answer_reachability_question(
+    split: tuple, bf: Session, previous: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     source_text, destination_text = split
 
     present = snapshot.device_names(bf)
@@ -296,6 +370,16 @@ def _answer_reachability_question(split: tuple, bf: Session) -> Dict[str, Any]:
         )
 
     source_device = _find_device(source_text, present)
+    if source_device is None and previous is not None:
+        # A follow-up's source side ("it", "that device", or nothing at
+        # all) did not resolve on its own. Fall back to what the LAST
+        # question resolved -- but re-validate it against THIS snapshot,
+        # exactly like a name typed directly: a device from a different,
+        # earlier upload must not survive into this one just because the
+        # name happens to still exist. See the module docstring.
+        candidate = previous.get("source_device")
+        if candidate and candidate in present:
+            source_device = candidate
     if source_device is None:
         return _refuse(
             "I could not find a known device name on the source side of "
@@ -305,6 +389,15 @@ def _answer_reachability_question(split: tuple, bf: Session) -> Dict[str, Any]:
         )
 
     resolved = _resolve_destination(destination_text)
+    if resolved is None and previous is not None:
+        # Same fallback, destination side. Already-validated by the call
+        # that originally resolved it, so no re-validation needed here --
+        # unlike a device name, a literal IP carries no snapshot-specific
+        # meaning to go stale.
+        candidate_ip = previous.get("destination_ip")
+        candidate_display = previous.get("destination_display")
+        if candidate_ip and candidate_display:
+            resolved = (candidate_ip, candidate_display)
     if resolved is None:
         return _refuse(
             "I could not find a valid IP address or network on the "
@@ -313,6 +406,16 @@ def _answer_reachability_question(split: tuple, bf: Session) -> Dict[str, Any]:
             "not a name like \"the finance server\"."
         )
     destination_ip, destination_display = resolved
+
+    # Both sides resolved -- fresh, carried forward, or one of each -- so
+    # this is what the NEXT turn can reuse, independent of whether the
+    # Batfish call below then succeeds. See "FOLLOW-UPS" in the module
+    # docstring for why resolution and querying are tracked separately.
+    resolved_entities = {
+        "source_device": source_device,
+        "destination_ip": destination_ip,
+        "destination_display": destination_display,
+    }
 
     question_understood = (
         f"Can {source_device} reach {destination_display}?"
@@ -342,6 +445,7 @@ def _answer_reachability_question(split: tuple, bf: Session) -> Dict[str, Any]:
                 + findings.describe_error(error)
             ),
             "grounded": False,
+            "resolved_entities": resolved_entities,
         }
 
     if frame.empty:
@@ -352,6 +456,7 @@ def _answer_reachability_question(split: tuple, bf: Session) -> Dict[str, Any]:
                 "Does it exist in this snapshot the way I expect?"
             ),
             "grounded": False,
+            "resolved_entities": resolved_entities,
         }
 
     traces = frame.iloc[0]["Traces"]
@@ -359,6 +464,7 @@ def _answer_reachability_question(split: tuple, bf: Session) -> Dict[str, Any]:
         "question_understood": question_understood,
         "answer": _describe_traces(source_device, destination_display, traces),
         "grounded": True,
+        "resolved_entities": resolved_entities,
     }
 
 
@@ -426,6 +532,7 @@ def _answer_whole_snapshot_question(
                 + findings.describe_error(error)
             ),
             "grounded": False,
+            "resolved_entities": None,
         }
 
     if frame.empty:
@@ -433,6 +540,7 @@ def _answer_whole_snapshot_question(
             "question_understood": question_understood,
             "answer": "No, checked the whole snapshot and found none.",
             "grounded": True,
+            "resolved_entities": None,
         }
 
     return {
@@ -442,4 +550,5 @@ def _answer_whole_snapshot_question(
             "the specific lines, this question only confirms whether any exist."
         ),
         "grounded": True,
+        "resolved_entities": None,
     }
