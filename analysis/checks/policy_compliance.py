@@ -121,7 +121,7 @@ from typing import Any, Dict, List, Tuple
 from pybatfish.client.session import Session
 from pybatfish.datamodel.flow import HeaderConstraints
 
-from analysis import findings, policy, snapshot
+from analysis import coverage, findings, policy, snapshot
 
 # The name this check is registered under, and the value in every "check" field.
 CHECK_NAME = "policy_compliance"
@@ -579,7 +579,15 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                     + " either way.",
                     policy_label,
                 ),
-                source="analysis/checks/policy_compliance.py",
+                # EVERY uncovered device, machine-readably (#315). The detail
+                # above deliberately truncates at five for a human reader;
+                # this does not, because `analysis/scan_diff.py` must know a
+                # device is NOT in this list to call a fix on it resolved.
+                # Before this, the card's device was "unknown" and its source
+                # named this file, so it had to be read as covering
+                # everything -- and a genuine fix on the ONE covered device
+                # was reported unverified.
+                source=coverage.device_list_source(uncovered),
                 number=UNCOVERED_NUMBER,
             )
         )

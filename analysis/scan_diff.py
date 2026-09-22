@@ -29,34 +29,46 @@ WHY A GAP OVERRIDES A RESULT FOR THE SAME CHECK AND DEVICE
 
     A policy-statement finding that disappeared in that scan did not get
     fixed; its analysis did not run. A dead-rule result for the same device
-    says nothing about it. So a covering gap -- same check, same device or
-    device "unknown" -- wins over `checked`.
+    says nothing about it. So a covering gap -- same check, and either
+    naming this device or of unknown scope -- wins over `checked`.
 
     Stated precisely: that same-device case is known from READING the code
     (`device=node` on every per-item error in access_control and routing).
     No committed fixture produces it today, so the tests build one with the
     real `findings.error_finding()` helper rather than claim a measurement.
 
-THE COST OF THAT, MEASURED AND ACCEPTED
-    It is conservative, and on some snapshots it means "resolved" can never
-    be reported. Measured, searching every fixture for a check that has a
-    result on a device AND a gap for the same check: exactly one case.
+THE COST OF THAT, AND WHAT LIMITS IT NOW
+    It is conservative: a gap of unknown scope hides every device for its
+    check. Searching every fixture for a check with a result on a device AND
+    a gap for the same check found exactly one case, and it used to make
+    "resolved" unreachable:
 
         multi-device-10, with a user policy naming one of its ten devices
           checked  (policy_compliance, stranger-rtr-dev001)
           gap      (policy_compliance, unknown)
                    "9 of 10 device(s) in this config are not covered ..."
 
-    The gap's summary is about the OTHER nine devices, but its `device` field
-    is "unknown", so nothing structural says it does not cover dev001. A
-    policy_compliance problem on dev001 that really is fixed is therefore
-    reported UNVERIFIED, not RESOLVED, for as long as the policy names one
-    device of ten.
+    The gap is about the OTHER nine devices, but its `device` field is
+    "unknown", so nothing structural said it did not cover dev001.
 
-    That is the right direction to be wrong in. Under-reporting a fix costs
-    a user a second look; over-reporting one tells them to stop looking. The
-    better fix is for PC-049 to name the uncovered devices structurally,
-    which is a change to that check, not to this module.
+    PC-049 now lists every device it is about in `evidence.source`, and
+    `coverage.summarise()` turns that list into the gap's `covers`. A gap
+    hides only the devices it covers; unknown scope still hides everything.
+    Measured against real Batfish on 23 September, same snapshot, same
+    policy, dev001's config given the DNS permit its policy tests for:
+
+        PC-049 unnamed     resolved []          unverified [AC-002, PC-004]
+        PC-049 names nine  resolved [PC-004]    unverified [AC-002]
+
+    STILL UNDER-REPORTED, AND TRACKED (#364). AC-002 is the same fix, and it
+    stays unverified -- with dev001 listed as NEWLY BLIND for access_control
+    -- because a check emits its "all clear" only when it found nothing
+    else, and names one device in it. access_control's leftover error about
+    another device leaves dev001 with no result at all in the later scan.
+    That is a change to the checks, not to this module.
+
+    Both are the right direction to be wrong in. Under-reporting a fix costs
+    a user a second look; over-reporting one tells them to stop looking.
 
 WHY "UNVERIFIED" AND NOT "NEWLY BLIND" FOR FINDINGS
     #315 asks that a check that has newly gone blind be its own category.
@@ -139,9 +151,23 @@ def _checked(scan: Mapping[str, Any]) -> Set[Pair]:
 
 
 def _gap_covers(scan: Mapping[str, Any], check: str, device: str) -> Optional[str]:
-    """The summary of a gap that could hide this (check, device), or None."""
+    """The summary of a gap that could hide this (check, device), or None.
+
+    `covers` comes from `coverage.summarise()`: the devices a gap is about,
+    or None when its scope is unknown. Unknown scope hides anything. A gap
+    whose `covers` lists devices hides only those -- which is what lets a
+    genuine fix on the one device a policy names be reported resolved while
+    PC-049 is open about the other nine.
+
+    A gap with no `covers` key -- built by hand, or stored before the key
+    existed -- is read as unknown scope. Missing information never makes a
+    gap hide LESS.
+    """
     for gap in scan["coverage"]["gaps"]:
-        if _norm(gap["check"]) == check and _norm(gap["device"]) in (device, "unknown"):
+        if _norm(gap["check"]) != check:
+            continue
+        covers = gap.get("covers")
+        if covers is None or device in {_norm(c) for c in covers}:
             return gap["summary"]
     return None
 
