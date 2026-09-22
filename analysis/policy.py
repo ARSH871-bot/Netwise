@@ -125,18 +125,34 @@ _REQUIRED_KEYS = ("description", "node")
 #:     what the check actually dereferences -- the drift is caught by a
 #:     test rather than prevented by an import cycle.
 #:
-#: WHY ONLY policy_compliance IS LISTED
+#: WHY A SECTION IS LISTED, AND WHEN IT JOINS
 #:     A section joins this dict when its check is WIRED to read a user
-#:     policy, not before. `access_control` and `routing` still assert only
-#:     their own hardcoded rules, so requiring keys for them would enforce a
-#:     contract nothing consumes -- and it broke five of #173's own loader
-#:     tests, which build minimal access_control entries precisely because
-#:     nothing dereferences the rest yet. Demanding fields no code reads is
-#:     how a format goes unused, which the comment above _REQUIRED_KEYS
-#:     already warns about.
+#:     policy, not before. Requiring keys for a check that ignores them
+#:     enforces a contract nothing consumes -- and when `access_control` was
+#:     added here speculatively it broke five of #173's own loader tests,
+#:     which build minimal entries precisely because nothing dereferenced
+#:     the rest yet. Demanding fields no code reads is how a format goes
+#:     unused, which the comment above _REQUIRED_KEYS already warns about.
+#:
+#:     `access_control` joined on #316, when its POLICY statements started
+#:     reading `entries_for()`. It requires the three keys the check
+#:     dereferences for a statement -- `filter`, `headers`, `expected` --
+#:     plus the two that only bite once a violation is actually found.
+#:
+#:     Those last two are the dangerous class described above: a policy
+#:     missing `violation_severity` or `violation_summary` reports "checked,
+#:     all clear" every run and raises on the first day it catches something
+#:     real. A green tick that becomes an error exactly when there is a
+#:     problem to report is F-4's worst shape, reached through the input.
+#:
+#:     `routing` is still absent. It does not read a user policy yet (#319).
 #:
 #: `number` is NOT here: see _assign_missing_numbers().
 _SECTION_REQUIRED: Dict[str, frozenset] = {
+    "access_control": frozenset({
+        "filter", "headers", "expected",
+        "violation_severity", "violation_summary",
+    }),
     "policy_compliance": frozenset({
         "filter", "kind", "queries",
         "violation_severity", "violation_summary",
