@@ -48,7 +48,7 @@ from typing import Any, Dict, List
 import pytest
 
 from analysis import pipeline, policy
-from analysis.checks import access_control, policy_compliance
+from analysis.checks import access_control, policy_compliance, routing
 
 
 @pytest.fixture(autouse=True)
@@ -190,13 +190,42 @@ def test_every_missing_key_is_reported_at_once():
         assert key in message, f"{key!r} missing from a one-shot error"
 
 
-def test_the_declared_required_keys_match_what_the_check_dereferences():
-    """The drift guard for `_SECTION_REQUIRED`.
+#: Each wired check dereferences its entries through one variable name. The
+#: drift guard reads that name's subscripts out of the real source.
+_WIRED = [
+    ("policy_compliance", policy_compliance, "rule"),
+    ("access_control", access_control, "statement"),
+    ("routing", routing, "route"),
+]
+
+
+def test_every_policy_section_is_wired():
+    """POLICY_SECTIONS and _SECTION_REQUIRED name the same checks.
+
+    They did not until #319. A section a user can write but no check reads
+    is exactly how #87 existed for a month with a validated format and a
+    working loader behind it.
+    """
+    assert set(policy.POLICY_SECTIONS) == set(policy._SECTION_REQUIRED)
+    assert {name for name, _, _ in _WIRED} == set(policy.POLICY_SECTIONS)
+
+
+@pytest.mark.parametrize("section, module, variable", _WIRED,
+                         ids=[w[0] for w in _WIRED])
+def test_the_declared_required_keys_match_what_the_check_dereferences(
+        section, module, variable):
+    """The drift guard for `_SECTION_REQUIRED`, for every wired check.
 
     It cannot be derived at import time -- `analysis.policy` importing
     `analysis.checks` would be a cycle -- so it is declared by hand and
-    checked here against the check's real source. Without this, the list
+    checked here against each check's real source. Without this, the list
     and the code are one fact in two places.
+
+    UNTIL #319 THIS READ policy_compliance.py ONLY, while a comment in
+    analysis/policy.py -- written on #319 -- said it "now runs against all
+    three". It did not. That comment was a false claim about the code, in
+    the code, and it would have stayed true-looking indefinitely because
+    nothing reads a comment for correctness. Parametrised so it is true.
 
     `number` is excluded because the loader ASSIGNS it rather than
     requiring it; see _assign_missing_numbers().
@@ -204,19 +233,20 @@ def test_the_declared_required_keys_match_what_the_check_dereferences():
     import re
     from pathlib import Path
 
-    source = (Path(policy_compliance.__file__)).read_text(encoding="utf-8")
-    dereferenced = set(re.findall(r'rule\["(\w+)"\]', source))
+    source = Path(module.__file__).read_text(encoding="utf-8")
+    dereferenced = set(re.findall(variable + r'\["(\w+)"\]', source))
+    assert dereferenced, (
+        f"found no {variable}[...] subscripts in {module.__name__} -- the "
+        "guard would pass vacuously, which is worse than not having it"
+    )
 
-    declared = set(policy._SECTION_REQUIRED["policy_compliance"])
-    universal = set(policy._REQUIRED_KEYS)
-    assigned = {"number"}
-
-    should_be_declared = dereferenced - universal - assigned
+    declared = set(policy._SECTION_REQUIRED[section])
+    should_be_declared = dereferenced - set(policy._REQUIRED_KEYS) - {"number"}
     assert declared == should_be_declared, (
-        f"_SECTION_REQUIRED['policy_compliance'] is {sorted(declared)} but "
-        f"the check dereferences {sorted(should_be_declared)}. A key the "
-        f"check reads and the loader does not require becomes a KeyError "
-        f"inside the check instead of a named policy error."
+        f"_SECTION_REQUIRED[{section!r}] is {sorted(declared)} but the check "
+        f"dereferences {sorted(should_be_declared)}. A key the check reads "
+        "and the loader does not require becomes a KeyError inside the check "
+        "instead of a named policy error."
     )
 
 
@@ -354,33 +384,61 @@ def test_an_empty_policy_reports_none_not_nothing(monkeypatch):
     assert duplicate_id_findings(results) == []
 
 
-def test_access_control_empty_section_does_not_fall_back_to_our_statements():
-    """THE ONE THAT MATTERS, for the second check (#316).
+#: (section, resolver, the built-in list it falls back to, user label)
+_RESOLVERS = [
+    ("policy_compliance", policy_compliance.rules_in_use,
+     policy_compliance.POLICY_RULES, policy_compliance.USER_POLICY_LABEL),
+    ("access_control", access_control.statements_in_use,
+     access_control.POLICY, access_control.USER_POLICY_LABEL),
+    ("routing", routing.routes_in_use,
+     routing.ROUTES, routing.USER_POLICY_LABEL),
+]
 
-    Added after @patelankeet2's review of #353. He mutated
-    `statements_in_use()` to fall back to `POLICY` whenever the supplied
-    section is empty -- the regression its own docstring names -- and the
-    whole suite stayed green. Reproduced before this test existed:
 
-        WITH THE MUTATION:  1414 passed, 8 skipped
+@pytest.mark.parametrize("section, resolve, builtin, user_label", _RESOLVERS,
+                         ids=[r[0] for r in _RESOLVERS])
+def test_an_empty_section_never_falls_back_to_our_rules(
+        section, resolve, builtin, user_label):
+    """THE ONE THAT MATTERS, once, for every check that reads a policy.
 
-    The existing test above covers `policy_compliance.rules_in_use()` only.
-    The docstring saying "THE THREE STATES, WHICH ARE NOT TWO" was true and
-    nothing enforced it, which is how a true statement quietly becomes a
-    false one the next time somebody tidies the resolver.
+    "I assert nothing" and "I gave you no policy" are different claims.
+    Falling back on an empty section would enforce assertions the user
+    declined to make, and label them as theirs.
+
+    SHARED, AT @patelankeet2's SUGGESTION ON #355. He mutated both
+    `statements_in_use()` (#353) and `routes_in_use()` (#355) to fall back
+    on an empty section, and each time the whole suite stayed green:
+
+        access_control mutation   1414 passed, 8 skipped
+        routing mutation          1417 passed, 8 skipped
+
+    The rule is one rule. Writing it as a third hand-copied test is how the
+    second copy went missing in the first place.
     """
-    policy.set_active_policy(policy.load_policy({"access_control": []}))
+    policy.set_active_policy(policy.load_policy({section: []}))
 
-    statements, label, user_supplied = access_control.statements_in_use()
+    entries, label, user_supplied = resolve()
 
-    assert statements == [], (
-        "an empty access_control section fell back to Netwise's own "
-        "statements -- enforcing assertions the user declined to make, and "
-        "labelling them as theirs"
+    assert entries == [], (
+        f"an empty {section} section fell back to Netwise's own rules"
     )
+    assert entries is not builtin
     assert user_supplied is True
-    assert label == access_control.USER_POLICY_LABEL
+    assert label == user_label
 
+
+@pytest.mark.parametrize("section, resolve, builtin, _label", _RESOLVERS,
+                         ids=[r[0] for r in _RESOLVERS])
+def test_no_policy_at_all_still_uses_ours_and_says_so(
+        section, resolve, builtin, _label):
+    """The first state, so the test above cannot pass by never falling back."""
+    policy.set_active_policy(None)
+
+    entries, label, user_supplied = resolve()
+
+    assert entries is builtin
+    assert user_supplied is False
+    assert "no policy file was supplied" in label
 
 def test_access_control_empty_section_reports_one_loud_none(monkeypatch):
     """The run()-level half: an empty section is said out loud, once.
@@ -413,6 +471,28 @@ def test_access_control_empty_section_reports_one_loud_none(monkeypatch):
     assert len(loud) == 1, f"expected one loud none card, got {results}"
     assert loud[0]["status"] == "none"
     assert not [f for f in results if "not read" in f["summary"]]
+
+
+def test_routing_empty_section_reports_one_loud_none(monkeypatch):
+    """The run()-level half for routing (#355).
+
+    routing returns early here -- unlike access_control it has no analysis
+    that needs no policy -- so the whole result must be exactly the one
+    "nothing to check" card, and no traceroute may be asked at all.
+    """
+    policy.set_active_policy(policy.load_policy({"routing": []}))
+    monkeypatch.setattr(routing.snapshot, "device_names", lambda bf: {"rtr-hq"})
+
+    class NoQueries:
+        def __getattr__(self, name):
+            raise AssertionError(f"routing asked Batfish {name!r} for an "
+                                 "empty policy -- the question can only be ours")
+
+    results = routing.run(bf=NoQueries())
+
+    assert len(results) == 1, f"expected one card, got {results}"
+    assert results[0]["status"] == "none"
+    assert results[0]["summary"] == "No route assertions to check"
 
 
 # --- The rules actually reach the check ---------------------------------------

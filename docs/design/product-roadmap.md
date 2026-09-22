@@ -5,8 +5,9 @@
 
 This is the honest list, ordered by how much each thing prevents Netwise being
 useful to someone who is not us. It is deliberately not a feature wishlist: two
-of the six sections say "do nothing", and the largest gap is not on any story
-board.
+of the six sections say "do nothing", and when this was written the largest gap
+was not on any story board. It is now — §0.1 closed on 12 September as #87, via
+#181, #316 and #319.
 
 > **Two claims in the first draft of this document were wrong, and both were
 > caught by re-running them rather than by review** — see §1.1 and §2.3, where
@@ -20,9 +21,32 @@ board.
 
 ## Tier 0 — a stranger cannot use this yet
 
-### 0.1 The policy is ours, not the user's — and this is the biggest gap
+### 0.1 The policy is ours, not the user's — CLOSED, 12 September (#87)
 
-**Every policy assertion in the product is hardcoded to our test fixtures.**
+> **DONE.** `policy_compliance` (#181), `access_control` (#316) and `routing`
+> (#319) all read a user-supplied policy. Re-measured:
+>
+> ```
+>                         ours        stranger      + their policy
+>                        f/n/e       our policy         f/n/e
+> TOTAL              12 /  3 /  7   3 / 0 / 15      13 /  3 / 21
+> ```
+> 
+> **Read 10, not 13.** Three of those thirteen are our two routing assertions
+> rebound onto a stranger's single router, which asks whether one subnet
+> reaches another across a device that spans neither. The answer is correctly
+> *no*, so `RT-001` fires on every single-router fixture including the secure
+> one. The check is right; the assertion is one no real user would write.
+> `tools/stranger_config.py` prints that caveat with every run.
+>
+> **Not closed:** `GUARANTEES`. The format cannot express a whole flow space,
+> so those assertions remain ours and report "could not check" on a stranger's
+> config. That needs an F-1-adjacent format decision, which needs all four.
+>
+> Everything below is the record of the gap as it stood, kept because the
+> measurement is what made the case for fixing it.
+
+**Every policy assertion in the product was hardcoded to our test fixtures.**
 
 ```
 analysis/checks/access_control.py     POLICY, GUARANTEES      name rtr-us5
@@ -31,9 +55,10 @@ analysis/checks/routing.py            ROUTES                  name rtr-hq, rtr-b
 ```
 
 Two of those modules say so in a comment — *"PLACEHOLDER … the real client
-policy will replace them"* — and nothing replaces them. **There is no mechanism
+policy will replace them"* — and nothing replaces them. **There was no mechanism
 for a user to state their own policy at all.** No file format, no UI, no
-loader; grep for one and there is nothing.
+loader; grep for one and there was nothing. #173 built the loader, #186 the
+upload, and #181/#316/#319 wired the three checks to it.
 
 **Measured, not argued.** Take `rtr-us5-messy`, rename the device, change
 nothing else:

@@ -626,8 +626,8 @@ project's recurring failure family arriving through process rather than code.
 
 | Piece | Owner | Note |
 |---|---|---|
-| **A way for the user to state their own policy** | unassigned | **Still the biggest gap, but no longer total** (#87). `policy_compliance` reads a user policy since #181 (28 August); `access_control` and `routing` do not, so two of three checks remain hardcoded to our fixtures. See below for the measurement |
-| **Two of three checks ignore a user policy** | unassigned | The remainder of #87. `access_control` and `routing` still name `rtr-us5` and `rtr-hq`/`rtr-branch` regardless of what the user supplies. **Since #261 they say so** — `AC-005 [error] "1 supplied rule(s) for this check were not read"` — which makes the gap visible rather than smaller. Being told you are not covered is not the same as being covered |
+| **User-supplied policy, all three checks** | — | **CLOSED (#87).** `policy_compliance` since #181, `access_control` since #316, `routing` since #319. Every section `analysis/policy.py` validates is now read by the check that owns it. The #196 "your rules were not read" cards are gone, because the claim stopped being true |
+| **Whole flow spaces in a user policy** | unassigned | What #87 did NOT close. `access_control.GUARANTEES` are `searchFilters` proofs over a space of traffic, and the policy format has no way to express one — so a user's guarantees are still ours. Measured: `rtr-us5-insecure` finds one fewer under a stranger's policy, and it is exactly `GUARANTEES[0]`. Widening the format needs all four |
 
 **The policy is ours, not the user's — but one check now takes theirs.**
 `access_control` and `policy_compliance` name `rtr-us5`; `routing` names
@@ -716,8 +716,30 @@ so a change to the converter's device naming would have returned the client's
 firewall to producing nothing with every test still green.
 `tests/test_pfsense_policy_join.py` pins it.
 
-**What is still missing.** `access_control` and `routing` still ignore a
-supplied policy. So the gap is narrowed for one check, not closed.
+**What is still missing — and it is no longer the checks.** `access_control`
+(#316) and `routing` (#319) now read a supplied policy, so all three do.
+Re-measured with `python -m tools.stranger_config`:
+
+```
+                        ours        stranger      + their policy
+                       f/n/e       our policy         f/n/e
+TOTAL              12 /  3 /  7   3 / 0 / 15      13 /  3 / 21
+```
+
+**Read 10, not 13.** Three of those thirteen are our two routing assertions
+rebound onto a stranger's single router, which asks whether one subnet
+reaches another across a device that spans neither. The answer is correctly
+*no*, so `RT-001` fires on every single-router fixture including the secure
+one. The check is right; the assertion is one no real user would write.
+`tools/stranger_config.py` prints that caveat with every run.
+
+What remains is `GUARANTEES`: the policy format cannot express a whole flow
+space, so those assertions stay ours. A stranger's snapshot reports them as
+"could not check" — honest, and not yet useful.
+
+**This paragraph said "the gap is narrowed for one check, not closed" until
+#319.** Left as a correction rather than overwritten, because the sentence
+above it has now been wrong in both directions within a fortnight.
 
 **There IS a UI, since #181 merged on 28 August** — this paragraph said there
 was none, and said it three lines below the sentence recording that the check

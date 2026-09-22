@@ -61,22 +61,27 @@ For what is *not* built and in what order, see
 Stated here rather than buried, because the headline above is easy to read as a
 larger claim than it is.
 
-**The security policy is currently ours, not yours.** Two of the three analyses
-check assertions written against this project's own test fixtures — that a
-particular device denies a particular flow, and so on.
+**You can now state your own security policy, and all three analyses read it.**
+`policy_compliance` since #181, `access_control` since #316 and `routing` since
+#319. Every finding says whose rules produced it, so a result from your policy
+and one from our example are never confused.
 
-You **can** now supply your own policy: there is a documented format
-(start from [`docs/examples/policy.example.json`](docs/examples/policy.example.json)), a
-validating loader (`analysis/policy.py`, #173), an upload endpoint with a file
-picker (`POST /api/policy`, #186), and **since #181 merged on 28 August one
-check actually reads it** — `policy_compliance` asserts your rules instead of
-our built-in examples, and every finding says which of the two it used.
+**What is still ours:** the whole-flow-space guarantees in `access_control`.
+Those prove that *no* packet fitting a description is permitted, and the policy
+format has no way for you to describe one yet. On your config they report
+"could not check" rather than a green tick.
 
-**This paragraph previously said a policy was "validated and staged, and not
-yet applied … checked for correctness and then not used."** That stopped being
-true when #181 landed. Recorded rather than quietly overwritten, because a
-README that understates what shipped sends people to the command line for
-something the dashboard already does.
+Supplying one: a documented format (start from
+[`docs/examples/policy.example.json`](docs/examples/policy.example.json)), a
+validating loader (`analysis/policy.py`, #173), and an upload endpoint with a
+file picker (`POST /api/policy`, #186).
+
+**This section has now been wrong twice, in the same direction.** It said a
+policy was "validated and staged, and not yet applied" after #181 made that
+false, and then said "two of the three analyses" check our fixtures after #316
+and #319 made that false too. Recorded rather than quietly overwritten: a
+README that understates what shipped sends people looking for a workaround to
+something that already works.
 
 Measured on one config with only the device name changed, all three columns
 from `tools/stranger_config.py`:
@@ -93,15 +98,20 @@ rules all name the filter `acl_in`, which the routing fixtures do not have, so
 those rules correctly report "could not check" rather than being skipped. The
 tool says so itself when you run it.
 
-**The gap is narrowed, not closed**, and the honest statement of what remains
-is that two of the three checks still ignore you: `access_control` and
-`routing` assert our fixtures' device names whatever you upload. So on a
-network that is not ours and with no policy of your own, Netwise still reports
-only **dead ACL rules** and **references to structures that do not exist** —
-both genuinely useful, both a long way short of the description at the top of
-this file. Everything else says, honestly, "could not check". Tracked as
-[#87](https://github.com/ARSH871-bot/Netwise/issues/87); it remains the single
-largest gap in the product.
+**[#87](https://github.com/ARSH871-bot/Netwise/issues/87) is closed.** All
+three checks read your policy: `policy_compliance` (#181), `access_control`
+(#316) and `routing` (#319).
+
+**If you supply no policy of your own**, the old limit still applies exactly as
+written above: our assertions name our fixtures' devices, so on a network that
+is not ours Netwise reports only **dead ACL rules** and **references to
+structures that do not exist** — both genuinely useful, both well short of the
+description at the top of this file. Everything else says "could not check".
+That is not a defect; it is what having no policy means.
+
+**What no policy can express yet** is a whole flow space — the
+`searchFilters` guarantees that prove *no* packet fitting a description is
+permitted. Those remain ours.
 
 **Two further limits worth knowing before you try it:**
 
