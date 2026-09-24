@@ -272,6 +272,17 @@ away has the wrong impression.
    configs. Filed as #87, and the ordering is in
    `docs/design/product-roadmap.md`.
 
+   > **UPDATE, 12 September 2026.** #87 is closed — `access_control` (#316)
+   > and `routing` (#319) now read a user-supplied policy, so "there is no way
+   > for a user to supply their own" is no longer true.
+   >
+   > **The figures above are NOT reworded**, because `CONTRIBUTING.md` §5c is
+   > explicit that a measurement is re-run rather than edited. They remain a
+   > correct record of what was measured when they were taken. **A re-run of
+   > this evaluation against the new behaviour is owed**, and until it happens
+   > the honest reading of the block above is *this is what the product did
+   > before #316 and #319*, not *this is what it does*.
+
 5. **Neither control exercises all three checks.** On `rtr-us5-secure`,
    `routing` cannot run because `ROUTES` names `rtr-hq`/`rtr-branch`. On
    `routing-secure`, `access_control` and `policy_compliance` cannot run

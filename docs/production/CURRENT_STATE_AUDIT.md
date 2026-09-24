@@ -108,6 +108,22 @@ Since **#261** the two checks that ignore a policy now *say so*
 (`AC-005 [error] "1 supplied rule(s) for this check were not read"`), which
 makes the gap visible rather than smaller.
 
+> **UPDATE, 12 September 2026 — #87 is closed, and this block is left as the
+> record of what 31 August measured rather than edited in place.**
+>
+> `access_control` reads a user policy since #316 and `routing` since #319, so
+> the table above now reads "reads a user policy" on all three rows. The #261
+> cards are gone too: a check that reads your rules and also says it did not
+> read them makes two contradictory claims, and one of them had to go.
+>
+> Re-measured with `python -m tools.stranger_config`: 3 policy-driven
+> detections on a stranger's network became 13, of which 3 are an artefact of
+> rebinding our two-router routing assertions onto a single router — so the
+> comparable figure is **10**.
+>
+> What #87 did **not** close: `access_control.GUARANTEES`. The policy format
+> cannot express a whole flow space, so those assertions remain ours.
+
 ### 4.4 No production deployment boundary — confirmed
 
 ```

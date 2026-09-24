@@ -45,12 +45,40 @@ class _Policy:
 
 @pytest.fixture
 def supplied(monkeypatch):
-    """Install a policy holding entries for both checks that ignore one."""
+    """Install a policy holding entries for both checks.
+
+    THE ENTRIES ARE COMPLETE, AND THEY HAVE TO BE (#316, #319).
+        `_Policy` above is a double that bypasses `load_policy()`, so
+        `_SECTION_REQUIRED` never runs against it. That was harmless while
+        neither check dereferenced these keys: the entries carried a
+        description and a node because that was all anyone read.
+
+        Both checks now read them, and the double happily held entries the
+        real loader would refuse -- which surfaced as `KeyError: 'dst_ip'`
+        from inside `routing.run()`, exactly the failure `_SECTION_REQUIRED`
+        exists to move forward to load time.
+
+        A double that can express states the real thing rejects will
+        eventually pin behaviour that cannot happen. Keeping these entries
+        loader-valid is what stops that.
+    """
     pol = _Policy({
         "access_control": [{"description": "Guests must not reach finance",
-                            "node": "rtr-acme"}],
-        "routing": [{"description": "HQ must reach branch", "node": "rtr-acme"},
-                    {"description": "Branch must reach HQ", "node": "rtr-acme"}],
+                            "node": "rtr-acme", "filter": "acl_in",
+                            "headers": {"srcIps": "10.30.30.0/24"},
+                            "expected": "DENY",
+                            "violation_severity": "high",
+                            "violation_summary": "guests reach finance"}],
+        "routing": [{"description": "HQ must reach branch", "node": "rtr-acme",
+                     "number": 1, "src_ip": "10.10.10.5",
+                     "dst_ip": "10.20.20.5", "expected": "REACHABLE",
+                     "violation_severity": "high",
+                     "violation_summary": "HQ cannot reach branch"},
+                    {"description": "Branch must reach HQ", "node": "rtr-acme",
+                     "number": 2, "src_ip": "10.20.20.5",
+                     "dst_ip": "10.10.10.5", "expected": "REACHABLE",
+                     "violation_severity": "high",
+                     "violation_summary": "branch cannot reach HQ"}],
     })
     monkeypatch.setattr(policy_module, "active_policy", lambda: pol)
     return pol
@@ -87,8 +115,28 @@ def test_a_check_with_no_entries_in_a_supplied_policy_is_not_told_off(supplied):
     assert policy_module.entries_supplied_for("policy_compliance") == 0
 
 
-def test_access_control_says_the_rules_were_not_read(supplied, monkeypatch):
-    """It used to say nothing at all."""
+def test_access_control_no_longer_says_the_rules_were_not_read(
+        supplied, monkeypatch):
+    """INVERTED ON #316, and the inversion is the point.
+
+    This used to assert the card was PRESENT -- correct while the check
+    ignored a supplied policy, which was the whole subject of #196.
+
+    #316 taught `access_control` to read one, and left the card in place.
+    For one commit a user supplying access-control rules got their rules
+    checked, their findings produced, AND an amber card saying their rules
+    had been ignored: two contradictory claims from a single run of a single
+    check. Worse than a stale comment -- a FINDING stating something false
+    about what Netwise did, printed beside the findings that disprove it.
+
+    Nothing caught it, because this file only ever asserted the card was
+    there. A test that pins a true statement becomes a test that pins a
+    false one the day the code catches up, and the pinning is invisible
+    either way.
+
+    So the assertion is now the opposite one, and it is the assertion that
+    would have failed on #316 the moment it was written.
+    """
     monkeypatch.setattr(access_control.snapshot, "device_names", lambda bf: {"rtr-us5"})
     monkeypatch.setattr(access_control, "_check_policy_statements", lambda *a, **k: [])
     monkeypatch.setattr(access_control, "_check_guarantees", lambda *a, **k: [])
@@ -98,23 +146,68 @@ def test_access_control_says_the_rules_were_not_read(supplied, monkeypatch):
     results = access_control.run(bf=None)
     card = next((f for f in results if "not read" in f["summary"]), None)
 
-    assert card is not None, "a supplied access-control rule was silently discarded"
-    assert card["status"] == "error", "not read is a could-not-check, never a clean result"
-    assert "1 rule(s) for access control" in card["evidence"]["detail"]
-    assert "#196" in card["evidence"]["detail"]
+    assert card is None, (
+        "access_control reads a supplied policy since #316, and still told "
+        f"the user it had not: {card['summary'] if card else ''}"
+    )
 
 
-def test_routing_says_the_assertions_were_not_read(supplied, monkeypatch):
-    monkeypatch.setattr(routing.snapshot, "device_names", lambda bf: {"rtr-hq", "rtr-branch"})
-    monkeypatch.setattr(routing, "_evaluate", lambda *a, **k: [])
+def test_access_control_actually_uses_the_supplied_rules(supplied):
+    """The positive half, so absence of the card is not the whole claim.
+
+    Deleting the card would satisfy the test above on its own. It would not
+    mean the rules were read. This asserts the resolver returns the USER's
+    entry rather than our two built-in statements.
+    """
+    statements, label, user_supplied = access_control.statements_in_use()
+
+    assert user_supplied is True
+    assert label == access_control.USER_POLICY_LABEL
+    assert len(statements) == 1, (
+        "expected the one supplied access_control entry, got "
+        f"{len(statements)} -- our built-in list has two"
+    )
+    assert statements[0]["description"] == "Guests must not reach finance"
+
+
+def test_routing_no_longer_says_the_assertions_were_not_read(
+        supplied, monkeypatch):
+    """INVERTED ON #319, for the reason the access_control one was on #316.
+
+    #196 gave this check a card saying "N supplied route assertion(s) were
+    not read". That was true, and this test pinned it. #319 made it false by
+    teaching the check to read them, so the assertion is now the opposite.
+
+    With #316 and #319 together, every section `analysis/policy.py`
+    validates is read by the check that owns it. #196's cards have no
+    remaining subject, and `entries_supplied_for()` -- the helper that
+    counted rules nobody read -- has no remaining caller. Both are removed
+    here rather than left as machinery for a problem that no longer exists.
+    """
+    monkeypatch.setattr(routing.snapshot, "device_names", lambda bf: {"rtr-acme"})
 
     results = routing.run(bf=None)
     card = next((f for f in results if "not read" in f["summary"]), None)
 
-    assert card is not None
-    assert card["status"] == "error"
-    assert card["id"] == "RT-051", f"pinned id, got {card['id']}"
-    assert "2 supplied route assertion(s)" in card["summary"]
+    assert card is None, (
+        "routing reads a supplied policy since #319, and still told the user "
+        f"it had not: {card['summary'] if card else ''}"
+    )
+
+
+def test_routing_actually_uses_the_supplied_assertions(supplied):
+    """The positive half. Deleting the card alone would pass the test above
+    without a single user assertion ever being read."""
+    routes, label, user_supplied = routing.routes_in_use()
+
+    assert user_supplied is True
+    assert label == routing.USER_POLICY_LABEL
+    assert len(routes) == 2, (
+        f"expected the two supplied routing entries, got {len(routes)}"
+    )
+    assert all(r["node"] == "rtr-acme" for r in routes), (
+        "the user's assertions name rtr-acme; ours name rtr-hq and rtr-branch"
+    )
 
 
 def test_the_routing_id_cannot_collide_with_its_other_bands():
