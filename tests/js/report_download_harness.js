@@ -162,6 +162,29 @@ function click(id) {
 
 /* --- Drive the real code through every state ---------------------------- */
 
+/* What a genuinely clean scan looks like on the wire: every check ran, none
+ * of them found anything. NOT an empty list -- see afterCleanResult below. */
+const CLEAN_FINDINGS = [
+  {
+    id: "PC-000",
+    check: "policy_compliance",
+    severity: "low",
+    device: "rtr-us5",
+    summary: "No issues found by policy compliance",
+    evidence: { detail: "All policy rules held.", source: "analysis/checks/policy_compliance.py" },
+    status: "none",
+  },
+  {
+    id: "AC-000",
+    check: "access_control",
+    severity: "low",
+    device: "rtr-us5",
+    summary: "No issues found by access control",
+    evidence: { detail: "All access-control assertions held.", source: "analysis/checks/access_control.py" },
+    status: "none",
+  },
+];
+
 (async () => {
   const out = {};
 
@@ -198,11 +221,28 @@ function click(id) {
   await sandbox.loadFindings();
   out.afterFailedLoad = state();
 
-  // An empty-but-successful response still renders (three zero tiles), and
-  // is still exportable -- "we checked and found nothing" is a real result.
+  // "We checked and found nothing" is a real result, and a report of it is
+  // one somebody may need to hand to whoever asked. So it stays exportable.
+  //
+  // NOTE THE BODY. This used to be `[]`, which the server can never send
+  // for a completed scan: every registered check contributes a found, none
+  // or error finding, so a clean run arrives as `status="none"` findings.
+  // Measured -- rtr-us5-secure returns 0 found, 2 none, 1 error.
+  //
+  // The old encoding was a hazard rather than merely inaccurate. Three zero
+  // tiles and a live export button, presented as a completed scan of a
+  // clean network, for a response that measured nothing.
+  nextFetch = { ok: true, body: CLEAN_FINDINGS };
+  await sandbox.loadFindings();
+  out.afterCleanResult = state();
+
+  // AND THE CASE THAT IS NOW REACHABLE. An empty body means one thing:
+  // nothing has been uploaded in this session. It is not a clean result and
+  // must not offer an export -- a live Download button beside "nothing has
+  // been checked" contradicts the sentence next to it.
   nextFetch = { ok: true, body: [] };
   await sandbox.loadFindings();
-  out.afterEmptyResult = state();
+  out.afterNothingUploaded = state();
 
   console.log(JSON.stringify(out, null, 2));
 })();

@@ -1,0 +1,170 @@
+# Netwise, in one command. US-41 (#333).
+#
+#     docker compose up
+#
+# Then open http://127.0.0.1:8000. Nothing else: no clone-and-venv, no pip,
+# no separate container to start by hand. The eight steps in README.md still
+# work and are still the right path for developing on Netwise -- this is the
+# path for somebody who wants to find out whether it is worth developing on.
+#
+# ---------------------------------------------------------------------------
+# WHY THE IMAGES ARE PINNED BY DIGEST AND NOT BY TAG
+# ---------------------------------------------------------------------------
+# `batfish/allinone` and `ollama/ollama` are both moving tags. A tag makes
+# "one command" mean a different thing next month, and the failure would look
+# like a Netwise bug rather than an upstream change. A digest is the exact
+# bytes that were tested.
+#
+# Resolved on this machine, 10 September 2026:
+#     docker image inspect batfish/allinone --format '{{index .RepoDigests 0}}'
+#     docker buildx imagetools inspect ollama/ollama:latest
+#
+# Updating one is a deliberate change with a re-run behind it, which is the
+# point.
+#
+# ---------------------------------------------------------------------------
+# THE OLLAMA SERVICE IS OPTIONAL, AND ITS NETWORKING IS DELIBERATE
+# ---------------------------------------------------------------------------
+# `ai/explain.py` refuses to send configuration-derived evidence to a model
+# that is not on this machine's loopback. `_is_loopback_host()` accepts only
+# the literal name "localhost" and literal loopback IPs, and deliberately does
+# NOT resolve hostnames -- its docstring says why: a name that resolves to
+# loopback today can resolve elsewhere tomorrow.
+#
+# So `OLLAMA_HOST=ollama:11434` would be REFUSED, correctly. The app would
+# fall back to deterministic explanations and say so. A one-command install
+# whose AI layer silently never runs is worse than one that has none.
+#
+# The fix is not to set NETWISE_ALLOW_REMOTE_OLLAMA=1. That variable means
+# "a remote model is acceptable", which is not what is true here and would
+# also permit a genuinely remote one.
+#
+# Instead the ollama container joins the APP container's network namespace
+# (`network_mode: "service:app"`). Inside that namespace 127.0.0.1:11434 IS
+# Ollama. The guard passes because the claim it checks is true, not because
+# it was bypassed, and the evidence never crosses a network interface at all
+# -- a stronger position than the host-machine case, where it crosses
+# loopback on a machine with other things on it.
+#
+# Ollama is behind a profile because it costs a ~2 GB model download on first
+# run. Without it Netwise works and explains findings deterministically:
+#
+#     docker compose up                    analysis, no model
+#     docker compose --profile ai up       analysis + plain-English model
+#
+# ---------------------------------------------------------------------------
+
+name: netwise
+
+services:
+  # --- Layer 1: the analysis engine we drive and did not write --------------
+  batfish:
+    image: batfish/allinone@sha256:09817554db90e2f2674b72562c2d659427094187de0a3dfc23534ab58bf26207
+    container_name: netwise-batfish
+    restart: unless-stopped
+    networks: [netwise]
+    # 9997 is the coordinator, 9996 is the v2 API pybatfish talks to. 8888 is
+    # Batfish's own Jupyter and is NOT published: it is not part of Netwise
+    # and publishing it would put an unauthenticated notebook server on the
+    # host for no reason.
+    expose:
+      - "9996"
+      - "9997"
+    healthcheck:
+      # Batfish ships no curl, so the check is a TCP connect from Python,
+      # which the image does have. An open port is not proof the service is
+      # healthy -- `analysis.pipeline.connect()` says so about its own probe
+      # -- but it is proof it is no longer starting, which is all a
+      # depends_on condition needs.
+      test:
+        - CMD-SHELL
+        - >-
+          python3 -c "import socket,sys;
+          s=socket.create_connection(('127.0.0.1',9996),2); s.close()"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      # The JVM takes a while. Measured on this project: the first scan of a
+      # session costs about 22 seconds of engine warm-up, and the service is
+      # listening well before that.
+      start_period: 60s
+
+  # --- Layer 3: the dashboard and API --------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: netwise-app
+    restart: unless-stopped
+    networks: [netwise]
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      # The whole reason this file needs a code change behind it. Without it
+      # the app looks for Batfish on its OWN loopback and finds nothing.
+      NETWISE_BATFISH_HOST: batfish
+      # True inside this namespace once the ai profile is up; harmless and
+      # simply unreachable when it is not.
+      OLLAMA_HOST: "127.0.0.1:11434"
+    depends_on:
+      batfish:
+        condition: service_healthy
+    volumes:
+      # Uploads live here. A named volume rather than a bind mount: a bind
+      # mount would put a stranger's network configuration into the
+      # repository folder, which is the one place this project has spent its
+      # whole life keeping them out of.
+      - netwise-configs:/app/configs
+
+  # --- Layer 2: the local model. Optional -- see the header. ----------------
+  ollama:
+    image: ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba
+    container_name: netwise-ollama
+    profiles: [ai]
+    restart: unless-stopped
+    # Shares the app's network namespace so the app reaches it on 127.0.0.1.
+    # This is the whole argument in the header. Note that a service using
+    # network_mode cannot also declare `networks:` or `ports:`.
+    network_mode: "service:app"
+    depends_on:
+      - app
+    volumes:
+      - netwise-models:/root/.ollama
+
+  # --- One-shot: build the Warden model from ai/Modelfile -------------------
+  warden:
+    image: ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba
+    container_name: netwise-warden-build
+    profiles: [ai]
+    network_mode: "service:app"
+    depends_on:
+      - ollama
+    volumes:
+      - netwise-models:/root/.ollama
+      # Read-only: this container reads the Modelfile and writes nothing back
+      # into the repository.
+      - ./ai/Modelfile:/Modelfile:ro
+    environment:
+      OLLAMA_HOST: "127.0.0.1:11434"
+    # `ollama create` needs the server up. It is in the same namespace, so it
+    # waits on the same 127.0.0.1 the app will use -- if this loop times out,
+    # the app would not have reached the model either, and the failure is
+    # visible here rather than as silent fallback text later.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        for i in $$(seq 1 60); do
+          ollama list >/dev/null 2>&1 && break; sleep 2;
+        done;
+        ollama pull llama3.2:3b &&
+        ollama create netwise-warden -f /Modelfile &&
+        echo "netwise-warden ready"
+    restart: "no"
+
+networks:
+  netwise:
+    driver: bridge
+
+volumes:
+  netwise-configs:
+  netwise-models:

@@ -61,22 +61,27 @@ For what is *not* built and in what order, see
 Stated here rather than buried, because the headline above is easy to read as a
 larger claim than it is.
 
-**The security policy is currently ours, not yours.** Two of the three analyses
-check assertions written against this project's own test fixtures — that a
-particular device denies a particular flow, and so on.
+**You can now state your own security policy, and all three analyses read it.**
+`policy_compliance` since #181, `access_control` since #316 and `routing` since
+#319. Every finding says whose rules produced it, so a result from your policy
+and one from our example are never confused.
 
-You **can** now supply your own policy: there is a documented format
-(start from [`docs/examples/policy.example.json`](docs/examples/policy.example.json)), a
-validating loader (`analysis/policy.py`, #173), an upload endpoint with a file
-picker (`POST /api/policy`, #186), and **since #181 merged on 28 August one
-check actually reads it** — `policy_compliance` asserts your rules instead of
-our built-in examples, and every finding says which of the two it used.
+**What is still ours:** the whole-flow-space guarantees in `access_control`.
+Those prove that *no* packet fitting a description is permitted, and the policy
+format has no way for you to describe one yet. On your config they report
+"could not check" rather than a green tick.
 
-**This paragraph previously said a policy was "validated and staged, and not
-yet applied … checked for correctness and then not used."** That stopped being
-true when #181 landed. Recorded rather than quietly overwritten, because a
-README that understates what shipped sends people to the command line for
-something the dashboard already does.
+Supplying one: a documented format (start from
+[`docs/examples/policy.example.json`](docs/examples/policy.example.json)), a
+validating loader (`analysis/policy.py`, #173), and an upload endpoint with a
+file picker (`POST /api/policy`, #186).
+
+**This section has now been wrong twice, in the same direction.** It said a
+policy was "validated and staged, and not yet applied" after #181 made that
+false, and then said "two of the three analyses" check our fixtures after #316
+and #319 made that false too. Recorded rather than quietly overwritten: a
+README that understates what shipped sends people looking for a workaround to
+something that already works.
 
 Measured on one config with only the device name changed, all three columns
 from `tools/stranger_config.py`:
@@ -93,15 +98,20 @@ rules all name the filter `acl_in`, which the routing fixtures do not have, so
 those rules correctly report "could not check" rather than being skipped. The
 tool says so itself when you run it.
 
-**The gap is narrowed, not closed**, and the honest statement of what remains
-is that two of the three checks still ignore you: `access_control` and
-`routing` assert our fixtures' device names whatever you upload. So on a
-network that is not ours and with no policy of your own, Netwise still reports
-only **dead ACL rules** and **references to structures that do not exist** —
-both genuinely useful, both a long way short of the description at the top of
-this file. Everything else says, honestly, "could not check". Tracked as
-[#87](https://github.com/ARSH871-bot/Netwise/issues/87); it remains the single
-largest gap in the product.
+**[#87](https://github.com/ARSH871-bot/Netwise/issues/87) is closed.** All
+three checks read your policy: `policy_compliance` (#181), `access_control`
+(#316) and `routing` (#319).
+
+**If you supply no policy of your own**, the old limit still applies exactly as
+written above: our assertions name our fixtures' devices, so on a network that
+is not ours Netwise reports only **dead ACL rules** and **references to
+structures that do not exist** — both genuinely useful, both well short of the
+description at the top of this file. Everything else says "could not check".
+That is not a defect; it is what having no policy means.
+
+**What no policy can express yet** is a whole flow space — the
+`searchFilters` guarantees that prove *no* packet fitting a description is
+permitted. Those remain ours.
 
 **Two further limits worth knowing before you try it:**
 
@@ -164,6 +174,100 @@ Sprint records live in [`docs/`](docs/): [Sprint
   model-written explanation. Until #234 is fixed, check the dashboard itself —
   a violet *"AI explanation"* byline means a model wrote it, grey
   *"Plain-English summary"* means it did not.
+
+## Run it in one command
+
+If you only want to see what Netwise does, you do not need any of the eight
+steps below. You need Docker, and this:
+
+```bash
+docker compose up
+```
+
+Then open <http://127.0.0.1:8000>, upload a config, and press **Scan Now**.
+There is a bundled one to try at `tests/fixtures/rtr-us5-insecure/configs/`.
+
+That brings up two containers: Batfish, and Netwise itself. Both images are
+**pinned by digest** rather than by tag, so "one command" means the same thing
+next month as it does today — see the header of `docker-compose.yml` for why
+that is not fussiness.
+
+**Verified end to end on 10 September 2026**, through the running containers
+rather than by unit test:
+
+```
+uploaded rtr-us5-insecure  ->  5 found, 1 could not check
+uploaded rtr-us5-secure    ->  0 found, 2 checked clean, 1 could not check
+```
+
+Those are the same numbers section 11 of `CLAUDE.md` records for the
+non-container path, which is the point: this is a different way to start the
+same product, not a different product.
+
+### The plain-English explanations are opt-in, and here is the honest reason
+
+```bash
+docker compose --profile ai up
+```
+
+The default `docker compose up` gives you the analysis and **deterministic**
+plain-English summaries. It does not give you the model-written ones, because
+the model is a ~2 GB download on first run and that is not a reasonable thing
+to do to somebody who typed one command to see whether this is interesting.
+
+With `--profile ai`, Ollama runs **inside the app container's own network
+namespace**. That is deliberate and worth reading `docker-compose.yml`'s
+header about: `ai/explain.py` refuses to send config-derived evidence to a
+model that is not on loopback, and the correct answer to that was not to
+switch the refusal off. Sharing the namespace makes `127.0.0.1:11434`
+genuinely *be* Ollama, so the guard passes because what it checks is true.
+
+**Also verified end to end on 10 September 2026**, through the containers:
+
+```
+docker compose --profile ai up      first run: pulls llama3.2:3b (2.0 GB),
+                                    then builds netwise-warden from ai/Modelfile
+
+uploaded rtr-us5-insecure  ->  5 found, 1 could not check
+explanation_source         ->  4 model, 1 fallback, 1 absent
+```
+
+Read that last line carefully, because all three values are correct and they
+mean different things:
+
+- **4 model** — the containerised Ollama wrote them.
+- **1 fallback** — one explanation degraded to deterministic text. That is
+  `ai/explain.py` doing its job (#52), not a broken container.
+- **1 absent** — the `status="error"` finding has no explanation at all,
+  because the model is never *called* for a finding that could not be
+  checked. A card that could not be checked must never acquire prose that
+  reads as if it had been.
+
+The first scan after `--profile ai up` took **117 seconds**: the model is
+loaded into memory on first use, on top of Batfish's own warm-up. Later scans
+are much faster. That is slow, not broken — and it is the honest reason
+`--profile ai` is not the default.
+
+You can also tell which kind of explanation you got from the dashboard: a
+violet *"AI explanation"* byline means a model wrote it, grey *"Plain-English
+summary"* means it did not.
+
+### What this does not replace
+
+Developing on Netwise still wants the virtual environment and the test suite,
+so the eight steps below are not going anywhere. Two differences worth
+knowing:
+
+- The container reads `NETWISE_BATFISH_HOST` to find Batfish. Unset, it is
+  `localhost`, so nothing changes for the steps below. Passing a host
+  explicitly always wins over the variable.
+- Uploads inside the container live in a named Docker volume, not in your
+  repository folder. A real network configuration should never land next to
+  tracked files, and `.dockerignore` keeps `configs/` and `docs/` out of the
+  image for the same reason.
+
+Stop everything with `docker compose down`, or `docker compose down -v` to
+discard the uploaded configs and the downloaded model with it.
 
 ## Getting started
 
@@ -292,6 +396,47 @@ explicitly rather than relying on the runner image happening to ship it.
 No network configuration data is committed to this repository, and none is ever
 sent to a cloud service. `configs/` and common config file extensions are
 git-ignored by design.
+
+### And that is now checkable rather than promised
+
+Until recently this claim rested on four people having read the source
+carefully. That is a fair basis for trusting your own code and a poor one for
+handing to somebody else's security team.
+
+`analysis/egress.py` wraps `socket.connect` and **refuses** any destination
+that is not Batfish, not the local model, and not this machine. It is
+installed automatically by the dashboard and by the command line. To see what
+it saw:
+
+```bash
+python -m tools.egress_audit
+```
+
+That runs a real scan and prints every outbound connection attempted, with the
+file that attempted it. A clean run reports `refused: 0`.
+
+**What it does not prove is printed with every result**, because `refused: 0`
+is a narrower statement than *nothing left this machine*, and the gap between
+those two sentences is where a security claim goes wrong:
+
+- it observes this process, so a subprocess is not covered
+- it guards `connect`, where bytes flow; a bare DNS lookup is not intercepted
+- Python-level patching stops Python-level sockets — this is **evidence, not a
+  sandbox**
+
+Set `NETWISE_EGRESS_GUARD=0` to turn it off. That is an environment variable
+rather than a dashboard control on purpose: a browser user must not be able to
+switch off the offline guarantee by clicking something convenient.
+
+Measured in the container deployment, where Batfish is a sibling container
+rather than loopback:
+
+```
+batfish resolves to 172.23.0.2 (not loopback)
+172.23.0.2:9996     ALLOWED     Batfish for this deployment
+172.23.0.2:443      REFUSED     allowed by host AND port, never host alone
+93.184.216.34:443   REFUSED     not Batfish, not the model, not this machine
+```
 
 ## Usage
 

@@ -1,0 +1,7 @@
+[
+  {
+    "device": "rtr-us5",
+    "tier": "critical",
+    "description": "Finance server segment"
+  }
+]

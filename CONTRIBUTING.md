@@ -444,6 +444,41 @@ Board fields that get forgotten: **Start date and Target date** — the Roadmap
 view is blank without them — plus Priority, Size, and adding open PRs as items.
 Merged PRs move themselves; the seven automation workflows are enabled.
 
+### What each column means, and who moves an item into it
+
+This was missing, and its absence showed. On 12 September the **In review**
+column held **zero items** while seven pull requests were open and waiting —
+none of them on the board at all. The rule above already said to add open PRs
+as items. It was written down and not performed, which is this project's
+oldest failure shape arriving through process rather than code.
+
+| Column | What it means | Who moves it there |
+|---|---|---|
+| **Backlog** | Agreed it should happen. Nobody has started. | automation, on issue creation |
+| **Ready** | Scoped enough to start without asking anything first | whoever scoped it |
+| **In progress** | Someone is writing the code now | the author, when they branch |
+| **In review** | The work exists and is waiting on a person | **the author, when they open the PR** |
+| **Done** | Merged | automation, on merge |
+
+**The only row anyone gets wrong is `In review`, so it is worth saying twice.**
+Opening a pull request is two board actions, not zero:
+
+```bash
+gh project item-add 3 --owner ARSH871-bot --url <pr-url>   # the PR
+# then set BOTH the PR and the issue it closes to "In review"
+```
+
+An empty `In review` column does not mean nothing is waiting. It means nobody
+recorded what is waiting — and a queue nobody can see is a queue nobody clears.
+That is how this project reached eight open pull requests and read, to anyone
+glancing at the board, as though it had none.
+
+**Automation will not save you here.** All seven workflows are enabled and
+`Auto-add to project` still did not add a single one of those seven pull
+requests, because its filter covers issues. Whether that filter should be
+widened is a setting somebody has to click; until it is, this is a human
+step and the table above is the rule.
+
 ### But the real fix is removing the duplicate
 
 Every one of those incidents had the same cause: **a fact stored in two places
@@ -835,14 +870,90 @@ is the third option: checks that run before the commit exists, where a fix
 costs seconds instead of a review round trip.
 
 ```bash
-pip install pre-commit
-pre-commit install          # once per clone
-pre-commit run --all-files  # check everything without committing
+pip install --user pre-commit   # --user matters on Windows, see below
+pre-commit install              # once per clone
+pre-commit run --all-files      # check everything without committing
 ```
 
 It runs the same ruff CI runs — **pinned to the same version and the same
 `--select`** — plus merge-conflict markers, oversized files, private keys,
 unparseable YAML/JSON/TOML, and the project's own constraint-1 test.
+
+> #### `pip install` silently gives you nothing on some Windows setups — use `--user`
+>
+> **This cost a red CI on #304, and it was the second time in one sitting that
+> ruff was not runnable locally.** Recorded here because the failure looks like
+> success and there is no way to reason your way to it.
+>
+> On a system-wide Python install (`C:\PythonNNN\`) where `Scripts\` is not
+> writable by your user, `pip install <tool>` reports **success** and leaves
+> the tool unusable. The library lands in `site-packages`; the console script
+> does not, and pip aborts partway:
+>
+> ```
+> WARNING: Failed to write executable - trying to use .deleteme logic
+> ERROR: Could not install packages due to an OSError: [WinError 2]
+>        The system cannot find the file specified:
+>        'C:\Python312\Scripts\identify-cli.exe'
+> ```
+>
+> The visible symptom is confusing, because the *import* fails too:
+>
+> ```
+> $ pip install ruff==0.14.14      # says "Successfully installed"
+> $ python -m ruff --version
+> C:\Python312\python.exe: No module named ruff
+> ```
+>
+> **The fix is `--user`.** It installs to `%APPDATA%\Python\PythonNNN\`, which
+> is already on `sys.path`, and writes the executable to a directory you own:
+>
+> ```bash
+> pip uninstall -y ruff           # a half-installed copy blocks --user
+> pip install --user ruff==0.14.14
+> python -m ruff --version        # ruff 0.14.14
+> ```
+>
+> The `pip uninstall` first is not optional. A broken partial install still
+> satisfies pip's "already installed" check, so `--user` becomes a no-op and
+> you get the same failure with no new output.
+>
+> **Verify against CI's exact command**, not an approximation — the `--select`
+> is what makes the rule set match:
+>
+> ```bash
+> python -m ruff check --select E4,E7,E9,F analysis/ ai/ web/ tools/ tests/
+> ```
+>
+> `pip install --user pre-commit` fixes `pre-commit` the same way, and is the
+> better long-term answer since it runs the pinned ruff for you.
+>
+> #### One warning about `pre-commit run --all-files` on this repository
+>
+> It currently **rewrites eleven files it did not need to touch** — five
+> committed vendor fixtures, `tests/test_policy_wiring.py`, and five
+> `docs/images/*.svg` — via `end-of-file-fixer` and friends. Measured, on a
+> clean tree, on 5 September.
+>
+> Nothing is wrong with those files; they simply predate the hook. But run
+> over everything and then commit, and you sweep eleven unrelated files into
+> your PR. `git checkout --` them, or use the hook the way it is meant to be
+> used — on staged files at commit time, where it only sees what you touched.
+>
+> Fixing them for real is a separate, whole-repository commit that belongs to
+> nobody's feature branch. Worth doing; not worth doing accidentally.
+>
+> **If none of that works**, the ruff wheel can be unzipped by hand —
+> `pip download --no-deps ruff==0.14.14`, extract, and the binary is at
+> `ruff-0.14.14.data/scripts/ruff.exe`. That is a workaround for one session,
+> not a setup; it leaves nothing on `PATH` and the next person repeats it.
+>
+> **Why this belongs in writing rather than in someone's memory.** §6b already
+> says CI is the backstop and the hooks are opt-in. Both true, and neither
+> helps if the install that activates them fails while reporting success. A
+> tool that is documented, pinned, tested for drift, and *not actually
+> runnable* is the same shape as the `dependabot.yml` finding above: a control
+> that looks like coverage until someone checks.
 
 **Two files now pin ruff, and two places pinning one tool will drift.**
 `tests/test_repo_config.py` asserts the version *and* the rule set match, so

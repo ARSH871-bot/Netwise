@@ -8,12 +8,11 @@ RUN IT
 Run from the repository root, so `analysis` and `web` both import.
 
 WHAT THIS SERVES (US-10)
-    Before any upload: mock F-1 findings from web/mock_findings.py, so the
-    dashboard has something to render on a fresh start.
+    Before any upload: nothing. An empty list, and a frontend panel saying
+    so. It used to serve six invented findings -- see get_findings() for
+    why that was the worst possible place for this project to invent
+    anything.
     After an upload:  real findings from analysis.pipeline.analyse().
-
-    The shape is identical either way, which is why the frontend needed no
-    changes when the pipeline was wired in.
 
 THE SEAM
     analysis.pipeline.analyse(snapshot_dir) -> list[dict] is the whole backend
@@ -47,6 +46,7 @@ from ai.explain import (
 )
 from ai.propose import propose_change
 from ai.query import answer_question
+from analysis import egress
 from analysis import findings, pipeline as analysis_pipeline, report
 from analysis.business_context import (
     TIERS,
@@ -61,7 +61,6 @@ from analysis.checks.risk import (
 from analysis.pfsense_convert import PfSenseConversionError, convert as pfsense_convert
 from analysis.policy import PolicyError, load_policy_file
 from web.audit_log import event as audit_event
-from web import mock_findings
 from web.session import (
     DEFAULT_SESSION,
     SESSION_COOKIE,
@@ -277,6 +276,24 @@ def _is_uploaded() -> bool:
         state on purpose.
     """
     return _uploaded or current_session_id() in _uploaded_sessions
+
+# ---------------------------------------------------------------------------
+# N-1, enforced rather than promised (US-40, #332)
+# ---------------------------------------------------------------------------
+#
+# Netwise's central claim is that configuration data never leaves the machine.
+# `analysis/egress.py` wraps socket.connect and REFUSES any destination that
+# is not Batfish, not the local model, and not loopback.
+#
+# Installed at import rather than on a startup event, because import is the
+# earliest point that exists here and a guard absent during startup is a guard
+# with a hole in it exactly where nobody is looking.
+#
+# `NETWISE_EGRESS_GUARD=0` turns it off. That is deliberately an environment
+# variable and not a dashboard control: a browser user must not be able to
+# switch off the offline guarantee by clicking something -- the same reasoning
+# ai/explain.py gives for NETWISE_ALLOW_REMOTE_OLLAMA.
+_EGRESS_GUARD_ACTIVE = egress.install()
 
 app = FastAPI(
     title="Netwise",
@@ -1083,9 +1100,33 @@ def get_findings(http_response: Response = None) -> List[Dict[str, Any]]:
     """Return the current findings, in the F-1 format, plus a plain-English
     "explanation" on every status="found" finding (US-19 / #31).
 
-    Serves mock data until a config has been uploaded, then calls the real
-    pipeline. The response shape is identical either way, including
-    status="error" findings when analysis cannot run at all.
+    EMPTY UNTIL SOMETHING HAS BEEN UPLOADED, AND THAT IS THE POINT.
+        This used to serve six invented findings so the dashboard had
+        something to render on a fresh start -- including `PC-000` with
+        `status="none"`, a fabricated green tick saying policy compliance
+        had run and found nothing.
+
+        F-4 exists so "we checked and found nothing" and "we could not
+        check" never look alike. An invented `none` is a third thing that
+        looks like the first, it was on the first screen every user sees,
+        and the seven F-1 fields gave an API client no way to tell it from
+        a measurement.
+
+        A label was not available: it would need an eighth F-1 field, which
+        needs all four signatures, and it would not have helped the export
+        paths -- `/api/report?format=csv` would still have carried invented
+        rows.
+
+    WHY AN EMPTY LIST CANNOT BE MISREAD AS "CLEAN"
+        A real analysis never returns one. Every registered check
+        contributes a found, none or error finding, and
+        `_every_check_failed()` emits one per check even when Batfish is
+        unreachable. So `[]` means "nothing has been uploaded" and nothing
+        else. That invariant is pinned by
+        `tests/test_first_load_claims_nothing.py` rather than assumed, and
+        the frontend renders an explicit "nothing uploaded yet" panel
+        instead of three zeroed tiles -- "0 problems, 0 could not check" is
+        the same claim in different numbers.
 
     Note snapshot_dir(), not CONFIG_ROOT: analyse() wants the snapshot root, the
     folder that CONTAINS `configs/`. See the layout diagram at the top.
@@ -1113,12 +1154,6 @@ def get_findings(http_response: Response = None) -> List[Dict[str, Any]]:
         The dashboard reads them on every fetch, including a reload followed
         by Scan Now -- the exact case Shubham's review named as the one the
         original, upload-time-only disclosure never covered.
-
-    Mock findings are NOT explained. #31's acceptance criterion is about a
-    real finding from a real uploaded config; explaining fabricated demo
-    data risks a viewer mistaking a rephrased invention for a rephrased
-    fact, which is exactly the distinction this whole project exists to
-    keep clear.
     """
     skips = _staged_pfsense_skips()
     if http_response is not None:
@@ -1130,7 +1165,7 @@ def get_findings(http_response: Response = None) -> List[Dict[str, Any]]:
         )
 
     if not _is_uploaded():
-        return mock_findings.get_mock_findings()
+        return []
 
     # #92b: re-analysing an unchanged snapshot costs ~3.6s of real Batfish
     # work on every page load. The key is the staged config's CONTENT, so a

@@ -3,7 +3,7 @@ Netwise -- propose a config change from plain English, and simulate its
 effect before showing it (US-13, US-14).
 
 WHAT THIS DOES
-    propose_change(request: str, before_dir, host="localhost") -> dict
+    propose_change(request: str, before_dir, host=None) -> dict
     Takes ONE plain-English request ("block 10.10.10.5 to 10.20.0.5 on
     tcp/443") and returns:
 
@@ -256,7 +256,7 @@ def _refuse(reason: str) -> Dict[str, Any]:
 
 
 def propose_change(
-    request: str, before_dir: "str | Path", host: str = "localhost"
+    request: str, before_dir: "str | Path", host: "str | None" = None
 ) -> Dict[str, Any]:
     """Propose ONE config change from plain English, and simulate it against
     a scratch copy of `before_dir` -- see the module docstring for the shape,

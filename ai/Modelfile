@@ -18,13 +18,59 @@
 #     ollama create netwise-warden -f ai/Modelfile
 #
 # WHY llama3.2:3b AND NOT SOMETHING BIGGER
-#     This machine has 16 GB RAM and no dedicated GPU (integrated Intel Iris
-#     Xe only), so inference runs on CPU. 3B is small enough to respond in a
-#     few seconds on this hardware and is more than capable for this task --
-#     REPHRASING one already-verified finding into plain English is a
-#     translation job, not an open-ended reasoning task. If explanation
-#     quality turns out to need more model, the fix is changing this one FROM
-#     line and rebuilding; nothing else in the project depends on the size.
+#     The reason stands on its own regardless of hardware: REPHRASING one
+#     already-verified finding into plain English is a translation job, not
+#     an open-ended reasoning task, and 3B is more than capable of that. If
+#     explanation quality turns out to need more model, the fix is changing
+#     this one FROM line and rebuilding; nothing else in the project depends
+#     on the size.
+#
+#     A PRIOR VERSION OF THIS COMMENT justified 3B with "16 GB RAM and no
+#     dedicated GPU (integrated Intel Iris Xe only), so inference runs on
+#     CPU" -- not true of the machine that actually ran the client demo build
+#     (#258). Measured on it directly:
+#
+#         RAM   15.6 GB
+#         CPU   13th Gen Intel(R) Core(TM) i7-13650HX
+#         GPU   Intel(R) UHD Graphics                  (2,048 MB)
+#         GPU   NVIDIA GeForce RTX 4050 Laptop GPU     (4,095 MB)  <- dedicated
+#
+#     4 GB of dedicated VRAM, not "no dedicated GPU" -- and llama3.2:3b fits
+#     inside it, so inference is running on GPU, not CPU as the old comment
+#     claimed. This matters because the comment above is load-bearing for a
+#     future decision: it says the fix for needing more model is one FROM
+#     line. Someone reading "no dedicated GPU, CPU inference" would
+#     reasonably conclude a bigger model is off the table on this hardware.
+#     It is not -- there is real VRAM headroom the old comment hid.
+#
+#     ATTRIBUTED TO THE MACHINE THEY WERE MEASURED ON, NOT STATED AS THE
+#     PROJECT'S CONDITION -- the first draft of this fix did not do this,
+#     and @SamikaPerera's review on #303 measured a second machine (an AMD
+#     Ryzen 7 5700U, no dedicated GPU at all) where the old comment's "no
+#     GPU, CPU inference" is TRUE and this file's own numbers below are 10x
+#     too fast. Four of us have four machines; stating one laptop's numbers
+#     as this file's condition is the same shape of mistake this section
+#     exists to fix, just with different numbers. So: both, each labelled.
+#
+#     On the demo-build machine above (RTX 4050, 4 GB VRAM, GPU inference):
+#
+#         per-finding inference, warm            ~1.0 s
+#         first inference after a model build     7.4 s
+#         first scan of an uploaded config       9-12 s
+#         re-scan without re-upload                0.0 s  (analysis cache)
+#
+#     On a machine with no dedicated GPU (measured on #303's review, CPU
+#     inference, same model, same call):
+#
+#         per-finding inference, warm             9.98 s
+#         first inference after a model build    99.67 s
+#
+#     Roughly 10x slower warm and 13x slower cold -- exactly what the
+#     GPU/CPU difference above predicts, not a discrepancy to chase. The
+#     number that matters for budgeting a demo (first scan of an uploaded
+#     config) is 9-12 s ONLY on GPU-equipped hardware; expect it roughly an
+#     order of magnitude slower on a machine without one. Check which kind
+#     of machine is running the demo before quoting either number.
 #
 # THE ONE RULE EVERYTHING BELOW SERVES
 #     CLAUDE.md constraint 2: the AI must never invent or guess network
