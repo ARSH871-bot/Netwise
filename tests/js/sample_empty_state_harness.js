@@ -128,20 +128,41 @@ const SAMPLE_RESPONSE = {
 };
 
 let lastFetch = null;
+const requests = [];
+let sampleStaged = false;
 
-// Routed by URL rather than a single canned reply: this harness has to drive
-// BOTH the empty first load (/api/findings returning []) and the sample
-// click (/api/sample), and a one-size answer would make the first of those
-// untestable.
+// Routed by URL **and METHOD**, because /api/sample is now two endpoints.
+//
+//     POST /api/sample   stage the sample
+//     GET  /api/sample   is the staged config the sample? (asked at boot)
+//
+// The first version of this harness routed on URL alone and answered both
+// with the POST's body -- so the boot GET appeared to report a sample
+// session in a harness that had never staged one, and
+// test_the_banner_is_hidden_until_the_sample_is_loaded failed. The harness
+// was wrong, not the code, but it is the right failure to have had: a stub
+// that ignores the method cannot test a path that depends on it.
+//
+// `sampleStaged` tracks the real server's actual behaviour -- the GET
+// answers for what is STAGED, so it must not report true before the POST.
 const sandbox = {
   document,
   console,
   fetch: (url, options) => {
     lastFetch = { url, options };
-    if (url === "/api/sample") {
+    const method = (options && options.method) || "GET";
+    requests.push(`${method} ${url}`);
+    if (url === "/api/sample" && method === "POST") {
+      sampleStaged = true;
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve(SAMPLE_RESPONSE),
+      });
+    }
+    if (url === "/api/sample" && method === "GET") {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ is_sample: sampleStaged }),
       });
     }
     if (url === "/api/findings") {
@@ -226,6 +247,9 @@ sandbox
   })
   .then(() => {
     result.fetched = lastFetch;
+    // Did app.js ask the server at boot, rather than only on a click?
+    result.bootAskedSampleStatus = requests.includes("GET /api/sample");
+    result.requests = requests;
     result.bannerAfter = describe(document.getElementById("sample-banner"));
     result.uploadMessage = describe(document.getElementById("upload-message"));
     result.scanDisabled = document.getElementById("scan-now").disabled;

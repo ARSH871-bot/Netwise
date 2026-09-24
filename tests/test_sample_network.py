@@ -67,8 +67,23 @@ def test_it_keeps_the_hostname_the_built_in_policy_asserts_about():
     built-in example policy (#87). A reviewer changing this for readability
     would be making the sample useless without any error to tell them.
 
-    When #353 and #355 land and every check reads a supplied policy, this
-    constraint goes away and the sample can be renamed. Not before.
+    THE RELEASE CONDITION THIS DOCSTRING USED TO GIVE WAS WRONG.
+    It said the constraint lifts "when #353 and #355 land and every check
+    reads a supplied policy". Both landed, #87 closed COMPLETED on 22
+    September, and re-measuring on the merged branch changed nothing:
+
+        hostname rtr-us5           found=5  none=0  error=1
+        hostname sample-edge-rtr   found=0  none=0  error=3
+
+    Those PRs made the checks read a SUPPLIED policy. The sample supplies
+    none -- a first-time visitor has none -- so the built-in example still
+    decides, and it still names rtr-us5. The stated condition came true and
+    was not the operative one.
+
+    The real condition: this file can be renamed when the checks stop
+    falling back to a device-specific built-in, or when the sample ships a
+    policy of its own. Re-measure before renaming rather than trusting this
+    paragraph, which is what the last version of it earned.
     """
     lines = SAMPLE.read_text(encoding="utf-8").splitlines()
     hostnames = [ln.split()[1] for ln in lines

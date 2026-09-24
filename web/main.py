@@ -1085,15 +1085,24 @@ def download_report(format: str = "html") -> Response:
     #     with the file: the findings are trustworthy, the network is not a
     #     network.
     #
-    #     Put in `source`, which render_html() prints under the title and
-    #     render_csv() does not carry at all -- so the CSV case is a known
-    #     gap, noted on the pull request rather than left to be discovered.
+    #     Put in `source`, which BOTH renderers now carry: render_html()
+    #     prints it under the title, render_csv() writes it as a column on
+    #     every row. It reached only the HTML until @ARSH871-bot measured
+    #     the other one in review --
+    #
+    #         report?format=html   'SAMPLE NETWORK' = 2
+    #         report?format=csv    'SAMPLE NETWORK' = 0
+    #
+    #     -- which is #308's rule broken in the most ordinary way: not a
+    #     wrong claim, a claim that reached two surfaces out of three. The
+    #     CSV is the one most likely to outlive the label, because it gets
+    #     pasted into a spreadsheet and forwarded.
     if _is_sample_session():
         subject = f"SAMPLE NETWORK (invented demonstration data) -- {subject}"
 
     media_type, extension = REPORT_FORMATS[format]
     body = (report.render_html(results, source=subject) if format == "html"
-            else report.render_csv(results))
+            else report.render_csv(results, source=subject))
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
     return Response(
         content=body,
@@ -1494,6 +1503,43 @@ def _discard_staged_policy() -> None:
     #181/#182 settle how a policy reaches a check.
     """
     policy_path().unlink(missing_ok=True)
+
+
+@app.get("/api/sample")
+def sample_status() -> Dict[str, Any]:
+    """Is the config currently staged in this session the bundled sample?
+
+    THE BANNER HAS TO SURVIVE A RELOAD, AND WITHOUT THIS IT DID NOT (#347).
+        The first version of this feature set the banner in exactly one
+        place: the click handler for "try the sample network". Reload the
+        page and the banner was gone -- while the FINDINGS stayed, because
+        they are served from the staged snapshot and do not care that the
+        tab was closed.
+
+        So a reloaded dashboard showed six real findings about an invented
+        network with nothing on screen saying so, and the frontend could not
+        have known: no GET told it. Caught by @ARSH871-bot in review, who
+        measured it rather than read it.
+
+        That is the worst shape this feature can fail in, and this PR's own
+        description says why: "an unlabelled sample report is dangerous
+        because every finding in it is genuine -- there is nothing in the
+        results themselves to raise a doubt."
+
+    A SEPARATE GET RATHER THAN A FIELD ON /api/findings.
+        The findings response is a list of F-1 findings and nothing else.
+        Adding a wrapper object, or a key beside the list, changes a shape
+        three test modules and the whole frontend already depend on -- for a
+        fact that is not about any finding. A response header was the other
+        suggestion and would also work; this is easier to read from a test
+        and from a browser's address bar, which matters for a claim whose
+        whole job is to be checkable.
+
+    Keyed on the marker, so it answers for what is STAGED rather than for
+    what was last clicked -- which is the same thing after a reload, and is
+    the question the banner is really asking.
+    """
+    return {"is_sample": _is_sample_session()}
 
 
 @app.post("/api/sample")

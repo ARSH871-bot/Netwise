@@ -1780,6 +1780,9 @@ function setUpDeviceFilter() {
 }
 
 /* ------------------------------------------------------------------------ */
+// Ask what is staged BEFORE rendering anything, so a reloaded sample session
+// is labelled from the first paint rather than after a round trip.
+refreshSampleBanner();
 loadFindings();
 setUpUpload();
 setUpPolicyUpload();
@@ -1801,6 +1804,39 @@ setUpDeviceFilter();
  * give no clue either way -- see the same argument in web/main.py where the
  * label is threaded into the downloaded report.
  * ------------------------------------------------------------------------ */
+
+/**
+ * Ask the server whether what is staged right now is the sample, and label
+ * the screen accordingly.
+ *
+ * WHY THIS EXISTS -- THE CLICK HANDLER WAS NOT ENOUGH (#347 review).
+ *     setSampleBanner() used to be called from exactly one place: the
+ *     handler for "try the sample network". A reload lost the banner and
+ *     KEPT the findings, because those come from the staged snapshot and do
+ *     not care that the tab was closed. The result was six real findings
+ *     about an invented network with nothing on screen saying so.
+ *
+ *     A click is an event. What is staged is state. Reading the state at
+ *     boot is the only version of this that survives a reload, a restored
+ *     tab, or a second window opened on the same session.
+ *
+ * Failure is not silent, and it does not guess. If the request fails we
+ * cannot know whether this is the sample, so the banner is left exactly as
+ * the markup ships it -- hidden -- and nothing pretends otherwise. That is
+ * the wrong way round to be wrong, so it is worth saying plainly: an
+ * unreachable server here means a missing label rather than a false one,
+ * and a false label is the failure that would matter more.
+ */
+async function refreshSampleBanner() {
+  try {
+    const response = await fetch("/api/sample");
+    if (!response.ok) return;
+    const status = await response.json();
+    setSampleBanner(status.is_sample === true);
+  } catch (error) {
+    // Left as-is deliberately -- see the note above.
+  }
+}
 
 /** Show or hide the "this is the sample" banner. */
 function setSampleBanner(isSample) {

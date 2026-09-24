@@ -143,6 +143,25 @@ def test_the_banner_is_hidden_until_the_sample_is_loaded(rendered):
     assert rendered["bannerBefore"]["hidden"] is True
 
 
+def test_the_page_ASKS_at_boot_rather_than_waiting_for_a_click(rendered):
+    """THE RELOAD FIX, ASSERTED AT THE FRONTEND END.
+
+    tests/test_sample_label_every_surface.py proves the server can answer
+    the question. This proves the page actually asks it -- which is the
+    half that was missing: `setSampleBanner(true)` was called from the
+    click handler and nowhere else, so a reload dropped the banner and kept
+    the findings.
+
+    A click is an event; what is staged is state. Nothing that only runs on
+    a click can survive the tab being reloaded.
+    """
+    assert rendered["bootAskedSampleStatus"] is True, (
+        f"app.js never issued GET /api/sample at boot, so a reloaded sample "
+        f"session cannot know it is one. Requests seen: "
+        f"{rendered['requests']}"
+    )
+
+
 def test_loading_the_sample_reveals_the_banner(rendered):
     assert rendered["bannerAfter"]["hidden"] is False
 
