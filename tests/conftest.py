@@ -32,7 +32,57 @@ WHY THIS FILE EXISTS
     ordering cannot matter.
 """
 
+import socket
+
 import pytest
+
+
+# ---------------------------------------------------------------------------
+# Is Batfish running? (moved here from test_vendor_fixtures.py)
+#
+# WHY IT LIVES IN conftest RATHER THAN BEING COPIED
+#     test_vendor_fixtures.py had the only copy. tests/test_sample_network.py
+#     needed the same gate and I wrote my own instead -- a `try/except` around
+#     pipeline.analyse(), which NEVER FIRES, because analyse() does not raise
+#     when Batfish is down. It returns `status="error"` findings, by design,
+#     since "we could not check" is a result rather than a crash (F-4).
+#
+#     So the test did not skip on a machine without Batfish. It failed, in CI,
+#     saying the sample network had stopped producing findings -- a message
+#     that points at the sample and not at the absent engine. Requirement N-6
+#     says this suite runs without Batfish or Ollama, and mine did not.
+#
+#     Copying the working probe would have left two of them free to drift,
+#     which is the fault this project keeps recording against itself. One
+#     copy, here, used by both.
+# ---------------------------------------------------------------------------
+
+
+def batfish_is_up(host="localhost", port=9996, timeout=1.5) -> bool:
+    """Can we open the port pybatfish talks to?
+
+    A connection test rather than a Session(), because constructing a session
+    against a dead host is slow and noisy, and the answer is the same.
+
+    NOT a health check. An open port is not a working service -- see
+    test_batfish_unreachable.py, which makes the same distinction. This only
+    ever gates the "cannot possibly work" case.
+    """
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+needs_batfish = pytest.mark.skipif(
+    not batfish_is_up(),
+    reason=(
+        "Batfish is not reachable on localhost:9996. This is an INTEGRATION "
+        "test: the claim it checks cannot be verified without Batfish, and "
+        "requirement N-6 says the rest of the suite must still run."
+    ),
+)
 
 
 @pytest.fixture(autouse=True)

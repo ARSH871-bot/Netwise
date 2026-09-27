@@ -78,6 +78,31 @@
             <span>Choose a config file</span>
           </label>
 
+          <!-- ---- Nothing of your own? (US-56, #347) ----
+               #352 removed six fabricated findings that used to greet a
+               visitor before they had uploaded anything. That was right --
+               they were a green tick nobody had measured -- and it left the
+               first screen empty.
+
+               This is the honest replacement. The network is invented; the
+               scan of it is real, because the file is staged and analysed
+               exactly like an upload. Invented data is fine when somebody
+               CHOSE to see it and the analysis is genuine, which is the
+               whole distinction #352 turned on.
+
+               A button, not an auto-load: the first screen must not fill
+               itself with data the visitor did not ask for, which is the
+               habit being corrected. -->
+          <p class="sample-offer">
+            Nothing to hand?
+            <button type="button" id="load-sample" class="link-button">
+              Try the sample network
+            </button>
+            <span class="sample-offer-note"
+              >Invented data, real analysis — it is labelled throughout.</span
+            >
+          </p>
+
           <!-- Validation result: accepted or rejected, with the reason. -->
           <p id="upload-message" class="upload-message" role="status"></p>
 
@@ -211,7 +236,24 @@
              problems and no clean results is the expected shape, not a
              failure of the scan -- and every fixture in this project is
              built that way. -->
-        <p class="hint" id="results-explainer">
+        <!-- ---- You are looking at the sample (US-56, #347) ----
+             Hidden until /api/sample has been loaded, and cleared by any
+             real upload. It sits ABOVE the tiles rather than below them
+             because the question it answers -- "whose network is this?" --
+             has to be settled before the numbers are read, not after.
+
+             ABOVE THE F-4 EXPLAINER, NOT BETWEEN IT AND THE TILES.
+             The first draft put it directly above #summary, and
+             test_the_f4_explainer_is_the_immediately_preceding_sibling_of_
+             the_tiles failed -- which is #219's displacement arriving again
+             from a different PR, and the guard #288 asked for doing exactly
+             its job on the first change made after it was written. -->
+        <p id="sample-banner" class="sample-banner" role="status" hidden>
+          <strong>This is the sample network, not your data.</strong>
+          It is invented. The findings below are real analysis of it.
+        </p>
+
+                <p class="hint" id="results-explainer">
           <strong>Three independent counts.</strong> They are not shares of one
           total and do not need to add up.
           <strong>Problems found</strong> and <strong>checked, nothing
@@ -222,7 +264,7 @@
           clean — that is the expected shape, not a fault in the scan.
         </p>
 
-        <div id="summary" class="summary" aria-live="polite"></div>
+<div id="summary" class="summary" aria-live="polite"></div>
 
         <!-- ---- Download the report (#222, backend from #233) ----
              TWO LINKS, NOT A BUTTON AND A FORMAT DROPDOWN.
