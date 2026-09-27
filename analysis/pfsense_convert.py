@@ -763,23 +763,50 @@ def _rule_to_acl_line(rule_el: ET.Element, interfaces: Dict[str, Dict[str, str]]
     src = _resolve_endpoint(source_el, interfaces)
     dst = _resolve_endpoint(destination_el, interfaces)
 
+    # WHAT AN ABSENT <protocol> MEANS -- read from pfSense's source, not
+    # assumed (#80; github.com/pfsense/pfsense at 480a1c0626):
+    #   firewall_rules_edit.php:1195  "any" is saved by UNSETTING <protocol>
+    #   filter.inc:4497               no <protocol> but a port -> "proto tcp"
+    #   filter.inc:3930               a port is emitted only for tcp/udp, and
+    #                                 the protocol it checks is still empty
+    # So absent means "any" and `ip` is right -- unless a port is set, which
+    # only hand-edited XML produces. Then pfSense enforces TCP to ANY port,
+    # and so does this. Emitting `ip` there widened a pass rule; skipping it
+    # instead would have narrowed it, which is the direction that turns a
+    # real policy violation into a clean result (#302, Samika's review). The
+    # exact translation is the only choice that is wrong in neither direction.
+    source_port = _text(source_el, "port")
+    destination_port = _text(destination_el, "port")
+    if not _text(rule_el, "protocol") and (source_port or destination_port):
+        return f"{action} tcp {src} {dst}"
+
+    # A tcp/udp rule's SOURCE port is enforced by pfSense (filter.inc:3930)
+    # and used to be dropped here, silently widening the rule to every
+    # source port. Now written as Cisco's `eq` after the source address.
+    source_clause = ""
     port_clause = ""
     if cisco_protocol in ("tcp", "udp"):
-        port = _text(destination_el, "port")
-        if port is not None:
-            # Same class of gap the review found in <address>: PF Sense's
-            # <port> can hold a named alias (e.g. "HTTPS_ALT") instead of a
-            # number. Checked for the identical reason, not just because the
-            # other one was found -- an unvalidated port would produce
-            # "eq HTTPS_ALT", equally invalid Cisco syntax, equally liable to
-            # be silently dropped by Batfish's partial-recognition parsing.
-            if not port.isdigit() or not (0 < int(port) <= 65535):
-                raise PfSenseConversionError(
-                    f"{REFUSALS['invalid_port']}: <port> is {port!r}"
-                )
-            port_clause = f" eq {port}"
+        if source_port:
+            source_clause = f" eq {_valid_port(source_port, '<source> <port>')}"
+        if destination_port is not None:
+            port_clause = f" eq {_valid_port(destination_port, '<port>')}"
 
-    return f"{action} {cisco_protocol} {src} {dst}{port_clause}"
+    return f"{action} {cisco_protocol} {src}{source_clause} {dst}{port_clause}"
+
+
+def _valid_port(port: str, where: str) -> str:
+    """`port` if it is a single number from 1 to 65535, else refuse.
+
+    Same class of gap the review found in <address>: PF Sense's <port> can
+    hold a named alias (e.g. "HTTPS_ALT") or a range instead of a number.
+    An unvalidated port would produce "eq HTTPS_ALT" -- invalid Cisco syntax,
+    liable to be silently dropped by Batfish's partial-recognition parsing.
+    """
+    if not port.isdigit() or not (0 < int(port) <= 65535):
+        raise PfSenseConversionError(
+            f"{REFUSALS['invalid_port']}: {where} is {port!r}"
+        )
+    return port
 
 
 class ConversionResult(NamedTuple):
@@ -1001,9 +1028,9 @@ def convert(xml_path: Union[str, Path]) -> ConversionResult:
     # This changes NOTHING about what any field is interpreted to mean --
     # every REFUSALS message below still names the same cause it always did.
     # It only shrinks the blast radius of that cause from "the whole file"
-    # to "this one rule". In particular this does NOT touch <protocol>'s
-    # existing default-to-"any" behaviour, which is issue #80's own open
-    # question (blocked on the client) and is not this change's to answer.
+    # to "this one rule". In particular it does not change what an absent
+    # <protocol> means. That was #80's question, since answered from
+    # pfSense's own source rather than the client -- see _rule_to_acl_line().
     acl_lines_by_role: Dict[str, List[str]] = {}
     for role, rules in rules_by_role.items():
         no_quick_rules_at_all = not any(_is_quick(r) for r in rules)
