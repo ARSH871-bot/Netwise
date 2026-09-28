@@ -870,3 +870,69 @@ def test_evidence_never_leaves_the_required_action_as_a_pronoun():
         assert "requires it to be" in detail, f"{kind}: names the required action"
         assert "forbids it." not in detail, f"{kind}: no bare pronoun ending"
         assert "requires it." not in detail, f"{kind}: no bare pronoun ending"
+
+
+# --- 3. INVENTED FACTS: every address, port and device must be in the finding ----
+#
+# The wording checks above only catch hedges and result claims. Measured in
+# the 28 September audit: _is_unacceptable() accepted a confident sentence
+# naming an address, port and system the finding never mentioned. This is the
+# check that makes "the model only rephrases" true of what it WRITES, not only
+# of what it is shown.
+
+_POLICY_FINDING = {
+    "id": "PC-001", "check": "policy_compliance", "severity": "high",
+    "device": "rtr-us5", "status": "found",
+    "summary": "The LAN can reach the internal server",
+    "evidence": {
+        "detail": ("Flow start=rtr-us5 [10.10.10.0:49152->10.20.0.5:443 TCP (SYN)] "
+                   "is permitted but policy requires it to be DENIED. Decided by: "
+                   "permit tcp 10.10.10.0 0.0.0.255 host 10.20.0.5 eq 443"),
+        "source": "rtr-us5:acl_in",
+    },
+}
+
+
+def test_the_audits_invented_sentence_is_now_rejected():
+    invented = ("Attackers on the guest Wi-Fi now reach the payroll server at "
+                "10.99.1.1 on port 3389.")
+    assert explain_module._is_unacceptable(invented, is_error=False, finding=_POLICY_FINDING)
+
+
+@pytest.mark.parametrize("text", [
+    "The LAN (10.10.10.0/24) can open HTTPS connections to 10.20.0.5 on port 443.",
+    "rtr-us5 lets the 10.10.10.0 network reach host 10.20.0.5 over TCP port 443.",
+    "Traffic from the LAN reaches the internal server, which the policy forbids.",
+    # Hyphenated ordinary words are not device names; only a name WITH a digit is.
+    "A first-match rule lets the LAN reach a well-known internal server.",
+])
+def test_a_sentence_that_only_repeats_the_finding_is_accepted(text):
+    """Including a Cisco wildcard restated as a prefix: the ADDRESS is what
+    must be in the evidence, not the notation."""
+    assert not explain_module._is_unacceptable(text, is_error=False, finding=_POLICY_FINDING)
+
+
+@pytest.mark.parametrize("text", [
+    "The LAN can reach 10.20.0.9 on port 443.",           # an address it never named
+    "The LAN can reach 10.20.0.5 on port 8443.",          # a port it never named
+    "The LAN can reach 10.20.0.5 through rtr-core2.",     # a device it never named
+])
+def test_one_invented_fact_is_enough_to_reject(text):
+    assert explain_module._is_unacceptable(text, is_error=False, finding=_POLICY_FINDING)
+
+
+def test_an_invented_fact_falls_back_to_the_plain_restatement(monkeypatch):
+    """End to end: both attempts invent something, so the user gets the
+    deterministic text, labelled as such -- never the invention."""
+    monkeypatch.setattr(explain_module, "_generate",
+                        lambda finding: "Hosts in 10.99.1.0/24 can now reach the server.")
+    text, source = explain_with_source(_POLICY_FINDING)
+    assert source == "fallback"
+    assert "10.99.1.0" not in text
+
+
+def test_a_grounded_generation_still_comes_from_the_model(monkeypatch):
+    """The control: the check must not turn every explanation into fallback."""
+    monkeypatch.setattr(explain_module, "_generate",
+                        lambda finding: "Devices on 10.10.10.0/24 can reach 10.20.0.5 on port 443.")
+    assert explain_with_source(_POLICY_FINDING)[1] == "model"
