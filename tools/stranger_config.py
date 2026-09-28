@@ -128,7 +128,7 @@ def _stranger_policy(destination: Path):
     It goes through `load_policy()`, not straight into the check, so this
     exercises the real validation path a user's file would take.
     """
-    from analysis.checks import policy_compliance
+    from analysis.checks import access_control, policy_compliance, routing
     from analysis.policy import load_policy
 
     names = set()
@@ -142,8 +142,32 @@ def _stranger_policy(destination: Path):
     # One device per fixture in practice; if a fixture ever has more, bind
     # every rule to the first by sorted name so the result is deterministic.
     node = sorted(names)[0]
-    rules = [dict(rule, node=node) for rule in policy_compliance.POLICY_RULES]
-    return load_policy({"policy_compliance": rules})
+
+    # BOTH WIRED CHECKS, NOT JUST ONE (#316).
+    #     This used to build a policy_compliance section and nothing else,
+    #     because policy_compliance was the only check that read a user
+    #     policy. `access_control` now does too, and a tool that supplies no
+    #     access_control entries reports the same FOUND column whether that
+    #     wiring works or not -- a blind spot, not a measurement.
+    #
+    #     The rule in this function's docstring is unchanged and is what
+    #     keeps this honest: the policy is OURS with only the device name
+    #     rebound. Both sections get the same transformation.
+    #
+    #     `routing` joined on #319, when its check started reading one. All
+    #     three sections are now represented, which is what makes the third
+    #     column a fair measurement of #87 rather than of two thirds of it.
+    return load_policy({
+        "policy_compliance": [
+            dict(rule, node=node) for rule in policy_compliance.POLICY_RULES
+        ],
+        "access_control": [
+            dict(statement, node=node) for statement in access_control.POLICY
+        ],
+        "routing": [
+            dict(route, node=node) for route in routing.ROUTES
+        ],
+    })
 
 
 def _counts(findings: List[Dict]) -> Counter:
@@ -229,7 +253,19 @@ def run() -> int:
         "  correctly reports 'could not check' instead of being skipped as\n"
         "  belonging to another device. A real stranger would not write\n"
         "  rules about a filter their config does not have.\n"
-        "  The number that answers #87 is the FOUND column."
+        "  The number that answers #87 is the FOUND column.\n"
+        "\n  AND READ THE FOUND COLUMN THE SAME WAY (#319). Our two routing\n"
+        "  assertions are about reachability between rtr-hq and rtr-branch.\n"
+        "  Rebinding them onto a stranger's SINGLE router asks whether one\n"
+        "  subnet reaches another across a device that spans neither, and\n"
+        "  the answer is correctly no -- so RT-001 fires on every\n"
+        "  single-router fixture, including the SECURE one. The check is\n"
+        "  right; the assertion is one no real user would write about that\n"
+        "  config.\n"
+        "\n  Measured: 3 of the 13 found in column three are that rebinding.\n"
+        "  Quote the smaller number. This tool exists to stop us overstating\n"
+        "  what works on somebody else's network, and it would be a poor\n"
+        "  joke for it to overstate the fix."
     )
 
     print("\nWhat still gets detected on a stranger's config:")

@@ -57,8 +57,12 @@ SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 #: The F-1 fields, in the order a CSV reader expects to meet them, plus one
 #: derived column -- see `is_nothing_to_check()` for why it exists and why it
 #: is not part of F-1.
+# `report_subject` is LAST, and is not called `source`, because `source`
+# is already taken by the evidence field -- two different meanings of the
+# word one column apart would be a trap rather than a label.
 CSV_COLUMNS = ("id", "check", "status", "severity", "device",
-               "summary", "detail", "source", "nothing_to_check")
+               "summary", "detail", "source", "nothing_to_check",
+               "report_subject")
 
 #: The `device` value a check uses when a finding is ABOUT THE CHECK rather
 #: than about any device. Today exactly one producer emits it --
@@ -137,12 +141,37 @@ def _now() -> str:
 # ---------------------------------------------------------------------------
 
 
-def render_csv(findings: Sequence[Dict[str, Any]]) -> str:
+def render_csv(findings: Sequence[Dict[str, Any]],
+               source: Optional[str] = None) -> str:
     """Every finding, one row each, including the ones that could not run.
 
     A `status` COLUMN rather than only the rows that found something -- an
     export that silently dropped the error rows would let a spreadsheet
     reader count problems and conclude the rest was clean.
+
+    WHAT `source` IS FOR, AND WHY IT IS A COLUMN ON EVERY ROW (#347, #308)
+        The same string `render_html()` prints under the title: what this
+        report describes. It exists here because it did not, and that was a
+        real hole -- the HTML export carried "SAMPLE NETWORK (invented
+        demonstration data)" and the CSV of the same findings carried
+        nothing at all, so the two formats made different claims about the
+        same data.
+
+        #308's rule is that a statement about what the data is must appear
+        on every surface that shows the data, or on none. A CSV is the
+        surface most likely to outlive the label: it gets pasted into a
+        spreadsheet and forwarded, and by then there is no title, no banner
+        and no filename.
+
+        REPEATED ON EVERY ROW RATHER THAN WRITTEN ONCE ABOVE THE HEADER.
+        A comment line before the header breaks most CSV readers, and a
+        single labelled row does not survive what people actually do to a
+        spreadsheet -- sorting it, filtering it, or pasting a few rows into
+        an email. Per row is redundant and survives all three.
+
+        Optional, defaulting to None, so every existing caller keeps
+        working; when it is absent the column is present and empty, which
+        is the honest rendering of "this report does not say".
     """
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
@@ -169,6 +198,7 @@ def render_csv(findings: Sequence[Dict[str, Any]]) -> str:
             # column as a second status. Filterable either way in a
             # spreadsheet, which is the point of having it at all.
             "yes" if is_nothing_to_check(finding) else "",
+            source or "",
         ])
     return buffer.getvalue()
 
@@ -291,15 +321,26 @@ def _section_html(title: str, lede: str, items: List[Dict], css_class: str,
     return f'{head}<p class="lede">{html.escape(lede)}</p>{body}'
 
 
-def _coverage_html(findings: Sequence[Dict[str, Any]]) -> str:
+def _coverage_html(
+    findings: Sequence[Dict[str, Any]],
+    conversion_gaps: Optional[Sequence[str]] = (),
+) -> str:
     """The first-class coverage statement (#235), derived from status values.
 
     It is not a fourth finding section. It is the reading aid that says whether
     the finding sections are complete, and if not, exactly which blind spots
     remain. Removing the gap list is the mutation #235 names: the report would
     still have findings, but no longer name what was not checked.
+
+    `conversion_gaps` (#302 review) is rendered as its OWN list, never merged
+    into `gaps` -- a check that could not run and a rule a converter excluded
+    before any check ran are different claims, and merging them would lose
+    which one happened. Passing `None` (#302 review, round two) is a THIRD
+    claim again, distinct from an empty list -- see `coverage.summarise()`'s
+    own docstring -- and is rendered as its own warning line, not silently
+    folded into "nothing was skipped".
     """
-    summary = coverage.summarise(findings)
+    summary = coverage.summarise(findings, conversion_gaps)
     css = "complete" if summary["complete"] else "incomplete"
     esc = html.escape
 
@@ -342,14 +383,38 @@ def _coverage_html(findings: Sequence[Dict[str, Any]]) -> str:
             f'<p class="meta-line">Checked: {esc(names)}.</p>'
         )
 
+    if summary["conversion_gaps_unreadable"]:
+        parts.append(
+            '<p class="meta-line"><strong>The record of what a converter '
+            "excluded before analysis could not be read.</strong> Whether "
+            "anything was excluded is unknown.</p>"
+        )
+    elif summary["conversion_gaps"]:
+        parts.append(
+            '<p class="meta-line"><strong>Excluded during conversion, '
+            "before any check ran:</strong></p>"
+        )
+        parts.append("<ul>")
+        for note in summary["conversion_gaps"]:
+            parts.append(f"<li>{esc(note)}</li>")
+        parts.append("</ul>")
+
     parts.append("</div>")
     return "".join(parts)
 
 
 def render_html(findings: Sequence[Dict[str, Any]],
                 source: Optional[str] = None,
-                generated_at: Optional[str] = None) -> str:
-    """A complete, self-contained HTML report. No external files, no scripts."""
+                generated_at: Optional[str] = None,
+                conversion_gaps: Optional[Sequence[str]] = ()) -> str:
+    """A complete, self-contained HTML report. No external files, no scripts.
+
+    `conversion_gaps` (#302 review) names anything a converter (pfSense's,
+    today) excluded before this findings list ever existed -- optional, and
+    omitting it reproduces this function's exact prior output. `None` (#302
+    review, round two) is a third, distinct state -- "we do not know whether
+    anything was excluded" -- see `coverage.summarise()`'s own docstring.
+    """
     s = _sections(findings)
     when = generated_at or _now()
     subject = source or "an uploaded configuration"
@@ -366,17 +431,44 @@ def render_html(findings: Sequence[Dict[str, Any]],
     )
 
     # "Nothing was skipped" is a COVERAGE claim, and it is only true when
-    # something was actually reported. With an empty findings list it says
-    # nobody-looked in the words of everything-ran -- the same F-4 confusion
-    # the coverage box above was fixed for, in a sentence that predates it.
-    # One claim, two places; both now read from the same condition.
+    # something was actually reported AND nothing was excluded before any
+    # check ran (#302 review -- conversion_gaps is exactly that second
+    # condition, which this sentence did not know about before). With an
+    # empty findings list it says nobody-looked in the words of
+    # everything-ran -- the same F-4 confusion the coverage box above was
+    # fixed for, in a sentence that predates it. One claim, two places; both
+    # now read from the same conditions.
+    #
+    # `conversion_gaps is None` MUST BE CHECKED BEFORE THE PLAIN TRUTHINESS
+    # TEST BELOW (#302 review, round two, @ARSH871-bot). `None` and `()` are
+    # both falsy, so `if conversion_gaps:` alone cannot tell "we verified
+    # nothing was excluded" from "we do not know" -- and folding the second
+    # into the `elif findings:` branch below would print "Every check ran.
+    # Nothing was skipped." while the actual answer is unknown, the exact
+    # false-completeness claim this round of review exists to remove.
+    if conversion_gaps is None:
+        blind_empty_text = (
+            "Every check that ran found nothing, but the record of what a "
+            "converter may have excluded before any check ran could not be "
+            "read -- see Coverage and certainty above."
+        )
+    elif conversion_gaps:
+        blind_empty_text = (
+            "Every check that ran found nothing, but part of the uploaded "
+            "configuration was excluded before any check saw it -- see "
+            "Coverage and certainty above."
+        )
+    elif findings:
+        blind_empty_text = "Every check ran. Nothing was skipped."
+    else:
+        blind_empty_text = "No check reported a result, so nothing is known either way."
+
     blind = _section_html(
         "Could not check",
         "These checks did not run. Nothing is known about what they cover. "
         "This is not a pass.",
         s["blind"], "blind",
-        ("Every check ran. Nothing was skipped." if findings
-         else "No check reported a result, so nothing is known either way."),
+        blind_empty_text,
         warn=True)
 
     problems = _section_html(
@@ -399,7 +491,7 @@ def render_html(findings: Sequence[Dict[str, Any]],
         f"<h1>Netwise analysis report</h1>"
         f'<p class="meta">{html.escape(subject)} &middot; generated '
         f'{html.escape(when)}</p>'
-        f"{counts}{_coverage_html(findings)}{blind}{problems}{clean}"
+        f"{counts}{_coverage_html(findings, conversion_gaps)}{blind}{problems}{clean}"
         '<footer>Netwise analyses exported configuration files offline. It '
         'never connects to, scans, or modifies a live network. '
         '&ldquo;Could not check&rdquo; means exactly that: those checks did '

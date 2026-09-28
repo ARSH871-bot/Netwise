@@ -89,6 +89,19 @@ WHY status="error" ALSO GETS ITS OWN CHECK
     non-generated sentence if two attempts both fail -- see
     _fallback_error_explanation().
 
+A THIRD KIND: NAMING A FACT THE FINDING NEVER CONTAINED
+    Neither check above looks at WHAT the text names. Measured in the 28
+    September audit: _is_unacceptable() accepted "Attackers on the guest
+    Wi-Fi now reach the payroll server at 10.99.1.1 on port 3389" for a
+    finding about 10.10.10.0 and 10.20.0.5:443. No hedge, no result claim,
+    and every fact in it invented. So every IPv4 address, port number and
+    device-style name (letters, a hyphen, a digit: rtr-us5) in the text must
+    also appear in the finding's own fields -- see _names_an_invented_fact().
+    A wildcard restated as a prefix (10.10.10.0/24) passes, because the
+    ADDRESS is in the evidence. "port 53" for evidence saying "eq domain"
+    does not, and falls back: over-flagging costs a plainer sentence,
+    under-flagging costs a made-up fact in a security tool.
+
 RUN IT BY HAND
     python -m ai.explain
     Pulls a real finding out of the pipeline (tests/fixtures/rtr-us5-
@@ -714,14 +727,52 @@ def _try_generate(finding: Dict[str, Any]) -> Optional[str]:
         return None
 
 
-def _is_unacceptable(text: str, *, is_error: bool) -> bool:
+def _is_unacceptable(text: str, *, is_error: bool,
+                     finding: Optional[Dict[str, Any]] = None) -> bool:
     """One check, used for every status. status="error" additionally
     rejects any claimed result about the network; every status rejects
-    hedged speculation. See the module docstring's two-failure-modes
-    section for why these are checked separately from each other."""
+    hedged speculation, and -- given the finding -- any address, port or
+    device the finding does not contain. See the module docstring's
+    failure-modes sections for why these are checked separately."""
     if is_error and _looks_like_a_result_claim(text):
         return True
+    if finding is not None and _names_an_invented_fact(text, finding):
+        return True
     return _looks_like_speculation(text)
+
+
+_IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
+# A port the text names: "port 443", "ports 80", "eq 443", "10.20.0.5:443".
+_PORT_IN_TEXT = re.compile(r"\b(?:ports?|eq)\s+(\d{1,5})\b|(?<=\d):(\d{1,5})\b",
+                           re.IGNORECASE)
+# Any standalone number in the evidence that is not part of an address.
+_NUMBER_IN_EVIDENCE = re.compile(r"(?<![\d.])(\d{1,5})(?![\d.])")
+# A device-style name: starts with a letter, has a hyphen and a digit.
+_DEVICE_LIKE = re.compile(r"\b[a-zA-Z][a-zA-Z0-9]*(?:-[a-zA-Z0-9]+)+\b")
+
+
+def _names_an_invented_fact(text: str, finding: Dict[str, Any]) -> bool:
+    """True if `text` names an address, port or device `finding` never does.
+
+    Compared against every field the model was shown about this finding --
+    summary, device, evidence detail and source -- because that is the whole
+    of what it could legitimately be repeating.
+    """
+    evidence = finding.get("evidence") or {}
+    shown = " ".join(str(v or "") for v in (
+        finding.get("summary"), finding.get("device"),
+        evidence.get("detail"), evidence.get("source"))).lower()
+
+    if set(_IPV4.findall(text)) - set(_IPV4.findall(shown)):
+        return True
+    numbers_shown = set(_NUMBER_IN_EVIDENCE.findall(shown))
+    for match in _PORT_IN_TEXT.finditer(text):
+        if (match.group(1) or match.group(2)) not in numbers_shown:
+            return True
+    for name in _DEVICE_LIKE.findall(text):
+        if any(ch.isdigit() for ch in name) and name.lower() not in shown:
+            return True
+    return False
 
 
 #: Ollama's default port. The client honours OLLAMA_HOST, so the probe does
@@ -910,7 +961,7 @@ def explain_with_source(finding: Dict[str, Any]) -> "tuple[str, str]":
             explanation = _try_generate(finding)
             if explanation is None:
                 break
-            if not _is_unacceptable(explanation, is_error=is_error):
+            if not _is_unacceptable(explanation, is_error=is_error, finding=finding):
                 return explanation, "model"
 
     if is_error:

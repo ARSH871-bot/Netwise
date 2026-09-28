@@ -236,6 +236,102 @@ Batfish runs in Docker container `batfish` (image `batfish/allinone`), exposing
   > missing `<type>`/`<protocol>` question (#80) are unaffected by this and
   > remain open.
 
+  > **UPDATE, 5 September.** The rest of #78 was picked up without waiting
+  > for Senaka's answers to the four questions now written out in Discussion
+  > #294, on the reasoning that a decision genuinely blocked on him should
+  > stay blocked, but nothing else should sit idle in the meantime. That
+  > split the remaining work into two very different piles.
+  >
+  > **The blast radius, fixed.** A single rule failing to convert for ANY
+  > reason (missing or unsupported `<type>`, an unsupported `<protocol>`
+  > value, an unresolved alias, a bad port, an unresolvable network
+  > reference) used to abort the entire file, not just the interface or rule
+  > it was on. At the client's real scale — 1,998 XML elements against this
+  > project's 54-element fixture — one anomaly anywhere meant zero analysis
+  > of anything. Re-scoped the same way the DHCP-WAN/undeclared-VPN case was:
+  > the one failing rule is excluded and named, everything else converts
+  > exactly as if it were never there. This required no guess about what any
+  > field means — every refusal still names the same cause it always did,
+  > only its blast radius shrank from "the whole file" to "this one rule".
+  >
+  > **`<protocol>`'s semantic question, still untouched.** #80 itself says
+  > "do not fix this before the client answers" — that instruction stands,
+  > unconditionally. What DID move: missing `<type>` now gets its own precise
+  > message, split from present-but-invalid the same way the two interface
+  > causes were split earlier, because there is no safe default for
+  > pass/block/reject the way "any" is one for protocol. `<protocol>`'s
+  > existing default-to-`"any"` behaviour was not touched at all.
+  >
+  > **NAT, reaffirmed rather than left stale.** Checked against the same
+  > "no guessing" bar the blast-radius fix cleared: it does not clear it.
+  > There is no version of "convert the NAT rule" that does not invent
+  > translation semantics this module has never observed. Detection and
+  > exclusion (#264) is unchanged, and `docs/design/pfsense-nat-support.md`
+  > records that this was revisited today, not simply never revisited.
+  >
+  > A separate idea — disclosing an inferred `<protocol>` with a comment,
+  > #80's own preferred Option C, which changes no behaviour, only makes the
+  > existing silent default visible — was drafted as a question for the team
+  > rather than built solo, precisely because it touches the one issue
+  > marked blocked on the client. Not yet decided.
+
+  > **UPDATE, 6 September — the blast-radius fix has a direction, and one
+  > direction is dangerous.** @SamikaPerera's review on #302 found what the
+  > entry above did not name: excluding a rule changes what the emitted ACL
+  > decides, and the two directions are not equally safe.
+  >
+  > **Skipping a `block` rule makes the emitted ACL MORE permissive than the
+  > real device.** Netwise then reports traffic as reachable that the real
+  > firewall denies — noisy, but safe, because the false finding gets
+  > investigated and dismissed.
+  >
+  > **Skipping a `pass` rule makes the emitted ACL STRICTER than the real
+  > device**, and this is the direction that matters. A policy rule asserting
+  > *"this traffic must be denied"* can then report `none` (clean) against
+  > the emitted ACL, while the real firewall actually permits that traffic —
+  > a real policy violation, reported as a pass. That is F-4's exact failure,
+  > reached through the converter instead of through a check: the report says
+  > "we checked and it is fine" about something nobody actually verified.
+  >
+  > Not new IN KIND — #104's interface-level skip made the identical trade,
+  > accepted at the time. What changed is conspicuousness: a whole excluded
+  > interface is visible in the skip list as a named gap; a single dropped
+  > `pass` rule inside an otherwise-normal ACL is not, unless someone reads
+  > the skip notes and reasons through what they mean for a specific policy
+  > rule.
+  >
+  > **Fixed, not just documented**: `analysis/coverage.py` and
+  > `analysis/report.py` (PR #302) now carry the skip list through to the
+  > downloaded report as its own "excluded during conversion" section, and
+  > the report's coverage statement stops claiming "nothing was skipped"
+  > when a conversion excluded a rule, even when every check ran clean. That
+  > closes the disclosure gap Samika also found — before this, the skip list
+  > reached the user exactly once, at upload, and was gone by the time a
+  > report was generated. It does not close the underlying modelling gap
+  > above: a skipped `pass` rule is still excluded, not modelled, and a
+  > policy check can still report `none` where the real firewall would not.
+  > Carrying skips into F-1 findings directly (an `error` card per skip,
+  > visible on the dashboard itself, not only in a downloaded report) was
+  > raised as the more complete fix and deliberately left for a separate,
+  > properly scoped change rather than folded into this one -- see #306.
+
+  > **UPDATE, 28 September: #80 answered from pfSense's own source, not the
+  > client** (who had not replied in 25 days). pfSense saves "any" by
+  > *unsetting* `<protocol>` (`firewall_rules_edit.php:1195`), so the client's
+  > four protocol-less rules really are "any" and `ip` is right for them.
+  > Refusing them would have been wrong. Two real widenings were found
+  > instead, and both are now translated exactly rather than skipped,
+  > because skipping a `pass` rule is the dangerous direction above:
+  >
+  > ```
+  > no <protocol> + a port   pfSense: tcp, any port (filter.inc:4497)   was: ip
+  > tcp/udp + source port    pfSense: enforces it (filter.inc:3930)     was: dropped
+  >
+  > Batfish, testFilters, old -> new conversion:
+  >   udp -> host with a protocol-less block rule   DENY   -> PERMIT  (pfSense: PERMIT)
+  >   tcp :2000 -> a rule allowing only :1024        PERMIT -> DENY    (pfSense: DENY)
+  > ```
+
 ## 7a. The finding format (F-1) — the one contract
 
 **`docs/finding-format.md` is authoritative.** It was agreed by all four team
@@ -301,10 +397,10 @@ them and they describe nobody's real network. Real configs stay in the ignored
 in `CHECKS`. See `docs/design/pipeline-feature-shapes.md`.
 
 CI (`.github/workflows/tests.yml`) runs the suite on every pull request, on
-Python 3.12 and 3.13. **It does not block a merge today.** Branch protection
-needs GitHub Pro or a public repo, so whether it is a *choice* or a
-*limitation* depends on the repository's visibility at the time — and that has
-changed twice.
+Python 3.12 and 3.13. **It does not block a merge.** Branch protection needs
+GitHub Pro or a public repo. Since GitHub Pro (22 September) it is available
+whatever the visibility, so not using it is a *choice* (#245), not a
+limitation. The visibility itself has changed three times.
 
 **Do not read visibility from this file. Ask the API:**
 
@@ -313,7 +409,7 @@ gh api repos/ARSH871-bot/Netwise --jq '.private, .visibility'
 gh api repos/ARSH871-bot/Netwise/branches/main/protection
 ```
 
-Two dated measurements, kept as history rather than as a current claim:
+Dated measurements, kept as history rather than as a current claim:
 
 ```
 27 August    private: false   visibility: public
@@ -323,6 +419,14 @@ Two dated measurements, kept as history rather than as a current claim:
 31 August    private: true    visibility: private   (deliberate, temporary)
              protection -> 403 "Upgrade to GitHub Pro or make this
              repository public to enable this feature"
+
+23 September private: true    visibility: private
+             protection -> 404 "Branch not protected"
+             i.e. GitHub Pro (22 September) makes it available while private
+
+28 September private: false   visibility: public    (team decision: public
+             for now, for free Actions minutes; the minutes reset 1 October)
+             protection -> "Branch not protected"
 ```
 
 **The present-tense sentence that used to sit here — "this repository is
@@ -334,9 +438,9 @@ above degrades into history; the sentence degraded into a falsehood.
 
 A red cross is therefore a signal rather than a gate. **Why** it is not a gate
 depends on the visibility above: on 27 August it was available and switched
-off; on 31 August it is unavailable. #245 is the decision about what to enable,
-and it can only be *acted on* while the repository is public — so it is
-paused rather than answered whenever it is not.
+off; on 31 August it is unavailable. Since GitHub Pro (22 September) it is
+available whatever the visibility, so #245, the decision about what to enable,
+is no longer paused by it.
 
 The measurement on #245 is worth reading before assuming the answer is "all of
 it": across 45 PRs merged since 20 August, requiring a review would have
@@ -626,8 +730,8 @@ project's recurring failure family arriving through process rather than code.
 
 | Piece | Owner | Note |
 |---|---|---|
-| **A way for the user to state their own policy** | unassigned | **Still the biggest gap, but no longer total** (#87). `policy_compliance` reads a user policy since #181 (28 August); `access_control` and `routing` do not, so two of three checks remain hardcoded to our fixtures. See below for the measurement |
-| **Two of three checks ignore a user policy** | unassigned | The remainder of #87. `access_control` and `routing` still name `rtr-us5` and `rtr-hq`/`rtr-branch` regardless of what the user supplies. **Since #261 they say so** — `AC-005 [error] "1 supplied rule(s) for this check were not read"` — which makes the gap visible rather than smaller. Being told you are not covered is not the same as being covered |
+| **User-supplied policy, all three checks** | — | **CLOSED (#87).** `policy_compliance` since #181, `access_control` since #316, `routing` since #319. Every section `analysis/policy.py` validates is now read by the check that owns it. The #196 "your rules were not read" cards are gone, because the claim stopped being true |
+| **Whole flow spaces in a user policy** | unassigned | What #87 did NOT close. `access_control.GUARANTEES` are `searchFilters` proofs over a space of traffic, and the policy format has no way to express one — so a user's guarantees are still ours. Measured: `rtr-us5-insecure` finds one fewer under a stranger's policy, and it is exactly `GUARANTEES[0]`. Widening the format needs all four |
 
 **The policy is ours, not the user's — but one check now takes theirs.**
 `access_control` and `policy_compliance` name `rtr-us5`; `routing` names
@@ -716,8 +820,35 @@ so a change to the converter's device naming would have returned the client's
 firewall to producing nothing with every test still green.
 `tests/test_pfsense_policy_join.py` pins it.
 
-**What is still missing.** `access_control` and `routing` still ignore a
-supplied policy. So the gap is narrowed for one check, not closed.
+**What is still missing — and it is no longer the checks.** `access_control`
+(#316) and `routing` (#319) now read a supplied policy, so all three do.
+Re-measured with `python -m tools.stranger_config`:
+
+```
+                        ours        stranger      + their policy
+                       f/n/e       our policy         f/n/e
+TOTAL              12 /  4 /  7   3 / 0 / 15      13 /  4 / 21
+```
+
+Re-measured 28 September, after #364. Until then it read `12 / 3 / 7` and
+`13 / 3 / 21`: the found and error columns are unchanged, and each gained one
+clean result because an all-clear now appears beside other findings, naming
+only the devices it vouches for.
+
+**Read 10, not 13.** Three of those thirteen are our two routing assertions
+rebound onto a stranger's single router, which asks whether one subnet
+reaches another across a device that spans neither. The answer is correctly
+*no*, so `RT-001` fires on every single-router fixture including the secure
+one. The check is right; the assertion is one no real user would write.
+`tools/stranger_config.py` prints that caveat with every run.
+
+What remains is `GUARANTEES`: the policy format cannot express a whole flow
+space, so those assertions stay ours. A stranger's snapshot reports them as
+"could not check" — honest, and not yet useful.
+
+**This paragraph said "the gap is narrowed for one check, not closed" until
+#319.** Left as a correction rather than overwritten, because the sentence
+above it has now been wrong in both directions within a fortnight.
 
 **There IS a UI, since #181 merged on 28 August** — this paragraph said there
 was none, and said it three lines below the sentence recording that the check
