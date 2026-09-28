@@ -69,6 +69,27 @@ function makeElement(tag) {
     getAttribute(key) {
       return (this.attributes || {})[key] ?? null;
     },
+    // classList, backed by the same className string every other part of
+    // this shim already reads -- added because renderFindings() calls
+    // classList.add()/remove() to toggle comparison-mode styling on every
+    // call, including the ones this harness's own module-load triggers.
+    get classList() {
+      const self = this;
+      return {
+        add(cls) {
+          const classes = self.className ? self.className.split(/\s+/) : [];
+          if (!classes.includes(cls)) classes.push(cls);
+          self.className = classes.join(" ");
+        },
+        remove(cls) {
+          const classes = self.className ? self.className.split(/\s+/) : [];
+          self.className = classes.filter((c) => c !== cls).join(" ");
+        },
+        contains(cls) {
+          return (self.className ? self.className.split(/\s+/) : []).includes(cls);
+        },
+      };
+    },
     querySelector() {
       return null;
     },

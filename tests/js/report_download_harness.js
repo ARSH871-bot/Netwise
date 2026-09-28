@@ -60,6 +60,23 @@ function makeElement(tag) {
     getAttribute(key) {
       return this.attributes[key] ?? null;
     },
+    get classList() {
+      const self = this;
+      return {
+        add(cls) {
+          const classes = self.className ? self.className.split(/\s+/) : [];
+          if (!classes.includes(cls)) classes.push(cls);
+          self.className = classes.join(' ');
+        },
+        remove(cls) {
+          const classes = self.className ? self.className.split(/\s+/) : [];
+          self.className = classes.filter((c) => c !== cls).join(' ');
+        },
+        contains(cls) {
+          return (self.className ? self.className.split(/\s+/) : []).includes(cls);
+        },
+      };
+    },
     remove() {},
     focus() {},
     querySelector() {
@@ -121,7 +138,16 @@ const sandbox = {
   console,
   fetch: () =>
     nextFetch.ok
-      ? Promise.resolve({ ok: true, json: () => Promise.resolve(nextFetch.body) })
+      ? Promise.resolve({
+          ok: true,
+          // A real Headers object always has .get(), returning null for
+          // anything not set -- loadFindings() reads the mock-data header
+          // unconditionally, so a response with no headers at all would
+          // crash here rather than exercise the download-availability
+          // logic these tests actually check.
+          headers: { get: () => null },
+          json: () => Promise.resolve(nextFetch.body),
+        })
       : Promise.reject(new Error("network is down")),
   FormData: function () {
     this.append = () => {};

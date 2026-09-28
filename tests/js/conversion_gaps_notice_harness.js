@@ -63,6 +63,33 @@ function makeElement(tag) {
     },
     remove() {},
     focus() {},
+    // classList, backed by the same className string every other part of
+    // this shim already reads -- MISSING here until #298's renderFindings()
+    // reached this harness for the first time: it calls
+    // classList.remove("comparison-mode") unconditionally, on every real
+    // scan, closing out a comparison view left open from a previous
+    // proposal. Every OTHER harness already had this (added alongside that
+    // feature); this one was written for a different PR and simply never
+    // needed it until now. A live accessor, not a snapshot, so it stays
+    // correct across repeated add/remove calls on the same element -- copied
+    // verbatim from tests/js/findings_render_harness.js for consistency.
+    get classList() {
+      const self = this;
+      return {
+        add(cls) {
+          const classes = self.className ? self.className.split(/\s+/) : [];
+          if (!classes.includes(cls)) classes.push(cls);
+          self.className = classes.join(" ");
+        },
+        remove(cls) {
+          const classes = self.className ? self.className.split(/\s+/) : [];
+          self.className = classes.filter((c) => c !== cls).join(" ");
+        },
+        contains(cls) {
+          return (self.className ? self.className.split(/\s+/) : []).includes(cls);
+        },
+      };
+    },
     querySelector() {
       return null;
     },

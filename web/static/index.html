@@ -25,7 +25,7 @@
     <header class="masthead">
       <h1>Netwise</h1>
       <p class="tagline">
-        Network configuration analysis &mdash; runs entirely offline
+        Network configuration analysis -- runs entirely offline
       </p>
     </header>
 
@@ -64,7 +64,7 @@
                name here without adding that evidence would be a claim we
                have not checked. -->
           <p class="hint">
-            Config files (.cfg, .conf, .txt), up to 2&nbsp;MB &mdash; Cisco
+            Config files (.cfg, .conf, .txt), up to 2&nbsp;MB -- Cisco
             IOS, Cisco NX-OS, Arista EOS and Juniper JunOS, or a PF Sense
             config.xml export. Nothing leaves this machine.
           </p>
@@ -153,7 +153,7 @@
           <p class="hint">
             A JSON list of the assets that matter to you (#87). Findings on a
             device you tag <code>critical</code> are raised one severity
-            level &mdash; never more, and never lowered.
+            level -- never more, and never lowered.
           </p>
           <p id="business-context-message" class="upload-message" role="status"></p>
 
@@ -220,6 +220,26 @@
 
         <p id="filter-notice" class="filter-notice" role="status" hidden></p>
 
+        <!-- ---- Comparison mode (propose-a-change strengthening) ----
+             ABOVE THE EXPLAINER, NOT BETWEEN IT AND THE TILES (#298 merge
+             with #288). #288 fixed #219's exact regression -- something
+             sitting between results-explainer and #summary pushes the
+             explainer away from the thing it explains, and a reader skips
+             it. This banner recontextualises everything under it (this is a
+             hypothetical), so it belongs ABOVE the explainer it would
+             otherwise separate from the tiles, never between.
+
+             HIDDEN UNTIL A FULL SCAN OF A PROPOSED CHANGE RUNS. Reuses this
+             whole panel -- tiles, sections, renderFinding() -- for a
+             before/after comparison instead of building a second, weaker
+             copy of the same UI inside the narrow propose pane. allFindings
+             itself is never touched, so "back" is just a re-render, no
+             re-fetch. -->
+        <div id="comparison-banner" class="comparison-banner" hidden>
+          <span id="comparison-banner-text"></span>
+          <button type="button" id="comparison-back-button">Back to my scan</button>
+        </div>
+
         <!-- ---- What the three tiles mean ---- #203, moved by #219
              DIRECTLY ABOVE THE TILES, AND THAT POSITION IS THE POINT.
              #203 added this because the client said the heading misled him.
@@ -264,11 +284,11 @@
           <strong>Three independent counts.</strong> They are not shares of one
           total and do not need to add up.
           <strong>Problems found</strong> and <strong>checked, nothing
-          found</strong> are both results — the check ran either way.
+          found</strong> are both results -- the check ran either way.
           <strong>Could not check</strong> is not a pass: those checks did not
           run, so nothing is known about what they cover. A config that is
           deliberately insecure will show mostly problems and little or no
-          clean — that is the expected shape, not a fault in the scan.
+          clean -- that is the expected shape, not a fault in the scan.
         </p>
 
 <div id="summary" class="summary" aria-live="polite"></div>
@@ -314,7 +334,7 @@
           >
         </div>
         <p class="hint" id="report-hint">
-          Nothing to export yet &mdash; run a scan first.
+          Nothing to export yet -- run a scan first.
         </p>
 
         <!-- ---- The findings themselves, grouped by status ---- -->
@@ -390,7 +410,7 @@
         <p class="hint">
           Describe one change in plain English and Netwise will write the
           config line, simulate it, and warn you if it opens something.
-          <strong>Nothing is ever applied to a device</strong> &mdash; the
+          <strong>Nothing is ever applied to a device</strong> -- the
           change is tested against a throwaway copy.
         </p>
 
