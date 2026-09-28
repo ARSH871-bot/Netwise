@@ -453,6 +453,14 @@ arm reporting both (#22/#46): *"we checked and found nothing"* and *"we did not
 look here"* are different claims, and only one of them is being made about
 those devices.
 
+**Since #364 (28 September) the clean sentinel does appear beside PC-049,
+naming only the covered devices whose rules all held.** Suppressing it
+entirely also hid the one device that *was* checked, so a real fix there read
+as the check going blind. The two claims are still kept apart: the green card
+lists its devices in `evidence.source`, and PC-049 lists the uncovered ones.
+Measured on `multi-device-10`: PC-049 "9 of 10 not covered" beside PC-000
+naming `rtr-us5` alone.
+
 **It fires only when at least one rule actually ran.** With nothing applicable,
 `PC-050` already says the whole story, and printing both rebuilds the per-rule
 noise #45 and #50 removed one level up. That case is pinned by its own test.

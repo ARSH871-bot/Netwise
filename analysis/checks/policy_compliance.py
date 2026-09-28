@@ -501,7 +501,8 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                     "either way.",
                     policy_label,
                 ),
-                source="analysis/checks/policy_compliance.py",
+                # Listed, so it blocks no present device's all-clear (#364).
+                source=coverage.device_list_source(absent),
                 number=SKIPPED_NUMBER,
             )
         )
@@ -669,8 +670,25 @@ def run(bf: Session) -> List[Dict[str, Any]]:
         # searched space behaves the forbidden way. The rule holds; report
         # nothing, and the all-clear below covers it.
 
-    # Only claim "all clear" if every rule was actually checked and held. If any
-    # rule errored, results is non-empty and the error is what the user sees.
+    # THE ALL-CLEAR NAMES EXACTLY THE DEVICES IT VOUCHES FOR (#364): the
+    # covered devices no finding above is about. An error of unknown scope
+    # still suppresses it -- see coverage.devices_still_clean().
+    clean = coverage.devices_still_clean(results, {r["node"] for r in applicable})
+    if clean:
+        held = [r for r in applicable if r["node"] in clean]
+        results.append(
+            findings.no_issues_finding(
+                check=CHECK_NAME,
+                device=clean[0],
+                summary="No issues found by policy compliance",
+                detail=_with_provenance(
+                    f"All {len(held)} policy rule(s) about the device(s) listed hold",
+                    policy_label,
+                ),
+                source=coverage.device_list_source(clean),
+                number=0,
+            )
+        )
     if not results:
         return [
             findings.no_issues_finding(
