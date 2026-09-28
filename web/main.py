@@ -369,6 +369,18 @@ def _discard_last_resolved_entities() -> None:
     """
     _last_resolved_entities.pop(current_session_id(), None)
 
+
+def reset_last_resolved_entities() -> None:
+    """Empty the whole cache, every session -- for tests (#318 review,
+    @SamikaPerera). `tests/conftest.py` calls this between every test,
+    the same reason `reset_explanation_cache()`/`reset_analysis_cache()`
+    already exist: module-level state that survives a test is how one
+    test starts passing for a reason belonging to another one. Unlikely
+    to bite in practice, since each TestClient gets its own session id --
+    worth having before someone writes a test that shares one, not after.
+    """
+    _last_resolved_entities.clear()
+
 # ---------------------------------------------------------------------------
 # N-1, enforced rather than promised (US-40, #332)
 # ---------------------------------------------------------------------------
