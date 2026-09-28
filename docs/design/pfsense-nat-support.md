@@ -91,3 +91,29 @@ Not a decision. Not started. Filed so the choice is visible rather than
 re-derived from scratch, the same reason `remediation-phase-b.md` and
 `config-change-and-pushback.md` exist as separate documents from the
 features they scoped.
+
+## Revisited without waiting for the client, and reaffirmed (#78)
+
+The rest of #78 was picked up without waiting for Senaka's answers to the
+four questions in Discussion #294, on the reasoning that a decision genuinely
+blocked on him should stay blocked, but nothing else should sit idle in the
+meantime. NAT was checked against that reasoning specifically, and it does
+not clear the bar the other three items did.
+
+The WAN-address and undeclared-VPN-interface problems, and the whole-file
+blast radius fixed alongside missing `<type>` (see `CLAUDE.md` section 7),
+were all fixable without any guess about network behaviour — they are
+questions about how far one bad input's damage should spread, not about
+what any field means. NAT is a different shape of problem: there is no
+version of "convert the NAT rule" that does not require inventing
+translation semantics (source, destination, or port rewriting) this module
+has never observed in any real or synthetic `<nat>` element. Option 1 above
+was already rejected for exactly that reason before this revisit, and
+nothing about proceeding without the client changes the argument — it is
+not a decision waiting on permission, it is a guess waiting on evidence
+that still does not exist.
+
+So: unchanged. Detection and exclusion (Option 2, already shipped as #264)
+remains the only NAT-related behaviour in this module. The three
+information-gathering steps above are still the right next steps, in the
+same order, whenever someone picks this up.

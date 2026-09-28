@@ -206,3 +206,34 @@ def test_the_label_survives_a_reload(client, analysed):
 def test_a_session_that_never_loaded_the_sample_is_not_labelled(client):
     """The default has to be the claim that says LESS."""
     assert client.get("/api/sample").json()["is_sample"] is False
+
+
+# --- The sample must not inherit another file's conversion gaps (#302 x #357) --
+
+_PFSENSE_WITH_ONE_SKIPPED_RULE = b"""<?xml version="1.0"?><pfsense>
+<system><hostname>fw-test</hostname></system>
+<interfaces><lan><if>em1</if><descr>LAN</descr><ipaddr>10.0.0.1</ipaddr><subnet>24</subnet></lan></interfaces>
+<filter>
+ <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol><quick/>
+   <source><any/></source><destination><address>10.0.0.5</address><port>443</port></destination></rule>
+ <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol><quick/>
+   <source><any/></source><destination><address>TRUSTED_HOSTS</address></destination></rule>
+</filter></pfsense>"""
+
+
+def test_loading_the_sample_clears_a_previous_uploads_conversion_gaps(client, analysed):
+    """Found merging #302 with #357: a session that uploaded a PF Sense file
+    with a skipped rule, then loaded the sample, got a report labelled SAMPLE
+    NETWORK naming the OTHER file's rule as excluded during conversion."""
+    upload = client.post("/api/upload", files={
+        "file": ("fw.xml", _PFSENSE_WITH_ONE_SKIPPED_RULE, "application/xml")})
+    assert upload.status_code == 200
+    # Control: the trap is really set before the sample is loaded.
+    assert client.get("/api/findings").headers["x-netwise-conversion-gap-count"] == "1"
+
+    assert client.post("/api/sample").status_code == 200
+
+    assert client.get("/api/findings").headers["x-netwise-conversion-gap-count"] == "0"
+    html = client.get("/api/report?format=html").text
+    assert LABEL in html
+    assert "TRUSTED_HOSTS" not in html
