@@ -457,6 +457,16 @@ those devices.
 `PC-050` already says the whole story, and printing both rebuilds the per-rule
 noise #45 and #50 removed one level up. That case is pinned by its own test.
 
+**It names every uncovered device, in `evidence.source`.** The detail names the
+first five, for a reader. The source lists all of them — `affected devices: a,
+b, c` — via `coverage.device_list_source()`. A finding has one `device`, so a
+card about nine devices has to say `unknown` there, and a gap of unknown scope
+has to be read as covering *every* device. That made a genuine fix on the one
+covered device impossible to report as fixed in "what changed since the last
+scan" (#315): measured on `multi-device-10`, the fix read as unverified until
+the source named the other nine. A list-typed F-1 field would be cleaner and
+needs all four; this stays inside what `source` already means.
+
 `PC-049` sits **below** `ERROR_NUMBER_OFFSET` deliberately: the rule-error band
 is `50 + rule number` and grows with the rule list, so anything above 50 would
 collide the day a sixth rule is added.

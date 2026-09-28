@@ -13,6 +13,15 @@ THE SCANS BELOW ARE REAL
     same; only the error text differs. The run against a genuinely stopped
     container is recorded on the pull request.
 
+    The three MD10_* lists were recorded the same way on 23 September, on
+    multi-device-10 with a policy naming one device: dev001, the same with
+    dev001's config given the DNS permit its policy tests for, and dev002.
+    They postdate PC-049 naming its devices, and access_control and routing
+    reading a user policy (#353, #355) -- which is why they carry AC-002 and
+    RT-00x findings that MULTIDEVICE_ONE_DEVICE_POLICY, from 15 September,
+    does not. That older list is kept ON PURPOSE: its PC-049 names no
+    devices, which is exactly a gap of unknown scope.
+
 THE CONTROL
     Every "nothing was resolved" assertion here would pass for a diff that
     never resolves anything. test_a_genuine_fix_is_resolved is what stops
@@ -24,6 +33,7 @@ from __future__ import annotations
 
 import pytest
 
+from analysis import coverage as C
 from analysis import findings as F
 from analysis import scan_diff as D
 
@@ -372,6 +382,285 @@ INSECURE_BATFISH_UNREACHABLE = [{'id': 'AC-000',
   'status': 'error'}]
 
 
+MD10_DEV001_POLICY = [{'check': 'access_control',
+  'device': 'rtr-us5',
+  'evidence': {'detail': 'They are written about rtr-us5, which is not in this '
+                         'snapshot. Nothing is claimed about them either way. '
+                         'The analyses that need no policy -- dead rules and '
+                         'undefined references -- still ran.',
+               'source': 'analysis/checks/access_control.py'},
+  'id': 'AC-001',
+  'severity': 'high',
+  'status': 'error',
+  'summary': '1 access policy statement(s) could not be checked against this '
+             'config'},
+ {'check': 'policy_compliance',
+  'device': 'unknown',
+  'evidence': {'detail': '5 rule(s) were checked, and only against '
+                         'stranger-rtr-dev001. No rule says anything about '
+                         'stranger-rtr-dev002, stranger-rtr-dev003, '
+                         'stranger-rtr-dev004, stranger-rtr-dev005, '
+                         'stranger-rtr-dev006, and 4 more. Nothing is claimed '
+                         'about them either way. [Rules checked: the policy '
+                         'file you supplied.]',
+               'source': 'affected devices: stranger-rtr-dev002, '
+                         'stranger-rtr-dev003, stranger-rtr-dev004, '
+                         'stranger-rtr-dev005, stranger-rtr-dev006, '
+                         'stranger-rtr-dev007, stranger-rtr-dev008, '
+                         'stranger-rtr-dev009, stranger-rtr-us5'},
+  'id': 'PC-049',
+  'severity': 'high',
+  'status': 'error',
+  'summary': '9 of 10 device(s) in this config are not covered by any policy '
+             'rule'},
+ {'check': 'access_control',
+  'device': 'stranger-rtr-dev001',
+  'evidence': {'detail': 'Expected PERMIT but got DENY, decided by: deny   ip '
+                         'any any',
+               'source': 'stranger-rtr-dev001:acl_in'},
+  'id': 'AC-002',
+  'severity': 'medium',
+  'status': 'found',
+  'summary': 'DNS to the approved server is blocked, so name lookups will '
+             'fail'},
+ {'check': 'policy_compliance',
+  'device': 'stranger-rtr-dev001',
+  'evidence': {'detail': 'Flow start=stranger-rtr-dev001 '
+                         '[10.11.10.0:49152->10.20.0.5:443 TCP (SYN)] is '
+                         'permitted but policy requires it to be DENIED. '
+                         'Decided by: permit tcp 10.11.10.0 0.0.0.255 host '
+                         '10.20.0.5 eq 443 [Rules checked: the policy file you '
+                         'supplied.]',
+               'source': 'stranger-rtr-dev001:acl_in'},
+  'id': 'PC-003',
+  'severity': 'medium',
+  'status': 'found',
+  'summary': 'Traffic with a forged source address is permitted'},
+ {'check': 'policy_compliance',
+  'device': 'stranger-rtr-dev001',
+  'evidence': {'detail': 'Flow start=stranger-rtr-dev001 '
+                         '[10.10.10.0:49152->218.8.104.58:53 UDP] is denied '
+                         'but policy requires it to be PERMITTED. Decided by: '
+                         'deny   ip any any [Rules checked: the policy file '
+                         'you supplied.]',
+               'source': 'stranger-rtr-dev001:acl_in'},
+  'id': 'PC-004',
+  'severity': 'medium',
+  'status': 'found',
+  'summary': 'DNS to the approved resolver is blocked, so name lookups fail'},
+ {'check': 'policy_compliance',
+  'device': 'stranger-rtr-dev001',
+  'evidence': {'detail': 'Flow start=stranger-rtr-dev001 '
+                         '[10.10.10.0:49152->10.20.0.5:443 TCP (SYN)] is '
+                         'denied but policy requires it to be PERMITTED. '
+                         'Decided by: deny   ip any any [Rules checked: the '
+                         'policy file you supplied.]',
+               'source': 'stranger-rtr-dev001:acl_in'},
+  'id': 'PC-005',
+  'severity': 'medium',
+  'status': 'found',
+  'summary': 'HTTPS to the internal server is blocked, so the service is '
+             'unreachable'},
+ {'check': 'routing',
+  'device': 'stranger-rtr-dev001',
+  'evidence': {'detail': 'Expected REACHABLE for a flow from 10.10.10.5 to '
+                         '10.20.20.5, but traceroute ended in NO_ROUTE. Path: '
+                         'stranger-rtr-dev001',
+               'source': 'stranger-rtr-dev001:10.20.20.5'},
+  'id': 'RT-001',
+  'severity': 'medium',
+  'status': 'found',
+  'summary': 'The HQ network cannot reach the branch network'},
+ {'check': 'routing',
+  'device': 'stranger-rtr-dev001',
+  'evidence': {'detail': 'Expected REACHABLE for a flow from 10.20.20.5 to '
+                         '10.10.10.5, but traceroute ended in NO_ROUTE. Path: '
+                         'stranger-rtr-dev001',
+               'source': 'stranger-rtr-dev001:10.10.10.5'},
+  'id': 'RT-002',
+  'severity': 'medium',
+  'status': 'found',
+  'summary': 'The branch network cannot reach the HQ network'}]
+
+MD10_DEV001_POLICY_DNS_FIXED = [{'check': 'access_control',
+  'device': 'rtr-us5',
+  'evidence': {'detail': 'They are written about rtr-us5, which is not in this '
+                         'snapshot. Nothing is claimed about them either way. '
+                         'The analyses that need no policy -- dead rules and '
+                         'undefined references -- still ran.',
+               'source': 'analysis/checks/access_control.py'},
+  'id': 'AC-001',
+  'severity': 'high',
+  'status': 'error',
+  'summary': '1 access policy statement(s) could not be checked against this '
+             'config'},
+ {'check': 'policy_compliance',
+  'device': 'unknown',
+  'evidence': {'detail': '5 rule(s) were checked, and only against '
+                         'stranger-rtr-dev001. No rule says anything about '
+                         'stranger-rtr-dev002, stranger-rtr-dev003, '
+                         'stranger-rtr-dev004, stranger-rtr-dev005, '
+                         'stranger-rtr-dev006, and 4 more. Nothing is claimed '
+                         'about them either way. [Rules checked: the policy '
+                         'file you supplied.]',
+               'source': 'affected devices: stranger-rtr-dev002, '
+                         'stranger-rtr-dev003, stranger-rtr-dev004, '
+                         'stranger-rtr-dev005, stranger-rtr-dev006, '
+                         'stranger-rtr-dev007, stranger-rtr-dev008, '
+                         'stranger-rtr-dev009, stranger-rtr-us5'},
+  'id': 'PC-049',
+  'severity': 'high',
+  'status': 'error',
+  'summary': '9 of 10 device(s) in this config are not covered by any policy '
+             'rule'},
+ {'check': 'policy_compliance',
+  'device': 'stranger-rtr-dev001',
+  'evidence': {'detail': 'Flow start=stranger-rtr-dev001 '
+                         '[10.11.10.0:49152->10.20.0.5:443 TCP (SYN)] is '
+                         'permitted but policy requires it to be DENIED. '
+                         'Decided by: permit tcp 10.11.10.0 0.0.0.255 host '
+                         '10.20.0.5 eq 443 [Rules checked: the policy file you '
+                         'supplied.]',
+               'source': 'stranger-rtr-dev001:acl_in'},
+  'id': 'PC-003',
+  'severity': 'medium',
+  'status': 'found',
+  'summary': 'Traffic with a forged source address is permitted'},
+ {'check': 'policy_compliance',
+  'device': 'stranger-rtr-dev001',
+  'evidence': {'detail': 'Flow start=stranger-rtr-dev001 '
+                         '[10.10.10.0:49152->10.20.0.5:443 TCP (SYN)] is '
+                         'denied but policy requires it to be PERMITTED. '
+                         'Decided by: deny   ip any any [Rules checked: the '
+                         'policy file you supplied.]',
+               'source': 'stranger-rtr-dev001:acl_in'},
+  'id': 'PC-005',
+  'severity': 'medium',
+  'status': 'found',
+  'summary': 'HTTPS to the internal server is blocked, so the service is '
+             'unreachable'},
+ {'check': 'routing',
+  'device': 'stranger-rtr-dev001',
+  'evidence': {'detail': 'Expected REACHABLE for a flow from 10.10.10.5 to '
+                         '10.20.20.5, but traceroute ended in NO_ROUTE. Path: '
+                         'stranger-rtr-dev001',
+               'source': 'stranger-rtr-dev001:10.20.20.5'},
+  'id': 'RT-001',
+  'severity': 'medium',
+  'status': 'found',
+  'summary': 'The HQ network cannot reach the branch network'},
+ {'check': 'routing',
+  'device': 'stranger-rtr-dev001',
+  'evidence': {'detail': 'Expected REACHABLE for a flow from 10.20.20.5 to '
+                         '10.10.10.5, but traceroute ended in NO_ROUTE. Path: '
+                         'stranger-rtr-dev001',
+               'source': 'stranger-rtr-dev001:10.10.10.5'},
+  'id': 'RT-002',
+  'severity': 'medium',
+  'status': 'found',
+  'summary': 'The branch network cannot reach the HQ network'}]
+
+MD10_DEV002_POLICY = [{'check': 'access_control',
+  'device': 'rtr-us5',
+  'evidence': {'detail': 'They are written about rtr-us5, which is not in this '
+                         'snapshot. Nothing is claimed about them either way. '
+                         'The analyses that need no policy -- dead rules and '
+                         'undefined references -- still ran.',
+               'source': 'analysis/checks/access_control.py'},
+  'id': 'AC-001',
+  'severity': 'high',
+  'status': 'error',
+  'summary': '1 access policy statement(s) could not be checked against this '
+             'config'},
+ {'check': 'policy_compliance',
+  'device': 'unknown',
+  'evidence': {'detail': '5 rule(s) were checked, and only against '
+                         'stranger-rtr-dev002. No rule says anything about '
+                         'stranger-rtr-dev001, stranger-rtr-dev003, '
+                         'stranger-rtr-dev004, stranger-rtr-dev005, '
+                         'stranger-rtr-dev006, and 4 more. Nothing is claimed '
+                         'about them either way. [Rules checked: the policy '
+                         'file you supplied.]',
+               'source': 'affected devices: stranger-rtr-dev001, '
+                         'stranger-rtr-dev003, stranger-rtr-dev004, '
+                         'stranger-rtr-dev005, stranger-rtr-dev006, '
+                         'stranger-rtr-dev007, stranger-rtr-dev008, '
+                         'stranger-rtr-dev009, stranger-rtr-us5'},
+  'id': 'PC-049',
+  'severity': 'high',
+  'status': 'error',
+  'summary': '9 of 10 device(s) in this config are not covered by any policy '
+             'rule'},
+ {'check': 'access_control',
+  'device': 'stranger-rtr-dev002',
+  'evidence': {'detail': 'Expected PERMIT but got DENY, decided by: deny   ip '
+                         'any any',
+               'source': 'stranger-rtr-dev002:acl_in'},
+  'id': 'AC-002',
+  'severity': 'medium',
+  'status': 'found',
+  'summary': 'DNS to the approved server is blocked, so name lookups will '
+             'fail'},
+ {'check': 'policy_compliance',
+  'device': 'stranger-rtr-dev002',
+  'evidence': {'detail': 'Flow start=stranger-rtr-dev002 '
+                         '[10.12.10.0:49152->10.20.0.5:443 TCP (SYN)] is '
+                         'permitted but policy requires it to be DENIED. '
+                         'Decided by: permit tcp 10.12.10.0 0.0.0.255 host '
+                         '10.20.0.5 eq 443 [Rules checked: the policy file you '
+                         'supplied.]',
+               'source': 'stranger-rtr-dev002:acl_in'},
+  'id': 'PC-003',
+  'severity': 'medium',
+  'status': 'found',
+  'summary': 'Traffic with a forged source address is permitted'},
+ {'check': 'policy_compliance',
+  'device': 'stranger-rtr-dev002',
+  'evidence': {'detail': 'Flow start=stranger-rtr-dev002 '
+                         '[10.10.10.0:49152->218.8.104.58:53 UDP] is denied '
+                         'but policy requires it to be PERMITTED. Decided by: '
+                         'deny   ip any any [Rules checked: the policy file '
+                         'you supplied.]',
+               'source': 'stranger-rtr-dev002:acl_in'},
+  'id': 'PC-004',
+  'severity': 'medium',
+  'status': 'found',
+  'summary': 'DNS to the approved resolver is blocked, so name lookups fail'},
+ {'check': 'policy_compliance',
+  'device': 'stranger-rtr-dev002',
+  'evidence': {'detail': 'Flow start=stranger-rtr-dev002 '
+                         '[10.10.10.0:49152->10.20.0.5:443 TCP (SYN)] is '
+                         'denied but policy requires it to be PERMITTED. '
+                         'Decided by: deny   ip any any [Rules checked: the '
+                         'policy file you supplied.]',
+               'source': 'stranger-rtr-dev002:acl_in'},
+  'id': 'PC-005',
+  'severity': 'medium',
+  'status': 'found',
+  'summary': 'HTTPS to the internal server is blocked, so the service is '
+             'unreachable'},
+ {'check': 'routing',
+  'device': 'stranger-rtr-dev002',
+  'evidence': {'detail': 'Expected REACHABLE for a flow from 10.10.10.5 to '
+                         '10.20.20.5, but traceroute ended in NO_ROUTE. Path: '
+                         'stranger-rtr-dev002',
+               'source': 'stranger-rtr-dev002:10.20.20.5'},
+  'id': 'RT-001',
+  'severity': 'medium',
+  'status': 'found',
+  'summary': 'The HQ network cannot reach the branch network'},
+ {'check': 'routing',
+  'device': 'stranger-rtr-dev002',
+  'evidence': {'detail': 'Expected REACHABLE for a flow from 10.20.20.5 to '
+                         '10.10.10.5, but traceroute ended in NO_ROUTE. Path: '
+                         'stranger-rtr-dev002',
+               'source': 'stranger-rtr-dev002:10.10.10.5'},
+  'id': 'RT-002',
+  'severity': 'medium',
+  'status': 'found',
+  'summary': 'The branch network cannot reach the HQ network'}]
+
+
 
 def _found(scan):
     return [f for f in scan if f["status"] == "found"]
@@ -472,10 +761,15 @@ def test_a_same_device_gap_beats_a_result_for_that_check():
     assert finding is not None and "could not check" in reason
 
 
-def test_an_unknown_device_gap_blocks_resolution_too():
-    """Measured: a policy naming one device of multi-device-10's ten leaves a
-    standing policy_compliance gap, device "unknown", beside real results on
-    that one device. A problem there that vanishes is unverified, not fixed."""
+def test_an_unknown_scope_gap_blocks_resolution_too():
+    """A gap on device "unknown" that does not say which devices it is about
+    must be read as hiding every device for its check.
+
+    Recorded 15 September, before PC-049 named its devices: its source was
+    a file path, so its scope is unknown. A problem on dev001 that vanishes
+    beside it is unverified, not fixed. This is still what any OTHER check's
+    "unknown" gap gets today -- RT-050, "Analysis could not run".
+    """
     target = next(f for f in _found(MULTIDEVICE_ONE_DEVICE_POLICY)
                   if f["check"] == "policy_compliance")
     later = [f for f in MULTIDEVICE_ONE_DEVICE_POLICY if f is not target]
@@ -483,6 +777,114 @@ def test_an_unknown_device_gap_blocks_resolution_too():
     assert result["resolved"] == []
     assert len(result["unverified"]) == 1
     assert "not covered" in result["unverified"][0][1]
+
+
+# --- A gap that names its devices hides only those (PC-049) ------------------------
+
+
+def _pc049(scan):
+    return next(f for f in scan if f["id"] == "PC-049")
+
+
+def test_a_device_list_source_round_trips_sorted():
+    source = C.device_list_source(["rtr-b", "rtr-a"])
+    assert source == "affected devices: rtr-a, rtr-b"
+    assert C.devices_in_source(source) == ["rtr-a", "rtr-b"]
+
+
+@pytest.mark.parametrize("source", [
+    "rtr-us5: acl_in",                        # access_control's own shape
+    "rtr-branch, rtr-hq",                     # a clean sentinel's shape
+    "analysis/checks/policy_compliance.py",   # PC-049 before this change
+    "affected devices: ",                     # a list of nobody
+    "",
+    None,
+])
+def test_anything_else_is_not_a_device_list(source):
+    """None means "not a list", so the gap keeps unknown scope. Reading any
+    of these as a list would narrow a gap on a guess."""
+    assert C.devices_in_source(source) is None
+
+
+def test_pc049_lists_every_uncovered_device_in_its_source():
+    """The detail stops at five names, for a reader. The source must not:
+    it is what tells scan_diff a device is NOT in the gap."""
+    card = _pc049(MD10_DEV001_POLICY)
+    listed = C.devices_in_source(card["evidence"]["source"])
+    assert listed is not None and len(listed) == 9
+    assert "stranger-rtr-dev001" not in listed
+    assert "and 4 more" in card["evidence"]["detail"]
+    covers = [g["covers"] for g in D.make_scan(MD10_DEV001_POLICY)["coverage"]["gaps"]
+              if g["check"] == "policy_compliance"]
+    assert covers == [listed]
+
+
+def test_a_genuine_fix_beside_an_open_pc049_is_resolved():
+    """THE CASE THIS EXISTS FOR, recorded, not built. The config was fixed
+    and the policy was not, while PC-049 stayed open about nine other
+    devices. Before PC-049 named them, PC-004 here was unverified.
+
+    AC-002 is the same fix and is NOT asserted resolved: access_control
+    leaves dev001 with no result at all in the later scan (#364).
+    """
+    result = D.diff(D.make_scan(MD10_DEV001_POLICY, policy_hash="same"),
+                    D.make_scan(MD10_DEV001_POLICY_DNS_FIXED, policy_hash="same"))
+    assert [(f["id"], f["device"]) for f in result["resolved"]] == [
+        ("PC-004", "stranger-rtr-dev001")]
+    assert [f["check"] for f, _ in result["unverified"]] == ["access_control"]
+
+
+def test_a_device_that_becomes_uncovered_is_not_resolved():
+    """The other direction, recorded. The policy moved from dev001 to dev002
+    and NO policy_hash was stored, so the policy-change guard cannot fire.
+    Every dev001 finding vanished; none of them was fixed."""
+    result = D.diff(D.make_scan(MD10_DEV001_POLICY), D.make_scan(MD10_DEV002_POLICY))
+    assert result["resolved"] == []
+    reasons = {f["id"]: why for f, why in result["unverified"]
+               if f["check"] == "policy_compliance"}
+    assert sorted(reasons) == ["PC-003", "PC-004", "PC-005"]
+    assert all("not covered" in why for why in reasons.values())
+
+
+def test_a_listed_device_is_hidden_even_beside_a_result():
+    """Constructed with the real helpers: a gap that LISTS dev001 hides it
+    even though the same check has a result for dev001. PC-049 cannot
+    produce that pairing -- a device it lists has no rules -- so the
+    recorded tests above never reach this branch."""
+    kept = next(f for f in MD10_DEV001_POLICY if f["id"] == "PC-003")
+    gone = next(f for f in MD10_DEV001_POLICY if f["id"] == "PC-004")
+    gap = F.error_finding(
+        check="policy_compliance", device="unknown",
+        summary="2 of 10 device(s) are not covered", detail="constructed",
+        source=C.device_list_source(["stranger-rtr-dev001", "stranger-rtr-dev002"]),
+        number=49)
+    result = D.diff(D.make_scan([kept, gone]), D.make_scan([kept, gap]))
+    assert result["resolved"] == []
+    assert "not covered" in result["unverified"][0][1]
+
+
+def test_a_gap_naming_one_device_hides_only_that_device():
+    """Constructed with the real helpers. Per-item errors name the real
+    device; that must not blind the same check on every other device."""
+    kept = next(f for f in MD10_DEV001_POLICY if f["id"] == "PC-003")
+    gone = next(f for f in MD10_DEV001_POLICY if f["id"] == "PC-004")
+    elsewhere = F.error_finding(
+        check="policy_compliance", device="stranger-rtr-dev002",
+        summary="Could not check a rule on dev002", detail="constructed",
+        source="stranger-rtr-dev002: acl_in", number=90)
+    result = D.diff(D.make_scan([kept, gone]), D.make_scan([kept, elsewhere]))
+    assert [f["id"] for f in result["resolved"]] == ["PC-004"]
+
+
+def test_a_gap_with_no_covers_key_hides_every_device():
+    """A gap stored before `covers` existed must never hide LESS than the
+    rule it replaced. Built from a real scan with the key removed."""
+    earlier = D.make_scan(MD10_DEV001_POLICY, policy_hash="same")
+    later = D.make_scan(MD10_DEV001_POLICY_DNS_FIXED, policy_hash="same")
+    for gap in later["coverage"]["gaps"]:
+        del gap["covers"]
+    result = D.diff(earlier, later)
+    assert result["resolved"] == []
 
 
 # --- What else stops a claim ------------------------------------------------------

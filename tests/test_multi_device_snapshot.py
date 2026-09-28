@@ -111,3 +111,22 @@ def test_each_uncovered_device_is_named_or_counted(monkeypatch, name):
     assert name in detail or "more" in detail, (
         f"{name} is neither named nor covered by a 'and N more': {detail}"
     )
+
+
+def test_the_source_lists_every_uncovered_device_where_the_detail_stops(monkeypatch):
+    """The detail truncates for a reader; the source must not (#315).
+
+    scan_diff can only report a fix on the covered device as resolved if the
+    gap says which devices it is about. A truncated list would make the
+    sixth-onward devices look covered, which is the dangerous direction.
+    """
+    from analysis import coverage
+
+    names = _device_names_on_disk()
+    monkeypatch.setattr(policy_compliance.snapshot, "device_names", lambda bf: names)
+    monkeypatch.setattr(policy_compliance, "_search", lambda *a, **k: [])
+
+    card = next(f for f in policy_compliance.run(_FakeSession()) if f["id"] == "PC-049")
+    covered = {r["node"] for r in policy_compliance.POLICY_RULES}
+
+    assert coverage.devices_in_source(card["evidence"]["source"]) == sorted(names - covered)
