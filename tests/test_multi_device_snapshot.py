@@ -86,9 +86,16 @@ def test_the_uncovered_devices_are_reported_not_silently_skipped(monkeypatch):
 
     results = policy_compliance.run(_FakeSession())
 
-    assert not any(f["status"] == "none" for f in results), (
-        "nine of ten devices were never examined; this must not be a green tick"
-    )
+    # Since #364 the one covered device may be reported clean -- it was
+    # checked -- but no green card may vouch for any of the other nine.
+    from analysis import coverage
+
+    covered = {r["node"] for r in policy_compliance.POLICY_RULES} & names
+    for f in results:
+        if f["status"] == "none":
+            vouched = set(coverage.devices_in_source(f["evidence"]["source"]) or [f["device"]])
+            assert vouched <= covered, (
+                f"nine of ten devices were never examined; {f['id']} vouches for {vouched - covered}")
     card = next(f for f in results if f["id"] == "PC-049")
     assert "9 of 10" in card["summary"], card["summary"]
 

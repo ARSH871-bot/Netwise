@@ -55,7 +55,7 @@ from pybatfish.client.session import Session
 from pybatfish.datamodel.flow import HeaderConstraints
 
 from analysis import policy as policy_module
-from analysis import findings, snapshot
+from analysis import coverage, findings, snapshot
 
 # The name this check is registered under, and the value that goes in every
 # finding's "check" field.
@@ -297,7 +297,8 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                         "either way. The analyses that need no policy -- dead rules "
                         "and undefined references -- still ran."
                     ),
-                    source="analysis/checks/access_control.py",
+                    # Listed, so it blocks no present device's all-clear (#364).
+                    source=coverage.device_list_source(absent),
                     number=next(numbering),
                 )
             )
@@ -331,23 +332,42 @@ def run(bf: Session) -> List[Dict[str, Any]]:
     # it, not by reading the code. Making `results` non-empty suppresses the
     # sentinel, which is the same trade PC-049 makes (#229).
 
-    # Only claim "all clear" if every analysis ran AND found nothing. If any
-    # produced an error finding, `results` is non-empty and we never get here --
-    # which is the point.
+    # THE ALL-CLEAR NAMES EXACTLY THE DEVICES IT VOUCHES FOR (#364).
+    #     It used to appear only when nothing else was found, naming the first
+    #     device. One finding anywhere hid every clean device, so a fix read
+    #     as the check going blind. Now it sits beside other findings and lists
+    #     the covered devices none of them is about. An error of unknown scope
+    #     still suppresses it entirely -- see coverage.devices_still_clean().
+    covered = {s["node"] for s in policy} | {g["node"] for g in guarantees}
+    clean = coverage.devices_still_clean(results, covered)
+    if clean:
+        partial = any(f["status"] in ("found", "error") for f in results)
+        held = sum(1 for s in policy if s["node"] in clean)
+        proven = sum(1 for g in guarantees if g["node"] in clean)
+        results.append(
+            findings.no_issues_finding(
+                check=CHECK_NAME,
+                device=clean[0],
+                summary="No issues found by access control",
+                detail=(
+                    f"{held} policy statement(s) hold, {proven} guarantee(s) "
+                    "proven, no dead rules, no undefined references"
+                    + (" on the device(s) listed; other findings below are "
+                       "about other devices" if partial else "")
+                ),
+                source=coverage.device_list_source(clean),
+            )
+        )
     if not results:
         return [
             findings.no_issues_finding(
                 check=CHECK_NAME,
-                device=statements[0]["node"] if statements else "unknown",
+                device="unknown",
                 summary="No issues found by access control",
-                detail=(
-                    f"{len(statements)} policy statement(s) hold, {len(GUARANTEES)} "
-                    "guarantee(s) proven, no dead rules, no undefined references"
-                ),
-                source=", ".join(sorted({s["node"] for s in statements})),
+                detail="0 policy statement(s) hold, no dead rules, no undefined references",
+                source="analysis/checks/access_control.py",
             )
         ]
-
     return results
 
 

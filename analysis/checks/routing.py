@@ -116,7 +116,7 @@ from pybatfish.client.session import Session
 from pybatfish.datamodel.flow import HeaderConstraints
 
 from analysis import policy as policy_module
-from analysis import findings, snapshot
+from analysis import coverage, findings, snapshot
 
 # The name this check is registered under, and the value in every "check" field.
 CHECK_NAME = "routing"
@@ -392,7 +392,8 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                     + " not in this snapshot. Nothing is claimed about them "
                     "either way."
                 ),
-                source="analysis/checks/routing.py",
+                # Listed, so it blocks no present device's all-clear (#364).
+                source=coverage.device_list_source(absent),
                 number=SKIPPED_NUMBER,
             )
         )
@@ -483,6 +484,21 @@ def run(bf: Session) -> List[Dict[str, Any]]:
     # cannot currently be reached with applicable empty -- but a sentence
     # claiming "all 2 assertions hold" when none of them ran would be wrong the
     # day that stops being true, and it is the kind of wrong nobody re-reads.
+    # THE ALL-CLEAR NAMES EXACTLY THE DEVICES IT VOUCHES FOR (#364): the
+    # covered devices no finding above is about. An error of unknown scope
+    # still suppresses it -- see coverage.devices_still_clean().
+    clean = coverage.devices_still_clean(results, {r["node"] for r in applicable})
+    if clean:
+        held = [r for r in applicable if r["node"] in clean]
+        results.append(
+            findings.no_issues_finding(
+                check=CHECK_NAME,
+                device=clean[0],
+                summary="No issues found by routing",
+                detail=f"All {len(held)} route assertion(s) about the device(s) listed hold",
+                source=coverage.device_list_source(clean),
+            )
+        )
     if not results:
         return [
             findings.no_issues_finding(

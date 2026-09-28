@@ -819,8 +819,13 @@ Re-measured with `python -m tools.stranger_config`:
 ```
                         ours        stranger      + their policy
                        f/n/e       our policy         f/n/e
-TOTAL              12 /  3 /  7   3 / 0 / 15      13 /  3 / 21
+TOTAL              12 /  4 /  7   3 / 0 / 15      13 /  4 / 21
 ```
+
+Re-measured 28 September, after #364. Until then it read `12 / 3 / 7` and
+`13 / 3 / 21`: the found and error columns are unchanged, and each gained one
+clean result because an all-clear now appears beside other findings, naming
+only the devices it vouches for.
 
 **Read 10, not 13.** Three of those thirteen are our two routing assertions
 rebound onto a stranger's single router, which asks whether one subnet

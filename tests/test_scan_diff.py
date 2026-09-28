@@ -13,7 +13,8 @@ THE SCANS BELOW ARE REAL
     same; only the error text differs. The run against a genuinely stopped
     container is recorded on the pull request.
 
-    The three MD10_* lists were recorded the same way on 23 September, on
+    The three MD10_* lists were recorded the same way, re-recorded on 28
+    September after #364 (all-clears now name their devices), on
     multi-device-10 with a policy naming one device: dev001, the same with
     dev001's config given the DNS permit its policy tests for, and dev002.
     They postdate PC-049 naming its devices, and access_control and routing
@@ -388,7 +389,7 @@ MD10_DEV001_POLICY = [{'check': 'access_control',
                          'snapshot. Nothing is claimed about them either way. '
                          'The analyses that need no policy -- dead rules and '
                          'undefined references -- still ran.',
-               'source': 'analysis/checks/access_control.py'},
+               'source': 'affected devices: rtr-us5'},
   'id': 'AC-001',
   'severity': 'high',
   'status': 'error',
@@ -488,7 +489,7 @@ MD10_DEV001_POLICY_DNS_FIXED = [{'check': 'access_control',
                          'snapshot. Nothing is claimed about them either way. '
                          'The analyses that need no policy -- dead rules and '
                          'undefined references -- still ran.',
-               'source': 'analysis/checks/access_control.py'},
+               'source': 'affected devices: rtr-us5'},
   'id': 'AC-001',
   'severity': 'high',
   'status': 'error',
@@ -558,7 +559,18 @@ MD10_DEV001_POLICY_DNS_FIXED = [{'check': 'access_control',
   'id': 'RT-002',
   'severity': 'medium',
   'status': 'found',
-  'summary': 'The branch network cannot reach the HQ network'}]
+  'summary': 'The branch network cannot reach the HQ network'},
+ {'check': 'access_control',
+  'device': 'stranger-rtr-dev001',
+  'evidence': {'detail': '2 policy statement(s) hold, 0 guarantee(s) proven, '
+                         'no dead rules, no undefined references on the '
+                         'device(s) listed; other findings below are about '
+                         'other devices',
+               'source': 'affected devices: stranger-rtr-dev001'},
+  'id': 'AC-000',
+  'severity': 'low',
+  'status': 'none',
+  'summary': 'No issues found by access control'}]
 
 MD10_DEV002_POLICY = [{'check': 'access_control',
   'device': 'rtr-us5',
@@ -566,7 +578,7 @@ MD10_DEV002_POLICY = [{'check': 'access_control',
                          'snapshot. Nothing is claimed about them either way. '
                          'The analyses that need no policy -- dead rules and '
                          'undefined references -- still ran.',
-               'source': 'analysis/checks/access_control.py'},
+               'source': 'affected devices: rtr-us5'},
   'id': 'AC-001',
   'severity': 'high',
   'status': 'error',
@@ -824,14 +836,17 @@ def test_a_genuine_fix_beside_an_open_pc049_is_resolved():
     and the policy was not, while PC-049 stayed open about nine other
     devices. Before PC-049 named them, PC-004 here was unverified.
 
-    AC-002 is the same fix and is NOT asserted resolved: access_control
-    leaves dev001 with no result at all in the later scan (#364).
+    AC-002 is the same fix. Until #364 it stayed unverified, and dev001 read
+    as newly blind, because access_control said nothing at all about a clean
+    device while it had an error elsewhere. It now emits an all-clear naming
+    dev001, recorded above as AC-000, so both fixes resolve.
     """
     result = D.diff(D.make_scan(MD10_DEV001_POLICY, policy_hash="same"),
                     D.make_scan(MD10_DEV001_POLICY_DNS_FIXED, policy_hash="same"))
-    assert [(f["id"], f["device"]) for f in result["resolved"]] == [
-        ("PC-004", "stranger-rtr-dev001")]
-    assert [f["check"] for f, _ in result["unverified"]] == ["access_control"]
+    assert sorted((f["id"], f["device"]) for f in result["resolved"]) == [
+        ("AC-002", "stranger-rtr-dev001"), ("PC-004", "stranger-rtr-dev001")]
+    assert result["unverified"] == []
+    assert result["newly_blind"] == []
 
 
 def test_a_device_that_becomes_uncovered_is_not_resolved():
@@ -939,3 +954,39 @@ def test_make_scan_never_trusts_a_supplied_coverage_claim():
 def test_a_scan_without_coverage_is_refused():
     with pytest.raises(ValueError):
         D.diff({"findings": []}, D.make_scan([]))
+
+
+# --- #364: an all-clear names the devices it vouches for ---------------------------
+
+def _f(status, device, source="x", check="access_control"):
+    return {"id": "AC-001", "check": check, "severity": "high", "device": device,
+            "summary": "s", "evidence": {"detail": "d", "source": source}, "status": status}
+
+
+def test_a_finding_on_one_device_leaves_the_others_clean():
+    results = [_f("found", "rtr-a"), _f("error", "rtr-b")]
+    assert C.devices_still_clean(results, {"rtr-a", "rtr-b", "rtr-c"}) == ["rtr-c"]
+
+
+def test_an_error_of_unknown_scope_vouches_for_nobody():
+    """The rule #228 exists for: an error that may be about any device means
+    no device can be called clean."""
+    results = [_f("error", "unknown", source="analysis/checks/access_control.py")]
+    assert C.devices_still_clean(results, {"rtr-a", "rtr-b"}) == []
+
+
+def test_an_error_that_lists_its_devices_blocks_only_those():
+    listed = C.device_list_source(["rtr-a", "rtr-z"])
+    results = [_f("error", "unknown", source=listed)]
+    assert C.devices_still_clean(results, {"rtr-a", "rtr-b"}) == ["rtr-b"]
+
+
+def test_a_nothing_to_check_note_is_not_a_problem():
+    note = _f("none", "n/a", source="the policy file you supplied")
+    assert C.devices_still_clean([note], {"rtr-a"}) == ["rtr-a"]
+
+
+def test_every_device_an_all_clear_lists_counts_as_checked():
+    clean = _f("none", "rtr-a", source=C.device_list_source(["rtr-a", "rtr-b"]))
+    checked = {r["device"] for r in C.summarise([clean])["checked"]}
+    assert checked == {"rtr-a", "rtr-b"}

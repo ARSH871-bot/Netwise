@@ -90,6 +90,36 @@ def devices_in_source(source: Any) -> Optional[List[str]]:
     return names or None
 
 
+def devices_still_clean(results: Iterable[Dict[str, Any]],
+                        covered: Iterable[str]) -> List[str]:
+    """The devices in `covered` that no finding in `results` is about, sorted.
+
+    Each check uses this to emit its all-clear BESIDE other findings (#364),
+    naming exactly the devices it can vouch for. Before, one finding anywhere
+    suppressed the all-clear for every device, so a device whose problems
+    were all fixed had no result at all, and a scan diff read the fix as the
+    check going blind on it.
+
+    A found or error finding names its device, or lists them in its source,
+    and those are not clean. A finding of UNKNOWN scope -- device "unknown"
+    and no device list -- may be about any device, so nothing is vouched
+    for: the answer is empty, exactly as before this existed.
+    """
+    clean = set(covered)
+    for finding in results:
+        if finding.get("status") not in ("found", "error"):
+            continue
+        device = str(finding.get("device") or "unknown")
+        if device != "unknown":
+            clean.discard(device)
+            continue
+        listed = devices_in_source((finding.get("evidence") or {}).get("source"))
+        if listed is None:
+            return []
+        clean -= set(listed)
+    return sorted(clean)
+
+
 def _label(finding: Dict[str, Any]) -> Tuple[str, str]:
     return (
         str(finding.get("check") or "unknown"),
@@ -128,6 +158,12 @@ def summarise(
 
         if status in {"found", "none"}:
             checked.add((check, device))
+            # An all-clear lists every device it vouches for (#364), so each
+            # of them was checked -- not only the one in its `device` field.
+            if status == "none":
+                source = (finding.get("evidence") or {}).get("source")
+                for listed in devices_in_source(source) or []:
+                    checked.add((check, listed))
             continue
 
         if status != "error":

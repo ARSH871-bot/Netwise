@@ -105,14 +105,19 @@ def test_an_empty_snapshot_is_not_the_same_as_an_unreadable_one():
 # --- access_control's use of it ----------------------------------------------
 
 
-def _run_with_devices(monkeypatch, present):
-    """Run the check with a known device set and the Batfish analyses stubbed."""
+def _run_with_devices(monkeypatch, present, dead_rules=()):
+    """Run the check with a known device set and the Batfish analyses stubbed.
+
+    `dead_rules` is what the dead-rule analysis returns. It is a parameter,
+    not a monkeypatch a test applies first, because this function stubs that
+    analysis itself and would silently overwrite it (#364's own tests did).
+    """
     monkeypatch.setattr(snapshot, "device_names", lambda bf: present)
     monkeypatch.setattr(access_control.snapshot, "device_names", lambda bf: present)
     for fn in ("_check_policy_statements", "_check_guarantees"):
         monkeypatch.setattr(access_control, fn, lambda bf, n, items: [])
-    for fn in ("_check_dead_rules", "_check_undefined_references"):
-        monkeypatch.setattr(access_control, fn, lambda bf, n: [])
+    monkeypatch.setattr(access_control, "_check_dead_rules", lambda bf, n: list(dead_rules))
+    monkeypatch.setattr(access_control, "_check_undefined_references", lambda bf, n: [])
     return access_control.run(_FakeSession())
 
 
@@ -396,16 +401,31 @@ def test_routing_scoping_card_id_cannot_collide_with_a_statement(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_a_partly_covered_snapshot_never_reports_all_clear(monkeypatch):
-    """THE #228 REGRESSION. One covered device among fifty is not "all clear"."""
+def test_a_partly_covered_snapshot_never_vouches_for_an_uncovered_device(monkeypatch):
+    """THE #228 REGRESSION, restated for #364.
+
+    One covered device among fifty is not "all clear" for the fifty. Until
+    #364 that was enforced by allowing no clean result at all, which also
+    hid the one device that WAS checked. Now the check may say that one is
+    clean, but its green card must vouch for it alone, and the uncovered
+    card must still name all forty-nine.
+    """
+    from analysis import coverage
+
     present = {"rtr-us5"} | {"rtr-dev%03d" % i for i in range(49)}
     results = _run_policy_with_devices(monkeypatch, present)
 
-    assert not any(f["status"] == "none" for f in results), (
-        "a snapshot where 49 of 50 devices were never examined must not "
-        f"produce a clean sentinel; got {[(f['id'], f['status']) for f in results]}"
-    )
-    assert any(f["status"] == "error" for f in results)
+    for f in results:
+        if f["status"] == "none":
+            vouched = coverage.devices_in_source(f["evidence"]["source"]) or [f["device"]]
+            assert vouched == ["rtr-us5"], (
+                f"{f['id']} vouches for {vouched}; only rtr-us5 was examined")
+    card = next(f for f in results if f["id"] == "PC-049")
+    assert "49 of 50" in card["summary"]
+    assert set(coverage.devices_in_source(card["evidence"]["source"])) == present - {"rtr-us5"}
+    checked = {row["device"] for row in coverage.summarise(results)["checked"]
+               if row["check"] == "policy_compliance"}
+    assert checked == {"rtr-us5"}
 
 
 def test_the_uncovered_card_says_how_many_and_which(monkeypatch):
@@ -463,3 +483,78 @@ def test_the_uncovered_id_cannot_collide_with_any_other_band():
     assert uncovered not in {n + offset for n in numbers}, "collides with a rule error id"
     assert uncovered != policy_compliance.SKIPPED_NUMBER
     assert uncovered != 0, "must not collide with the clean sentinel"
+
+
+# --- #364: an all-clear beside other findings names exactly the clean devices ---
+#
+# Until #364 one finding anywhere suppressed a check's all-clear for EVERY
+# device, so a device whose problems were all fixed had no result at all.
+# These drive the real run() of each check with Batfish stubbed.
+
+from analysis import coverage, findings as F  # noqa: E402
+
+
+def _vouched(results):
+    """Every device any green card in `results` vouches for."""
+    out = set()
+    for f in results:
+        if f["status"] == "none" and f["device"] != "n/a":
+            out |= set(coverage.devices_in_source(f["evidence"]["source"]) or [f["device"]])
+    return out
+
+
+def _dead_rule_on(device):
+    return F.make_finding(check="access_control", severity="low", device=device,
+                          summary="ACL rule never takes effect in acl_in",
+                          detail="Unreachable line: permit ip any any",
+                          source=f"{device}: acl_in", status="found", number=90)
+
+
+def test_access_control_vouches_for_a_clean_device_beside_a_problem_on_another(monkeypatch):
+    results = _run_with_devices(monkeypatch, {"rtr-us5", "rtr-edge"},
+                                dead_rules=[_dead_rule_on("rtr-edge")])
+    assert any(f["status"] == "found" and f["device"] == "rtr-edge" for f in results)
+    assert _vouched(results) == {"rtr-us5"}
+
+
+def test_access_control_never_vouches_for_a_device_with_a_problem(monkeypatch):
+    results = _run_with_devices(monkeypatch, {"rtr-us5"},
+                                dead_rules=[_dead_rule_on("rtr-us5")])
+    assert any(f["status"] == "found" and f["device"] == "rtr-us5" for f in results)
+    assert _vouched(results) == set()
+
+
+class _HoldingTraceFrame:
+    """A non-empty traceroute answer; routing._evaluate is stubbed to say
+    the statement holds, so which devices are vouched for is all that varies."""
+    empty = False
+    iloc = [{"Traces": []}]
+
+
+class _HoldingRoutingSession:
+    class q:  # noqa: N801 -- mirrors pybatfish's bf.q
+        @staticmethod
+        def traceroute(**_kwargs):
+            return _FakeAnswer(_HoldingTraceFrame())
+
+
+def test_routing_vouches_for_the_present_device_beside_an_absent_one(monkeypatch):
+    """One router of the two is absent: its statements get the scoping card,
+    and the present one's statements, which hold, still get an all-clear."""
+    monkeypatch.setattr(routing.snapshot, "device_names", lambda bf: {"rtr-hq"})
+    monkeypatch.setattr(routing, "_evaluate", lambda expected, traces: None)
+    results = routing.run(_HoldingRoutingSession())
+    assert any(f["status"] == "error" for f in results), "the absent router is still reported"
+    assert _vouched(results) == {"rtr-hq"}
+
+
+def test_an_absent_devices_card_lists_them_so_it_blocks_no_present_device(monkeypatch):
+    """Two absent devices used to make this card device="unknown" with a file
+    path for a source -- unknown scope, which vouches for nobody."""
+    rules = [dict(r, node=node) for node in ("rtr-us5", "rtr-gone1", "rtr-gone2")
+             for r in policy_compliance.POLICY_RULES[:1]]
+    monkeypatch.setattr(policy_compliance, "rules_in_use", lambda: (rules, "test rules", True))
+    results = _run_policy_with_devices(monkeypatch, {"rtr-us5"})
+    card = next(f for f in results if f["status"] == "error")
+    assert coverage.devices_in_source(card["evidence"]["source"]) == ["rtr-gone1", "rtr-gone2"]
+    assert _vouched(results) == {"rtr-us5"}
