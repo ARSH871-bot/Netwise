@@ -57,8 +57,12 @@ SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 #: The F-1 fields, in the order a CSV reader expects to meet them, plus one
 #: derived column -- see `is_nothing_to_check()` for why it exists and why it
 #: is not part of F-1.
+# `report_subject` is LAST, and is not called `source`, because `source`
+# is already taken by the evidence field -- two different meanings of the
+# word one column apart would be a trap rather than a label.
 CSV_COLUMNS = ("id", "check", "status", "severity", "device",
-               "summary", "detail", "source", "nothing_to_check")
+               "summary", "detail", "source", "nothing_to_check",
+               "report_subject")
 
 #: The `device` value a check uses when a finding is ABOUT THE CHECK rather
 #: than about any device. Today exactly one producer emits it --
@@ -137,12 +141,37 @@ def _now() -> str:
 # ---------------------------------------------------------------------------
 
 
-def render_csv(findings: Sequence[Dict[str, Any]]) -> str:
+def render_csv(findings: Sequence[Dict[str, Any]],
+               source: Optional[str] = None) -> str:
     """Every finding, one row each, including the ones that could not run.
 
     A `status` COLUMN rather than only the rows that found something -- an
     export that silently dropped the error rows would let a spreadsheet
     reader count problems and conclude the rest was clean.
+
+    WHAT `source` IS FOR, AND WHY IT IS A COLUMN ON EVERY ROW (#347, #308)
+        The same string `render_html()` prints under the title: what this
+        report describes. It exists here because it did not, and that was a
+        real hole -- the HTML export carried "SAMPLE NETWORK (invented
+        demonstration data)" and the CSV of the same findings carried
+        nothing at all, so the two formats made different claims about the
+        same data.
+
+        #308's rule is that a statement about what the data is must appear
+        on every surface that shows the data, or on none. A CSV is the
+        surface most likely to outlive the label: it gets pasted into a
+        spreadsheet and forwarded, and by then there is no title, no banner
+        and no filename.
+
+        REPEATED ON EVERY ROW RATHER THAN WRITTEN ONCE ABOVE THE HEADER.
+        A comment line before the header breaks most CSV readers, and a
+        single labelled row does not survive what people actually do to a
+        spreadsheet -- sorting it, filtering it, or pasting a few rows into
+        an email. Per row is redundant and survives all three.
+
+        Optional, defaulting to None, so every existing caller keeps
+        working; when it is absent the column is present and empty, which
+        is the honest rendering of "this report does not say".
     """
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
@@ -169,6 +198,7 @@ def render_csv(findings: Sequence[Dict[str, Any]]) -> str:
             # column as a second status. Filterable either way in a
             # spreadsheet, which is the point of having it at all.
             "yes" if is_nothing_to_check(finding) else "",
+            source or "",
         ])
     return buffer.getvalue()
 
