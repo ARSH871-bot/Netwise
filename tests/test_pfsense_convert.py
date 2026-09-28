@@ -364,6 +364,43 @@ def test_a_nat_generated_rule_alongside_an_unmodellable_interface_gets_its_own_n
     assert "NAT-generated" in joined or "associated-rule-id" in joined
 
 
+def test_the_clients_actual_combined_shape_converts_with_every_anomaly_named():
+    """#78's real shape, all at once, in one file -- a DHCP WAN, an
+    undeclared VPN role, a NAT-generated rule, and a rule missing <type>,
+    alongside a genuinely good LAN rule. No fixture combining all of these
+    existed before this test (confirmed: every prior test above builds one
+    or two anomalies at a time). This is the "both halves tested, the join
+    between them is not" gap CLAUDE.md section 11 warns about, closed for
+    this specific combination -- four independent reasons for four
+    independent exclusions, the good rule still converts, and one
+    anomaly's message never mentions another's cause."""
+    xml_text = _minimal_xml(
+        interfaces_xml=_dhcp_wan_and_lan_interfaces(),
+        rules_xml=(
+            _rule_on("wan")
+            + _rule_on("WireGuard")
+            + _nat_generated_rule_on("lan")
+            + "<rule><interface>lan</interface><protocol>tcp</protocol>"
+            "<source><any/></source><destination><any/></destination></rule>"
+            + _ONE_BENIGN_LAN_RULE
+        ),
+    )
+    result = _convert_string_full(xml_text)
+
+    assert len(result.skipped) == 4
+    joined = " | ".join(result.skipped)
+    assert "wan" in joined and "no static address configured" in joined
+    assert "WireGuard" in joined and "not declared under <interfaces>" in joined
+    assert "NAT-generated" in joined or "associated-rule-id" in joined
+    assert "absent" in joined  # the missing <type>
+
+    # The good rule still converts, and nothing anomalous leaks into it.
+    assert "permit tcp any any" in result.text
+    assert "WireGuard" not in result.text
+    assert "em0" not in result.text
+    assert result.text.count("ip access-list extended") == 1  # only lan
+
+
 def test_when_every_rule_is_nat_generated_it_refuses_with_the_specific_reason():
     """A distinct refusal from an empty <filter> (no rules ever existed) and
     from every rule missing <interface> (no_interface_named) -- the file had
@@ -474,22 +511,81 @@ def test_protocol_any_becomes_cisco_ip():
     assert "permit ip any any" in _convert_string(xml_text)
 
 
-def test_unsupported_rule_type_raises():
+def test_unsupported_rule_type_is_skipped_and_named_the_real_reason():
+    """Used to abort the WHOLE FILE for one bad <type> (#78 item 4,
+    re-scoped the same way item 1/2 were in #104): the rule is excluded and
+    named in `skipped` instead, and everything else still converts. Since
+    this rule is the only one on `lan`, the interface still gets a bound ACL
+    -- fail-closed with `deny ip any any`, same as any interface with no
+    convertible rules."""
     xml_text = _minimal_xml(rules_xml="""
         <rule><type>match</type><interface>lan</interface><protocol>tcp</protocol>
         <source><any/></source><destination><any/></destination></rule>
     """)
-    with pytest.raises(PfSenseConversionError):
-        _convert_string(xml_text)
+    result = _convert_string_full(xml_text)
+    assert len(result.skipped) == 1
+    assert "lan" in result.skipped[0]
+    assert "not pass, block or reject" in result.skipped[0]
+    assert "deny ip any any" in result.text
 
 
-def test_combined_tcp_udp_protocol_raises_rather_than_guessing():
+def test_a_rule_with_no_type_element_at_all_gets_its_own_precise_message():
+    """The other half of #80's inconsistency, and the reason #78 item 4 was
+    unresolved: a MISSING <type> and an INVALID <type> used to produce the
+    identical confusing string ("...is not pass, block or reject: <type> is
+    None"), conflating "this module does not recognise this value" with
+    "this field was never written". Split the same way #104 split the
+    DHCP-WAN and undeclared-VPN interface messages. Still refuses -- there is
+    no safe default for pass/block/reject the way "any" is one for protocol
+    -- but names the real, distinct reason and does not touch the whole
+    file's other rules."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/></source><destination><any/></destination></rule>
+    """)
+    result = _convert_string_full(xml_text)
+    assert len(result.skipped) == 1
+    assert "absent" in result.skipped[0]
+    assert "not pass, block or reject" not in result.skipped[0], (
+        "a missing <type> must not reuse the present-but-invalid message"
+    )
+    assert "deny ip any any" in result.text
+
+
+def test_two_rules_on_the_same_role_failing_for_different_reasons_get_separate_notes():
+    """The heterogeneous counterpart to
+    test_two_nat_generated_rules_are_counted_together_not_one_note_each:
+    NAT-generated rules are merged into one note because they all share the
+    exact same cause. Rule-level conversion failures do not -- one rule can
+    be missing <type> while another has an out-of-range port -- so each gets
+    its own note naming its own real reason, never blended into a single
+    generic one."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/></source><destination><any/></destination></rule>
+        <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/></source><destination><address>10.0.0.5</address><port>0</port></destination></rule>
+    """)
+    result = _convert_string_full(xml_text)
+    assert len(result.skipped) == 2
+    reasons = " ".join(result.skipped)
+    assert "absent" in reasons
+    assert "<port> is '0'" in reasons or "0" in reasons
+    assert "deny ip any any" in result.text
+
+
+def test_combined_tcp_udp_protocol_is_skipped_not_guessed_and_not_fatal():
+    """Still refuses to guess at 'tcp/udp' -- it still needs two Cisco ACL
+    lines this module does not build -- but that refusal no longer takes the
+    whole file down with it."""
     xml_text = _minimal_xml(rules_xml="""
         <rule><type>pass</type><interface>lan</interface><protocol>tcp/udp</protocol>
         <source><any/></source><destination><any/></destination></rule>
     """)
-    with pytest.raises(PfSenseConversionError):
-        _convert_string(xml_text)
+    result = _convert_string_full(xml_text)
+    assert len(result.skipped) == 1
+    assert "tcp/udp" in result.skipped[0]
+    assert "deny ip any any" in result.text
 
 
 # --- Rules: source/destination resolution ---------------------------------------
@@ -530,25 +626,140 @@ def test_port_is_not_emitted_for_protocol_any():
     assert "eq" not in output
 
 
-def test_a_named_alias_in_address_raises_rather_than_being_emitted_as_a_host():
+# --- #80: what an ABSENT <protocol> means, read from pfSense's own source ------------
+#
+# Commit 480a1c0626 of github.com/pfsense/pfsense, read 28 September 2026:
+#
+#   firewall_rules_edit.php:1195  a rule saved as "any" has its <protocol>
+#                                 UNSET -- absence is how "any" is stored
+#   firewall_rules_edit.php:619   the GUI zeroes every port unless the
+#                                 protocol is tcp, udp or tcp/udp
+#   filter.inc:4497               no <protocol> BUT a port set -> "proto tcp"
+#   filter.inc:3930               a port is emitted only for tcp/udp
+#
+# So an absent <protocol> is "any" (-> Cisco `ip`, correct), EXCEPT when the rule
+# still carries a port, which only hand-edited XML can produce: pfSense then
+# enforces TCP to any port. And a tcp/udp rule's SOURCE port is enforced by
+# pfSense and was silently dropped here. Both are now translated EXACTLY rather
+# than refused: skipping a pass rule narrows the model, which turns a real policy
+# violation into a clean result (#302) -- the one direction worse than widening.
+
+
+def test_an_absent_protocol_without_ports_is_any_and_still_converts_to_ip():
+    """The case #80 was worried about, and it is correct: pfSense stores
+    "any" by omitting <protocol>. Refusing it would refuse valid rules --
+    four of the client's seven (#78)."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>pass</type><interface>lan</interface>
+        <source><any/></source><destination><address>192.0.2.5</address></destination></rule>
+    """)
+    result = _convert_string_full(xml_text)
+    assert result.skipped == []
+    assert "permit ip any host 192.0.2.5" in result.text
+
+
+def test_an_explicit_any_with_a_port_stays_ip_unlike_an_absent_protocol():
+    """The two look alike and pfSense treats them differently: an explicit
+    "any" sets no protocol clause at all (filter.inc:4492), while an ABSENT
+    <protocol> with a port becomes "proto tcp" (:4497). Only the absent one
+    is inferred to be TCP."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>pass</type><interface>lan</interface><protocol>any</protocol>
+        <source><any/></source><destination><address>192.0.2.5</address><port>443</port></destination></rule>
+    """)
+    assert "permit ip any host 192.0.2.5\n" in _convert_string(xml_text)
+
+
+@pytest.mark.parametrize("action,cisco", [("pass", "permit"), ("block", "deny")])
+@pytest.mark.parametrize("endpoint", ["destination", "source"])
+@pytest.mark.parametrize("protocol_xml", ["", "<protocol></protocol>"])
+def test_an_absent_protocol_with_a_port_is_tcp_to_any_port_as_pfsense_enforces(
+        action, cisco, endpoint, protocol_xml):
+    """pfSense emits "proto tcp" and no port at all (filter.inc:4497, :3930):
+    its port generator still sees the empty protocol. This used to become
+    `ip`, every protocol -- for a block rule, the model then denied traffic
+    the real firewall lets through. An empty element is the same as an
+    absent one to pfSense's empty()."""
+    ports = {"source": "", "destination": ""}
+    ports[endpoint] = "<port>443</port>"
+    xml_text = _minimal_xml(rules_xml=f"""
+        <rule><type>{action}</type><interface>lan</interface>{protocol_xml}
+        <source><any/>{ports['source']}</source>
+        <destination><address>192.0.2.5</address>{ports['destination']}</destination></rule>
+    """)
+    result = _convert_string_full(xml_text)
+    assert result.skipped == []
+    assert f"{cisco} tcp any host 192.0.2.5\n" in result.text
+    assert "eq 443" not in result.text
+
+
+@pytest.mark.parametrize("protocol", ["tcp", "udp"])
+def test_a_source_port_is_written_not_silently_dropped(protocol):
+    """pfSense enforces a tcp/udp rule's source port (filter.inc:3930).
+    Before this, the converter emitted the rule without it -- every source
+    port -- and marked nothing skipped."""
+    xml_text = _minimal_xml(rules_xml=f"""
+        <rule><type>pass</type><interface>lan</interface><protocol>{protocol}</protocol>
+        <source><any/><port>1024</port></source>
+        <destination><address>192.0.2.5</address><port>443</port></destination></rule>
+    """)
+    result = _convert_string_full(xml_text)
+    assert result.skipped == []
+    assert f"permit {protocol} any eq 1024 host 192.0.2.5 eq 443" in result.text
+
+
+@pytest.mark.parametrize("bad_port", ["1024-65535", "EPHEMERAL", "0", "65536"])
+def test_a_source_port_that_is_not_one_valid_number_is_skipped(bad_port):
+    """Ranges and aliases are refused for the source exactly as they already
+    are for the destination -- named in `skipped`, never written literally."""
+    xml_text = _minimal_xml(rules_xml=f"""
+        <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/><port>{bad_port}</port></source>
+        <destination><address>192.0.2.5</address></destination></rule>
+    """)
+    result = _convert_string_full(xml_text)
+    assert len(result.skipped) == 1
+    assert REFUSALS["invalid_port"] in result.skipped[0]
+    assert "<source> <port>" in result.skipped[0]
+    assert f"eq {bad_port}" not in result.text
+    assert "host 192.0.2.5" not in result.text
+
+
+def test_a_source_port_on_a_protocol_without_ports_is_ignored_like_pfsense():
+    """The other side of the same rule: pfSense emits no port for icmp, so
+    neither does this, and refusing would be refusing something pfSense
+    itself ignores."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>pass</type><interface>lan</interface><protocol>icmp</protocol>
+        <source><any/><port>1024</port></source>
+        <destination><address>192.0.2.5</address></destination></rule>
+    """)
+    result = _convert_string_full(xml_text)
+    assert result.skipped == []
+    assert "permit icmp any host 192.0.2.5" in result.text
+
+
+def test_a_named_alias_in_address_is_skipped_not_emitted_as_a_host():
     """Regression coverage for the review finding: PF Sense's <address> can
     hold a named alias (e.g. "TRUSTED_HOSTS") instead of a literal IP.
     Without validation this became "host TRUSTED_HOSTS" -- not valid Cisco
     syntax, and measured to NOT make Batfish reject the file outright:
     fileParseStatus reports PARTIALLY_UNRECOGNIZED and Batfish silently drops
-    just that line. Must raise here, at the layer that knows what went
-    wrong, rather than depend on analysis.pipeline's parse strictness (which
-    is itself under proposal to relax for real-world configs) as the only
-    thing catching it."""
+    just that line. Still refused at the layer that knows what went wrong,
+    rather than depending on analysis.pipeline's parse strictness -- but the
+    refusal now excludes this one rule (#78 item 4) instead of the whole
+    file, matching every other rule-level cause below."""
     xml_text = _minimal_xml(rules_xml="""
         <rule><type>pass</type><interface>lan</interface><protocol>udp</protocol>
         <source><address>TRUSTED_HOSTS</address></source><destination><any/></destination></rule>
     """)
-    with pytest.raises(PfSenseConversionError):
-        _convert_string(xml_text)
+    result = _convert_string_full(xml_text)
+    assert len(result.skipped) == 1
+    assert "TRUSTED_HOSTS" not in result.text
+    assert "deny ip any any" in result.text
 
 
-def test_a_named_alias_in_port_raises_rather_than_being_emitted_literally():
+def test_a_named_alias_in_port_is_skipped_not_emitted_literally():
     """Same class of gap as the <address> case above, found by auditing the
     rest of the module for the identical pattern once the review pointed
     out the first instance: PF Sense's <port> can hold a named alias (e.g.
@@ -558,32 +769,41 @@ def test_a_named_alias_in_port_raises_rather_than_being_emitted_literally():
         <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
         <source><any/></source><destination><address>10.0.0.5</address><port>HTTPS_ALT</port></destination></rule>
     """)
-    with pytest.raises(PfSenseConversionError):
-        _convert_string(xml_text)
+    result = _convert_string_full(xml_text)
+    assert len(result.skipped) == 1
+    assert "HTTPS_ALT" not in result.text
+    assert "deny ip any any" in result.text
 
 
-def test_port_zero_and_out_of_range_also_raise():
+def test_port_zero_and_out_of_range_are_skipped_not_fatal():
     """Boundary check for the same validation -- a port must be in the
-    valid 1-65535 range, not merely 'looks like digits'."""
+    valid 1-65535 range, not merely 'looks like digits'. Each bad port is
+    its own file here (rather than sharing one, as the old raise-based
+    version did) so each is independently confirmed to skip cleanly rather
+    than only the first one being exercised."""
     for bad_port in ("0", "65536", "999999"):
         xml_text = _minimal_xml(rules_xml=f"""
             <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
             <source><any/></source><destination><address>10.0.0.5</address><port>{bad_port}</port></destination></rule>
         """)
-        with pytest.raises(PfSenseConversionError):
-            _convert_string(xml_text)
+        result = _convert_string_full(xml_text)
+        assert len(result.skipped) == 1, bad_port
+        assert "deny ip any any" in result.text
 
 
-def test_unresolvable_network_reference_raises():
+def test_unresolvable_network_reference_is_skipped_not_guessed():
     """A network alias this converter does not resolve (e.g. PF Sense's
     'lanip', meaning the interface's own address rather than its subnet)
-    must raise, not silently fall back to something plausible-looking."""
+    is still refused rather than falling back to something plausible-
+    looking -- just scoped to this one rule now, not the whole file."""
     xml_text = _minimal_xml(rules_xml="""
         <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
         <source><network>lanip</network></source><destination><any/></destination></rule>
     """)
-    with pytest.raises(PfSenseConversionError):
-        _convert_string(xml_text)
+    result = _convert_string_full(xml_text)
+    assert len(result.skipped) == 1
+    assert "lanip" in result.skipped[0]
+    assert "deny ip any any" in result.text
 
 
 # --- Rules spanning more than one interface --------------------------------------
@@ -1185,11 +1405,12 @@ def test_refusal_summary_lists_every_category():
 def test_every_raise_site_actually_uses_a_refusals_entry():
     """Guards against the exact drift #155 was filed about: a message that
     duplicates REFUSALS wording instead of reading it, which can then drift
-    without anything noticing. Every one of the 18 refusal call sites in
+    without anything noticing. Every one of the 19 refusal call sites in
     analysis/pfsense_convert.py was audited by hand to confirm it builds its
-    message from REFUSALS; this only re-checks the mechanical half -- that
-    every entry is actually referenced somewhere in the module, so a key
-    nothing raises for is caught rather than silently accumulating.
+    message from REFUSALS (18 at #155, plus `missing_rule_type` added for
+    #78 item 4); this only re-checks the mechanical half -- that every entry
+    is actually referenced somewhere in the module, so a key nothing raises
+    for is caught rather than silently accumulating.
     """
     import inspect
 

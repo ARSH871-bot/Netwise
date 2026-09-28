@@ -213,6 +213,97 @@ def business_context_path(session_id: Optional[str] = None) -> Path:
 #: endpoint must not accept a format the loader cannot read.
 BUSINESS_CONTEXT_EXTENSIONS = {".json"}
 
+# --- Where a PF Sense conversion's skip notes are staged (#78, #302 review) -
+#
+# BESIDE THE POLICY, FOR THE SAME REASON, AND READ BACK BY THE REPORT.
+#     `pfsense_convert.convert()` can exclude a rule it could not model (a
+#     DHCP WAN, an undeclared VPN role, a bad alias) without refusing the
+#     whole file. Before this existed, that list reached the user exactly
+#     once, in the upload response, and then was gone -- a downloaded report
+#     generated later from the same staged config had no way to know
+#     anything had been excluded, and could say "Every reported check ran.
+#     Nothing was skipped." about a config that was missing real rules. See
+#     `CLAUDE.md` section 7 for why that specific claim is dangerous rather
+#     than merely imprecise: excluding a `pass` rule makes the analysed ACL
+#     STRICTER than the real device, which can make a policy violation that
+#     is real on the actual firewall report as `none` here.
+#
+#         uploaded_configs/
+#           current/
+#             configs/                 <- Batfish reads THIS
+#               device.cfg
+#             pfsense-skipped.json     <- read back by /api/report only
+def pfsense_skips_path(session_id: Optional[str] = None) -> Path:
+    """Where a session's PF Sense conversion skip notes are staged, if any."""
+    return snapshot_dir(session_id) / "pfsense-skipped.json"
+
+# --- The bundled sample network (#347, US-56) -------------------------------
+#
+# #352 removed six fabricated findings that greeted a visitor before they had
+# uploaded anything. Right call -- they were a green tick nobody had measured.
+# It also means the first screen is now empty, and an empty screen is a worse
+# advertisement than a dishonest one.
+#
+# The honest replacement is a real config the user CHOOSES to scan. Invented
+# data is fine when somebody asked to see it and the analysis of it is
+# genuine: this file goes through `analyse()` exactly like an upload, so
+# every finding it produces is real Batfish output, not a fixture of
+# pre-written results.
+#
+# WHY IT LIVES UNDER tests/fixtures/ AND NOT web/.
+#     It was written at web/sample/ first, which reads like the right home
+#     for something the web layer serves. Two existing guards objected, and
+#     both were right:
+#
+#         .gitignore                      *.cfg is ignored repo-wide, and
+#                                         tests/fixtures is called "the ONE
+#                                         allowed exception"
+#         test_no_configs_in_git.py       fails any committed file outside
+#                                         tests/fixtures that parses as a
+#                                         device config
+#
+#     The justification for overriding them was that a packaged install might
+#     exclude tests/. It would not: Netwise is installed by `git clone`
+#     (README section 8) and there is no pyproject.toml, setup.py or
+#     MANIFEST.in in the repository, so tests/ is always present. The reason
+#     was hypothetical and the guards were not.
+#
+#     So the sample is a fixture, which is what it actually is: a synthetic
+#     config we invented. No new exception, no weakened guard, one path here.
+#
+# THE MARKER IS THE HALF THAT MATTERS.
+#     Staging the sample is easy. Making sure nobody mistakes it for their
+#     own network is the part worth writing down. A session that loaded the
+#     sample gets a marker file beside the config, and everything that
+#     renders a result -- the dashboard and the downloaded report both --
+#     reads it and says so. Without that, a sample report saved to disk is
+#     indistinguishable from a real one a week later.
+SAMPLE_CONFIG = (Path(__file__).parent.parent / "tests" / "fixtures"
+                 / "sample-network" / "configs" / "sample-network.cfg")
+
+
+def sample_marker_path(session_id: Optional[str] = None) -> Path:
+    """Where we record that THIS session is looking at the bundled sample.
+
+    A file rather than a flag on the module, for the reason #242 exists: a
+    process-wide flag made one person's upload change what every other
+    browser analysed. The marker lives beside the staged config and is
+    cleared by any real upload, because the moment a user stages their own
+    file they are no longer looking at the sample.
+    """
+    return snapshot_dir(session_id) / "is-sample.marker"
+
+
+def _is_sample_session() -> bool:
+    """True when the staged config is the bundled sample, not the user's."""
+    return sample_marker_path().exists()
+
+
+def _discard_sample_marker() -> None:
+    """Forget that this session was on the sample. Called by every real
+    upload -- see upload_config()."""
+    sample_marker_path().unlink(missing_ok=True)
+
 # Has a config been uploaded in this process? Until one has, /api/findings
 # serves mock data, because there is genuinely nothing to analyse yet.
 #
@@ -381,6 +472,7 @@ _SESSION_SCOPED_ATTRS = {
     "CONFIGS_DIR": configs_dir,
     "POLICY_PATH": policy_path,
     "BUSINESS_CONTEXT_PATH": business_context_path,
+    "SAMPLE_MARKER_PATH": sample_marker_path,
 }
 
 
@@ -661,6 +753,51 @@ def _staged_policy():
         return load_policy_file(policy_path())
     except (PolicyError, OSError):
         return None
+
+
+def _staged_pfsense_skips() -> Optional[List[str]]:
+    """The PF Sense conversion skip notes for the current session's staged
+    config.
+
+    THREE STATES, NOT TWO (#302 review, @ARSH871-bot)
+        `[]` means WE KNOW nothing was excluded -- either there is no skip
+        record at all (a plain Cisco upload, or a PF Sense conversion that
+        excluded nothing), a genuine, verified absence.
+
+        `None` means WE CANNOT TELL -- a skip record exists but could not be
+        read: truncated, the wrong JSON type, or simply unparseable. Before
+        this distinction existed, this case also returned `[]`, and
+        `coverage.summarise()` turned that into "Every reported check ran.
+        Nothing was skipped." -- a positive claim of completeness resting on
+        a record that was never actually read. See `CLAUDE.md` section 7's
+        skip-direction analysis for why that specific false claim matters
+        here: excluding a `pass` rule makes the analysed ACL STRICTER than
+        the real device, which can make a policy check that would report a
+        real violation report `none` instead, with nothing anywhere saying
+        the record behind that claim could not be read.
+
+        A non-empty list means the record was read and names what it
+        excluded.
+
+    UNLIKE `_staged_policy()`, WHOSE `None` IS SAFE
+        `_staged_policy()`'s docstring explains why ITS `None` fallback is
+        safe: `policy_compliance` announces, in every finding's evidence,
+        which of two known-good options was actually used. There is no
+        equivalent second option here -- an unreadable skip record is not a
+        safe default to fall back to, it is a fact that has to reach the
+        coverage statement as its own claim. Callers must handle `None`
+        explicitly rather than treating it as just another empty list.
+    """
+    path = pfsense_skips_path()
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, list):
+        return None
+    return [str(note) for note in data]
 
 
 def _analysis_key() -> Optional[str]:
@@ -1007,9 +1144,38 @@ def download_report(format: str = "html") -> Response:
         staged = sorted(p.name for p in configs_dir().glob("*") if p.is_file())
         subject = ", ".join(staged) or "an uploaded configuration"
 
+    # THE SAMPLE MUST SAY SO IN THE FILE, NOT ONLY ON THE SCREEN (#347).
+    #     A downloaded report outlives the tab it came from. Somebody opening
+    #     netwise-report-20260914-0930.html next week has no dashboard banner
+    #     to tell them the network was invented, and every finding in it
+    #     looks exactly like a finding about a real device -- because the
+    #     ANALYSIS was real. That is precisely why the label has to travel
+    #     with the file: the findings are trustworthy, the network is not a
+    #     network.
+    #
+    #     Put in `source`, which BOTH renderers now carry: render_html()
+    #     prints it under the title, render_csv() writes it as a column on
+    #     every row. It reached only the HTML until @ARSH871-bot measured
+    #     the other one in review --
+    #
+    #         report?format=html   'SAMPLE NETWORK' = 2
+    #         report?format=csv    'SAMPLE NETWORK' = 0
+    #
+    #     -- which is #308's rule broken in the most ordinary way: not a
+    #     wrong claim, a claim that reached two surfaces out of three. The
+    #     CSV is the one most likely to outlive the label, because it gets
+    #     pasted into a spreadsheet and forwarded.
+    if _is_sample_session():
+        subject = f"SAMPLE NETWORK (invented demonstration data) -- {subject}"
+
     media_type, extension = REPORT_FORMATS[format]
-    body = (report.render_html(results, source=subject) if format == "html"
-            else report.render_csv(results))
+    body = (
+        report.render_html(
+            results, source=subject, conversion_gaps=_staged_pfsense_skips()
+        )
+        if format == "html"
+        else report.render_csv(results, source=subject)
+    )
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
     return Response(
         content=body,
@@ -1022,7 +1188,7 @@ def download_report(format: str = "html") -> Response:
 
 
 @app.get("/api/findings")
-def get_findings() -> List[Dict[str, Any]]:
+def get_findings(http_response: Response = None) -> List[Dict[str, Any]]:
     """Return the current findings, in the F-1 format, plus a plain-English
     "explanation" on every status="found" finding (US-19 / #31).
 
@@ -1056,7 +1222,40 @@ def get_findings() -> List[Dict[str, Any]]:
 
     Note snapshot_dir(), not CONFIG_ROOT: analyse() wants the snapshot root, the
     folder that CONTAINS `configs/`. See the layout diagram at the top.
+
+    `http_response` IS OPTIONAL BECAUSE THIS FUNCTION IS ALSO CALLED DIRECTLY.
+        FastAPI injects a real `Response` only when this runs as the actual
+        route handler. `download_report()` above calls `get_findings()` as a
+        plain Python function to reuse its exact result, with no HTTP
+        response for FastAPI to inject -- and no need for one, since that
+        path already carries the same fact into the download directly via
+        `conversion_gaps=_staged_pfsense_skips()`. `tests/test_analysis_
+        cache.py` also calls it bare, the same way.
+
+    CONVERSION GAPS REACH THE SCREEN VIA HEADERS, NOT THE BODY (#302 review,
+    @shubhamkataria2005)
+        The body here is a bare F-1 list, not an object -- widening it to
+        `{findings: [...], conversion_gaps: [...]}` would break every
+        existing caller of this endpoint, and a synthetic status="error"
+        finding for "part of the source file was excluded before any check
+        ran" would blur a boundary this project has kept clean (see
+        `analysis/coverage.py`'s own docstring on why a conversion gap is not
+        a check's claim to make). `X-Netwise-Conversion-Gap-Count` and
+        `X-Netwise-Conversion-Gaps-Unreadable` carry the same fact the
+        downloaded report already states under "Coverage and certainty".
+        The dashboard reads them on every fetch, including a reload followed
+        by Scan Now -- the exact case Shubham's review named as the one the
+        original, upload-time-only disclosure never covered.
     """
+    skips = _staged_pfsense_skips()
+    if http_response is not None:
+        http_response.headers["X-Netwise-Conversion-Gap-Count"] = (
+            "0" if skips is None else str(len(skips))
+        )
+        http_response.headers["X-Netwise-Conversion-Gaps-Unreadable"] = (
+            "true" if skips is None else "false"
+        )
+
     if not _is_uploaded():
         return []
 
@@ -1278,6 +1477,15 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     policy_was_staged = policy_path().exists()
     _discard_staged_policy()
 
+    # A REAL UPLOAD IS NO LONGER THE SAMPLE (#347).
+    #     Cleared here, beside the policy and context, because it is the same
+    #     rule: the moment a user stages their own file, anything staged from
+    #     a different intention must go. Leaving the marker behind would put
+    #     a "this is sample data" banner over the user's real network, which
+    #     is the mislabel running in the safe-looking direction and still
+    #     wrong.
+    _discard_sample_marker()
+
     # A NEW NETWORK MUST NOT INHERIT THE OLD NETWORK'S BUSINESS CONTEXT.
     #     Exactly the policy's reasoning, and if anything sharper. A context
     #     names devices -- `device: rtr-us5` -- and the failure is silent
@@ -1288,6 +1496,27 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     #     apply just quietly re-rates the wrong box.
     context_was_staged = business_context_path().exists()
     _discard_staged_business_context()
+
+    # Stage THIS upload's PF Sense skip notes, if any -- and clear whatever
+    # was staged before, unconditionally, so a plain Cisco upload after a
+    # PF Sense one cannot leave a stale note pointing at a config that is no
+    # longer there (#302 review). Only written when non-empty; a missing
+    # file and an empty list mean the same thing to `_staged_pfsense_skips()`.
+    #
+    # WRITTEN VIA A TEMP FILE + REPLACE, NOT write_text() DIRECTLY (#302
+    # review, @ARSH871-bot). `_staged_pfsense_skips()` now treats a file that
+    # exists but fails to parse as `None` -- "we cannot tell what was
+    # excluded" -- rather than silently reading as `[]`. A process
+    # interrupted mid-write is exactly how a truncated file happens, and
+    # `Path.replace()` is atomic on both POSIX and Windows, so a reader can
+    # only ever see the old complete file or the new complete file, never a
+    # partial one.
+    _discard_staged_pfsense_skips()
+    if skipped:
+        target = pfsense_skips_path()
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(json.dumps(skipped), encoding="utf-8")
+        tmp.replace(target)
 
     # Records THIS session, rather than putting the whole process into an
     # uploaded state. Before #242 this was `global _uploaded; _uploaded =
@@ -1401,6 +1630,123 @@ def _discard_staged_policy() -> None:
     #181/#182 settle how a policy reaches a check.
     """
     policy_path().unlink(missing_ok=True)
+
+
+def _discard_staged_pfsense_skips() -> None:
+    """Remove the staged PF Sense skip notes, if there are any.
+
+    A NEW UPLOAD MUST NOT INHERIT THE OLD ONE'S SKIP NOTES -- same reasoning
+    as `_discard_staged_policy()`/`_discard_staged_business_context()`, and
+    arguably sharper: a skip note names a specific rule and interface from
+    the PREVIOUS config. Left staged, a report generated after uploading an
+    unrelated Cisco config would say a rule was excluded from a file that
+    was never even converted.
+    """
+    pfsense_skips_path().unlink(missing_ok=True)
+@app.get("/api/sample")
+def sample_status() -> Dict[str, Any]:
+    """Is the config currently staged in this session the bundled sample?
+
+    THE BANNER HAS TO SURVIVE A RELOAD, AND WITHOUT THIS IT DID NOT (#347).
+        The first version of this feature set the banner in exactly one
+        place: the click handler for "try the sample network". Reload the
+        page and the banner was gone -- while the FINDINGS stayed, because
+        they are served from the staged snapshot and do not care that the
+        tab was closed.
+
+        So a reloaded dashboard showed six real findings about an invented
+        network with nothing on screen saying so, and the frontend could not
+        have known: no GET told it. Caught by @ARSH871-bot in review, who
+        measured it rather than read it.
+
+        That is the worst shape this feature can fail in, and this PR's own
+        description says why: "an unlabelled sample report is dangerous
+        because every finding in it is genuine -- there is nothing in the
+        results themselves to raise a doubt."
+
+    A SEPARATE GET RATHER THAN A FIELD ON /api/findings.
+        The findings response is a list of F-1 findings and nothing else.
+        Adding a wrapper object, or a key beside the list, changes a shape
+        three test modules and the whole frontend already depend on -- for a
+        fact that is not about any finding. A response header was the other
+        suggestion and would also work; this is easier to read from a test
+        and from a browser's address bar, which matters for a claim whose
+        whole job is to be checkable.
+
+    Keyed on the marker, so it answers for what is STAGED rather than for
+    what was last clicked -- which is the same thing after a reload, and is
+    the question the banner is really asking.
+    """
+    return {"is_sample": _is_sample_session()}
+
+
+@app.post("/api/sample")
+def load_sample() -> Dict[str, Any]:
+    """Stage the bundled sample network, as if the user had uploaded it.
+
+    US-56 (#347). Everything about the scan that follows is real: the file
+    goes through the same staging path as an upload and is analysed by
+    `analyse()` exactly as a user's own config would be. What is invented is
+    the NETWORK, not the analysis -- which is the distinction #352 was fixed
+    for, and the only thing that makes a bundled sample honest.
+
+    WHY THIS DOES NOT SCAN FOR YOU.
+        It stages and stops, exactly like /api/upload since #82. The scan is
+        a separate, deliberate act, and the sample should not get a shortcut
+        the user's own file does not -- partly because that difference would
+        be one more thing to explain, and partly because "one click to scan"
+        in the story means one click to START it, not results appearing
+        without one.
+
+    Returns the same shape /api/upload returns, so the frontend renders the
+    outcome through the code path it already has.
+    """
+    if not SAMPLE_CONFIG.is_file():
+        raise HTTPException(
+            status_code=500,
+            detail=("The bundled sample network is missing from this "
+                    "install, so there is nothing to load. Upload a "
+                    "configuration file instead."),
+        )
+
+    # Same sequence as upload_config(), and deliberately so: a sample that
+    # staged itself differently would be a second code path to keep correct.
+    if configs_dir().exists():
+        shutil.rmtree(configs_dir())
+    configs_dir().mkdir(parents=True, exist_ok=True)
+    (configs_dir() / "device.cfg").write_text(
+        SAMPLE_CONFIG.read_text(encoding="utf-8"), encoding="utf-8")
+
+    policy_was_staged = policy_path().exists()
+    _discard_staged_policy()
+    context_was_staged = business_context_path().exists()
+    _discard_staged_business_context()
+    # A PF Sense upload's skip notes describe THAT file's rules (#302). The
+    # sample was never converted, so they must not survive into it. Measured
+    # before this line existed: a report labelled SAMPLE NETWORK named a rule
+    # from the previous upload as "excluded during conversion".
+    _discard_staged_pfsense_skips()
+
+    # The marker is written AFTER the config is staged, so a failure above
+    # cannot leave a session labelled "sample" while holding something else.
+    sample_marker_path().write_text("sample", encoding="utf-8")
+
+    _uploaded_sessions.add(current_session_id())
+    reset_analysis_cache()
+
+    audit_event("sample_loaded")
+
+    return {
+        "filename": SAMPLE_CONFIG.name,
+        "accepted": True,
+        "is_sample": True,
+        "message": (
+            "Sample network loaded. This is invented data, not a real "
+            "device — but the scan is real. Press Scan Now to analyse it."
+        ),
+        "policy_cleared": policy_was_staged,
+        "business_context_cleared": context_was_staged,
+    }
 
 
 @app.post("/api/policy")
