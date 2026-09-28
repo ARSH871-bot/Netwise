@@ -15,11 +15,10 @@
 #   rather than slowing this one down.
 #
 # WHAT IT DOES NOT DO
-#   It cannot BLOCK a merge. Required status checks need branch protection,
-#   which needs GitHub Pro or a public repo, and we are deliberately private so
-#   client configs stay protected (see CONTRIBUTING.md section 6). So a red
-#   cross here is a signal, not a gate -- the same standing as our branching
-#   convention. Please treat it as one.
+#   It does not BLOCK a merge. Required status checks need branch protection,
+#   which is available and not switched on (CONTRIBUTING.md section 6, #245).
+#   So a red cross here is a signal, not a gate -- the same standing as our
+#   branching convention. Please treat it as one.
 
 name: tests
 

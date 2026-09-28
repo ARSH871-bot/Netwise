@@ -397,10 +397,10 @@ them and they describe nobody's real network. Real configs stay in the ignored
 in `CHECKS`. See `docs/design/pipeline-feature-shapes.md`.
 
 CI (`.github/workflows/tests.yml`) runs the suite on every pull request, on
-Python 3.12 and 3.13. **It does not block a merge today.** Branch protection
-needs GitHub Pro or a public repo, so whether it is a *choice* or a
-*limitation* depends on the repository's visibility at the time — and that has
-changed twice.
+Python 3.12 and 3.13. **It does not block a merge.** Branch protection needs
+GitHub Pro or a public repo. Since GitHub Pro (22 September) it is available
+whatever the visibility, so not using it is a *choice* (#245), not a
+limitation. The visibility itself has changed three times.
 
 **Do not read visibility from this file. Ask the API:**
 
@@ -409,7 +409,7 @@ gh api repos/ARSH871-bot/Netwise --jq '.private, .visibility'
 gh api repos/ARSH871-bot/Netwise/branches/main/protection
 ```
 
-Two dated measurements, kept as history rather than as a current claim:
+Dated measurements, kept as history rather than as a current claim:
 
 ```
 27 August    private: false   visibility: public
@@ -419,6 +419,14 @@ Two dated measurements, kept as history rather than as a current claim:
 31 August    private: true    visibility: private   (deliberate, temporary)
              protection -> 403 "Upgrade to GitHub Pro or make this
              repository public to enable this feature"
+
+23 September private: true    visibility: private
+             protection -> 404 "Branch not protected"
+             i.e. GitHub Pro (22 September) makes it available while private
+
+28 September private: false   visibility: public    (team decision: public
+             for now, for free Actions minutes; the minutes reset 1 October)
+             protection -> "Branch not protected"
 ```
 
 **The present-tense sentence that used to sit here — "this repository is
@@ -430,9 +438,9 @@ above degrades into history; the sentence degraded into a falsehood.
 
 A red cross is therefore a signal rather than a gate. **Why** it is not a gate
 depends on the visibility above: on 27 August it was available and switched
-off; on 31 August it is unavailable. #245 is the decision about what to enable,
-and it can only be *acted on* while the repository is public — so it is
-paused rather than answered whenever it is not.
+off; on 31 August it is unavailable. Since GitHub Pro (22 September) it is
+available whatever the visibility, so #245, the decision about what to enable,
+is no longer paused by it.
 
 The measurement on #245 is worth reading before assuming the answer is "all of
 it": across 45 PRs merged since 20 August, requiring a review would have
