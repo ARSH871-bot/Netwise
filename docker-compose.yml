@@ -62,7 +62,7 @@ services:
     image: batfish/allinone@sha256:09817554db90e2f2674b72562c2d659427094187de0a3dfc23534ab58bf26207
     container_name: netwise-batfish
     restart: unless-stopped
-    networks: [netwise]
+    networks: [analysis]
     # 9997 is the coordinator, 9996 is the v2 API pybatfish talks to. 8888 is
     # Batfish's own Jupyter and is NOT published: it is not part of Netwise
     # and publishing it would put an unauthenticated notebook server on the
@@ -96,7 +96,7 @@ services:
       dockerfile: Dockerfile
     container_name: netwise-app
     restart: unless-stopped
-    networks: [netwise]
+    networks: [analysis, edge]
     ports:
       - "127.0.0.1:8000:8000"
     environment:
@@ -162,7 +162,23 @@ services:
     restart: "no"
 
 networks:
-  netwise:
+  # WHY TWO NETWORKS (N-1, measured in the 28 September audit).
+  # On one plain bridge network, the Batfish container -- which holds every
+  # uploaded config -- could open a connection to 1.1.1.1:443. The egress
+  # guard in analysis/egress.py covers the Python app's own process only.
+  #
+  # `analysis` is internal: Docker gives it no route out. Batfish is on it
+  # and nothing else is reachable from it but the app.
+  analysis:
+    internal: true
+  # `edge` exists only so the app's port can be published to 127.0.0.1 on
+  # the host; an internal network cannot publish ports.
+  #
+  # KNOWN LIMIT, STATED: ollama shares the app's network namespace (see the
+  # header), so it is on `edge` too. It needs that to pull its model, and
+  # the evidence it receives never crosses a network interface, but its own
+  # process is not blocked from the internet the way Batfish now is.
+  edge:
     driver: bridge
 
 volumes:
