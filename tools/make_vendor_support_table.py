@@ -109,7 +109,26 @@ def _batfish_is_up(host: str = "localhost", port: int = 9996,
 
 
 def classify(vendor: str) -> "dict":
-    """Run the real pipeline once and read both claims off its own output."""
+    """Run the real pipeline once and read both claims off its own output.
+
+    "PARSES CLEANLY" REQUIRES POSITIVE EVIDENCE (found by review,
+    @ARSH871-bot). The first version fell through to "Parses cleanly" for
+    ANY result that was not the one specific fatal-parse summary or a
+    partial-parse caveat -- which includes analyse()'s two OTHER
+    "could not run" shapes (`pipeline.py:409,444`: Batfish unreachable, the
+    config could not be loaded). Measured with a genuine load failure (a
+    vendor-* fixture whose configs/ is empty): every check returned
+    "Analysis could not run: the config could not be loaded", and the old
+    classify() reported it as "Parses cleanly" -- F-4 in the most public
+    document this project has. Every fixture committed today classifies
+    correctly regardless, since none of them hits this path; the defect was
+    in what the generator would write for the NEXT one.
+
+    So a result classifies as clean only when nothing claims analysis could
+    not run at all. Anything else refuses to write a row and raises,
+    rather than guess -- the same discipline pfsense_convert.py already
+    applies to a construct it cannot model.
+    """
     from analysis import pipeline
 
     results = pipeline.analyse(
@@ -117,6 +136,19 @@ def classify(vendor: str) -> "dict":
 
     fatal_summary = "Analysis could not run: the config did not fully parse"
     caveat_suffix = f"-{pipeline.PARTIAL_PARSE_NUMBER:03d}"
+
+    could_not_run = {
+        f["summary"] for f in results
+        if f["status"] == "error"
+        and f["summary"].startswith("Analysis could not run")
+    }
+    unrecognised = could_not_run - {fatal_summary}
+    if unrecognised:
+        raise RuntimeError(
+            f"{vendor}: analyse() could not look at it -- "
+            f"{sorted(unrecognised)}. Refusing to write a row rather than "
+            "guess one."
+        )
 
     produces_finding = any(f["status"] == "found" for f in results)
     is_fatal = bool(results) and all(
@@ -198,6 +230,17 @@ def splice_into_readme(section: str) -> str:
     if MARKER_START in text and MARKER_END in text:
         start = text.index(MARKER_START)
         end = text.index(MARKER_END) + len(MARKER_END)
+        if end < start:
+            # A bad hand-edit or merge could leave MARKER_END sitting above
+            # MARKER_START (found in review, @ARSH871-bot) -- text[:start]
+            # + section + text[end:] would then DUPLICATE the text between
+            # them rather than fail, which is worse than refusing outright.
+            raise RuntimeError(
+                f"{MARKER_END!r} appears before {MARKER_START!r} in "
+                "README.md -- the markers are corrupted, most likely by a "
+                "hand-edit or a bad merge. Fix their order by hand rather "
+                "than let this generator guess what you meant."
+            )
         return text[:start] + section.rstrip("\n") + text[end:]
 
     seam = "All live under `tests/fixtures/`.\n"
