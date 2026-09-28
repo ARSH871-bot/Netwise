@@ -114,8 +114,15 @@ def test_the_real_check_still_emits_the_sentinel_the_renderers_key_on():
     """
     empty_for_this_check = policy_module.load_policy(
         {"device": "rtr-us5",
+         # A complete access_control entry since #316, when that check began
+         # dereferencing these keys. This fixture only needs the policy to be
+         # non-empty OVERALL while having no policy_compliance rules, so what
+         # the entry asserts does not matter -- only that it is valid.
          "access_control": [{"description": "x", "filter": "acl_in",
-                             "expected": "PERMIT"}]}
+                             "headers": {"srcIps": "10.10.10.0/24"},
+                             "expected": "PERMIT",
+                             "violation_severity": "low",
+                             "violation_summary": "x"}]}
     )
     policy_module.set_active_policy(empty_for_this_check)
     try:

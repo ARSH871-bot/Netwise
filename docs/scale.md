@@ -76,6 +76,20 @@ one device in ten.** That is #228 in the two checks I did not fix — I own
 
 This fixture is the regression test for when they are.
 
+> **Re-measured 28 September, after #364.** Every all-clear now lists the
+> devices it vouches for, and appears beside other findings for exactly those:
+>
+> ```
+> PC-049  error  9 of 10 device(s) in this config are not covered by any policy rule
+> RT-050  error  2 route assertion(s) could not be checked against this config
+> AC-000  none   rtr-us5   No issues found by access control
+> PC-000  none   rtr-us5   No issues found by policy compliance
+> ```
+>
+> Both green cards name `rtr-us5` alone, so neither claims the other nine.
+> What #364 did NOT add is an access_control equivalent of PC-049: nothing
+> yet names the nine devices its statements never covered.
+
 ---
 
 ## Reproducing it

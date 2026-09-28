@@ -1020,6 +1020,54 @@ function renderFindingSections(findings) {
 }
 
 /**
+ * Show or hide the persistent pfSense-conversion disclosure above the
+ * summary tiles, from the two headers /api/findings always sets (#302
+ * review, @shubhamkataria2005 and @ARSH871-bot).
+ *
+ * PERSISTENT AND HEADER-DRIVEN, NOT THE UPLOAD-TIME addSkippedNotes()
+ *     That one appends to the transient #upload-message box once, at
+ *     upload. It disappears on the next upload message, and it never
+ *     reappears after a page reload -- so a reload followed by Scan Now
+ *     showed clean tiles with no trace anything had been excluded. This
+ *     notice is rebuilt from the response headers on EVERY /api/findings
+ *     fetch, so it is correct on first load, after Scan Now, and after a
+ *     reload alike.
+ *
+ * A MISSING/UNPARSEABLE HEADER HIDES THE NOTICE, IT DOES NOT WARN.
+ *     `count` and `unreadable` come from `Response.headers.get()`, which
+ *     returns `null` for an absent header (an older server, or the mock-
+ *     findings path before either header existed) -- treated as "nothing to
+ *     disclose" rather than "something is wrong", the same degrade-quietly
+ *     choice `_staged_pfsense_skips()` already makes for a plain, non-PF
+ *     Sense upload.
+ */
+function updateConversionGapsNotice(countHeader, unreadableHeader) {
+  const notice = document.getElementById("conversion-gaps-notice");
+  if (!notice) return;
+
+  const unreadable = unreadableHeader === "true";
+  const count = parseInt(countHeader, 10);
+
+  if (unreadable) {
+    notice.textContent =
+      "The record of what a pfSense conversion excluded before analysis " +
+      "could not be read. Whether anything was excluded is unknown -- see " +
+      "the downloaded report.";
+    notice.hidden = false;
+  } else if (Number.isFinite(count) && count > 0) {
+    const plural = count === 1 ? "part" : "parts";
+    notice.textContent =
+      `${count} ${plural} of the uploaded configuration were excluded ` +
+      `before any check ran and are not reflected in these findings -- ` +
+      `see the downloaded report for details.`;
+    notice.hidden = false;
+  } else {
+    notice.textContent = "";
+    notice.hidden = true;
+  }
+}
+
+/**
  * Fetch findings and render them.
  *
  * If the request fails we show a warning and NO findings list. We do not fall
@@ -1032,6 +1080,19 @@ async function loadFindings() {
   try {
     const response = await fetch("/api/findings");
     if (!response.ok) throw new Error(`server returned ${response.status}`);
+
+    // response.headers is absent in every test harness's fetch stub (none
+    // of them model it, and none need to for what they test) -- guarded
+    // rather than assumed, so this feature cannot break a fetch mock that
+    // has no reason to know about it. Updated on every real fetch, before
+    // the empty-state check below -- the server sets these headers even
+    // pre-upload (0 / false), so this correctly stays hidden there too.
+    const headers = response.headers;
+    updateConversionGapsNotice(
+      headers ? headers.get("X-Netwise-Conversion-Gap-Count") : null,
+      headers ? headers.get("X-Netwise-Conversion-Gaps-Unreadable") : null
+    );
+
     const findings = await response.json();
 
     // NOTHING UPLOADED YET. Not a clean result, and it must not look like one.
@@ -1050,15 +1111,38 @@ async function loadFindings() {
     // that rule reaching the case the mock findings used to hide.
     if (!Array.isArray(findings) || findings.length === 0) {
       document.getElementById("summary").replaceChildren();
-      container.replaceChildren(
+      // WHAT TO DO NEXT, NOT JUST WHAT IS ABSENT (US-56, #347).
+      //     The sentence #352 left here is correct and stays: nothing has
+      //     been checked, and that is not a clean result. What it did not do
+      //     is tell a first-time visitor what to actually do, which is the
+      //     difference between an honest empty screen and a useful one.
+      //
+      //     Two routes, in the order a visitor can act on them: their own
+      //     file, or the sample if they have nothing to hand. The sample
+      //     button here is the same control as the one beside the picker --
+      //     offered again at the moment the emptiness is visible, because
+      //     that is when somebody wonders what to do.
+      const empty = el("div", "notice");
+      empty.appendChild(
         el(
-          "div",
-          "notice",
+          "p",
+          "notice-lead",
           "No configuration has been uploaded yet, so nothing has been " +
-            "checked. This is not a clean result. Upload a config file " +
-            "above and press Scan Now to begin."
+            "checked. This is not a clean result."
         )
       );
+      const next = el("p", "notice-next", "To begin: ");
+      next.appendChild(
+        el("span", "", "choose a config file above and press Scan Now")
+      );
+      next.appendChild(el("span", "", " — or "));
+      const inlineSample = el("button", "link-button", "try the sample network");
+      inlineSample.setAttribute("type", "button");
+      inlineSample.addEventListener("click", loadSampleNetwork);
+      next.appendChild(inlineSample);
+      next.appendChild(el("span", "", "."));
+      empty.appendChild(next);
+      container.replaceChildren(empty);
       setDownloadAvailable(
         false,
         "Nothing to export -- no configuration has been analysed yet."
@@ -1082,6 +1166,10 @@ async function loadFindings() {
     );
   } catch (error) {
     document.getElementById("summary").replaceChildren();
+    // Nothing was loaded, so there is nothing to disclose about it either --
+    // the notice would otherwise keep showing a fact about the PREVIOUS
+    // successful load.
+    updateConversionGapsNotice(null, null);
     container.replaceChildren(
       el(
         "div",
@@ -1233,6 +1321,12 @@ function setUpUpload() {
 
   scanButton.addEventListener("click", runScan);
 
+  // The sample offer beside the picker (US-56, #347). The one rendered inside
+  // the empty-state notice is wired where it is built, since that node is
+  // replaced on every render.
+  const sampleButton = document.getElementById("load-sample");
+  if (sampleButton) sampleButton.addEventListener("click", loadSampleNetwork);
+
   input.addEventListener("change", async () => {
     const file = input.files[0];
     if (!file) return;
@@ -1339,6 +1433,15 @@ function setUpUpload() {
         }
 
         scanButton.disabled = false;
+
+        // NOT WHEN THE FILE WAS PICKED -- WHEN THE SERVER TOOK IT (#347).
+        //     The server clears its sample marker only on a known-good
+        //     upload, so hiding the banner any earlier would disagree with
+        //     it. A rejected upload leaves the sample staged and, if it had
+        //     been scanned, its findings on screen: dropping the banner
+        //     there would relabel real sample results as the user's own
+        //     network. Mirrored on the accept path so the two cannot drift.
+        setSampleBanner(false);
       } else {
         showUploadMessage(result.detail, false);
         input.value = "";
@@ -2354,6 +2457,9 @@ function setUpComparisonBanner() {
 }
 
 /* ------------------------------------------------------------------------ */
+// Ask what is staged BEFORE rendering anything, so a reloaded sample session
+// is labelled from the first paint rather than after a round trip.
+refreshSampleBanner();
 loadFindings();
 setUpUpload();
 setUpPolicyUpload();
@@ -2363,3 +2469,111 @@ setUpProposeChange();
 setUpReportDownload();
 setUpDeviceFilter();
 setUpComparisonBanner();
+
+/* ------------------------------------------------------------------------ *
+ * The bundled sample network (US-56, #347)
+ *
+ * #352 removed the fabricated findings that used to appear before any
+ * upload. This is the honest replacement: a real config the visitor CHOOSES
+ * to load, analysed exactly like their own file would be.
+ *
+ * The banner is not decoration. Every surface that shows a result has to say
+ * whose network it is about, because the findings themselves are real and
+ * give no clue either way -- see the same argument in web/main.py where the
+ * label is threaded into the downloaded report.
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Ask the server whether what is staged right now is the sample, and label
+ * the screen accordingly.
+ *
+ * WHY THIS EXISTS -- THE CLICK HANDLER WAS NOT ENOUGH (#347 review).
+ *     setSampleBanner() used to be called from exactly one place: the
+ *     handler for "try the sample network". A reload lost the banner and
+ *     KEPT the findings, because those come from the staged snapshot and do
+ *     not care that the tab was closed. The result was six real findings
+ *     about an invented network with nothing on screen saying so.
+ *
+ *     A click is an event. What is staged is state. Reading the state at
+ *     boot is the only version of this that survives a reload, a restored
+ *     tab, or a second window opened on the same session.
+ *
+ * Failure is not silent, and it does not guess. If the request fails we
+ * cannot know whether this is the sample, so the banner is left exactly as
+ * the markup ships it -- hidden -- and nothing pretends otherwise. That is
+ * the wrong way round to be wrong, so it is worth saying plainly: an
+ * unreachable server here means a missing label rather than a false one,
+ * and a false label is the failure that would matter more.
+ */
+async function refreshSampleBanner() {
+  try {
+    const response = await fetch("/api/sample");
+    if (!response.ok) return;
+    const status = await response.json();
+    setSampleBanner(status.is_sample === true);
+  } catch (error) {
+    // Left as-is deliberately -- see the note above.
+  }
+}
+
+/** Show or hide the "this is the sample" banner. */
+function setSampleBanner(isSample) {
+  const banner = document.getElementById("sample-banner");
+  if (!banner) return;
+  if (isSample) {
+    banner.removeAttribute("hidden");
+  } else {
+    banner.setAttribute("hidden", "");
+  }
+}
+
+/**
+ * Stage the bundled sample, then leave the scan to the user.
+ *
+ * Deliberately does NOT scan. Staging and analysing are two acts (#82), and
+ * the sample gets no shortcut the user's own upload does not have.
+ */
+async function loadSampleNetwork() {
+  const button = document.getElementById("load-sample");
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch("/api/sample", { method: "POST" });
+    const result = await response.json();
+
+    if (!response.ok || !result.accepted) {
+      // An error state that says what happened and what to try (US-56).
+      showUploadMessage(
+        (result && result.detail) ||
+          "The sample network could not be loaded. You can still upload a " +
+            "config file of your own.",
+        false
+      );
+      setSampleBanner(false);
+      return;
+    }
+
+    showUploadMessage(result.message, true);
+    setSampleBanner(true);
+
+    // Exactly what a successful /api/upload does, and for the same reasons:
+    // the staged config changed, so Scan Now becomes available and anything
+    // on screen now describes a different network. Reusing the real helper
+    // rather than a sample-specific copy is what stops the two paths drifting
+    // -- a copy is how one of them ends up quietly not clearing (see the
+    // comment on clearStaleResults itself).
+    document.getElementById("scan-now").disabled = false;
+    clearStaleResults(
+      "The sample network is staged, nothing analysed yet. Click Scan Now " +
+        "to check it."
+    );
+  } catch (error) {
+    showUploadMessage(
+      "The sample network could not be loaded because the page could not " +
+        "reach Netwise. Check the server is still running, then try again.",
+      false
+    );
+    setSampleBanner(false);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
