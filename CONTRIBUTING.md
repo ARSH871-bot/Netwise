@@ -192,9 +192,9 @@ Every pull request runs the suite on Python **3.12 and 3.13** — see
 `.github/workflows/tests.yml`. You will see a green tick or a red cross on your
 PR without doing anything.
 
-**It cannot block a merge.** Required status checks need branch protection,
-which needs GitHub Pro or a public repo, and we are deliberately private so
-client configs stay protected (§6). So a red cross is a *signal*, not a gate —
+**It does not block a merge.** Required status checks need branch protection,
+which is available and has not been switched on (§6, #245). So a red cross is a
+*signal*, not a gate —
 the same standing as everything else in this document. Please treat it as one.
 
 **If a test ever needs a live Batfish or Ollama, put it behind a separate,
@@ -286,8 +286,8 @@ answer. That makes this rule actionable rather than a plea for care:
 gh pr checks <n> --watch      # after re-running, if main moved
 ```
 
-It is still not a gate — branch protection needs GitHub Pro (§6). It is a
-signal that is now telling the truth about the right thing.
+It is still not a gate — branch protection is available but switched off (§6).
+It is a signal that is now telling the truth about the right thing.
 
 **4. Merge small and merge often.**
 A queue of fourteen approved PRs produced three simultaneous conflicts in the
@@ -793,9 +793,11 @@ all import perfectly well. That gap is closed by the version check added in
 
 ## 6. This is an agreement, not an enforcement
 
-We cannot turn on branch protection — it needs GitHub Pro or a public repo, and
-we keep this repo **private** so client configs stay protected. That trade is
-deliberate.
+Branch protection is available (GitHub Pro since 22 September makes it so even
+while the repository is private) and is **not switched on**; what to enable is
+#245. This file does not state the repository's visibility, because it has
+changed several times: ask the API (`CLAUDE.md` §7b). Client configs stay out of
+git through `.gitignore` whatever the visibility.
 
 So nothing stops you pushing to `main`, self-merging, or merging red. Please
 don't. The convention only works because we all keep it — and it is worth being

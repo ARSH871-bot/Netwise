@@ -20,6 +20,24 @@
 > table is left as written below, since it is the record of the problem that
 > motivated the decision, not something to quietly edit now that it is fixed.
 
+> **UPDATE, 12 September 2026. The paragraph immediately above is now wrong,
+> and it is the sentence in bold that went stale.**
+>
+> "No check reads a `Policy` object yet" was true on 21 August and false from
+> 28 August, when #181 wired `policy_compliance`. `access_control` followed on
+> #316 and `routing` on #319. All three read one now, so #87 is closed and
+> "renaming a device still halves detection" no longer holds.
+>
+> Re-measured with `python -m tools.stranger_config`: 3 policy-driven
+> detections on a stranger's network became 13, of which 3 are an artefact of
+> rebinding our two-router routing assertions onto a single router — the
+> comparable figure is **10**.
+>
+> Two dated notes now sit above a table that both describe. That is the cost
+> of the convention this document chose, and it is the right cost: the table
+> is still the record of why the format exists, and neither note pretends the
+> other never applied.
+
 #87 is the largest gap in the product: every policy assertion is hardcoded to
 our own fixtures, so on a stranger's network Netwise reports only dead rules
 and undefined references. This document exists to make that decidable, not to

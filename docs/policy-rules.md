@@ -453,9 +453,27 @@ arm reporting both (#22/#46): *"we checked and found nothing"* and *"we did not
 look here"* are different claims, and only one of them is being made about
 those devices.
 
+**Since #364 (28 September) the clean sentinel does appear beside PC-049,
+naming only the covered devices whose rules all held.** Suppressing it
+entirely also hid the one device that *was* checked, so a real fix there read
+as the check going blind. The two claims are still kept apart: the green card
+lists its devices in `evidence.source`, and PC-049 lists the uncovered ones.
+Measured on `multi-device-10`: PC-049 "9 of 10 not covered" beside PC-000
+naming `rtr-us5` alone.
+
 **It fires only when at least one rule actually ran.** With nothing applicable,
 `PC-050` already says the whole story, and printing both rebuilds the per-rule
 noise #45 and #50 removed one level up. That case is pinned by its own test.
+
+**It names every uncovered device, in `evidence.source`.** The detail names the
+first five, for a reader. The source lists all of them — `affected devices: a,
+b, c` — via `coverage.device_list_source()`. A finding has one `device`, so a
+card about nine devices has to say `unknown` there, and a gap of unknown scope
+has to be read as covering *every* device. That made a genuine fix on the one
+covered device impossible to report as fixed in "what changed since the last
+scan" (#315): measured on `multi-device-10`, the fix read as unverified until
+the source named the other nine. A list-typed F-1 field would be cleaner and
+needs all four; this stays inside what `source` already means.
 
 `PC-049` sits **below** `ERROR_NUMBER_OFFSET` deliberately: the rule-error band
 is `50 + rule number` and grows with the rule list, so anything above 50 would

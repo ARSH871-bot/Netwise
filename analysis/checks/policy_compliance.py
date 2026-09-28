@@ -121,7 +121,7 @@ from typing import Any, Dict, List, Tuple
 from pybatfish.client.session import Session
 from pybatfish.datamodel.flow import HeaderConstraints
 
-from analysis import findings, policy, snapshot
+from analysis import coverage, findings, policy, snapshot
 
 # The name this check is registered under, and the value in every "check" field.
 CHECK_NAME = "policy_compliance"
@@ -501,7 +501,8 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                     "either way.",
                     policy_label,
                 ),
-                source="analysis/checks/policy_compliance.py",
+                # Listed, so it blocks no present device's all-clear (#364).
+                source=coverage.device_list_source(absent),
                 number=SKIPPED_NUMBER,
             )
         )
@@ -579,7 +580,15 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                     + " either way.",
                     policy_label,
                 ),
-                source="analysis/checks/policy_compliance.py",
+                # EVERY uncovered device, machine-readably (#315). The detail
+                # above deliberately truncates at five for a human reader;
+                # this does not, because `analysis/scan_diff.py` must know a
+                # device is NOT in this list to call a fix on it resolved.
+                # Before this, the card's device was "unknown" and its source
+                # named this file, so it had to be read as covering
+                # everything -- and a genuine fix on the ONE covered device
+                # was reported unverified.
+                source=coverage.device_list_source(uncovered),
                 number=UNCOVERED_NUMBER,
             )
         )
@@ -661,8 +670,25 @@ def run(bf: Session) -> List[Dict[str, Any]]:
         # searched space behaves the forbidden way. The rule holds; report
         # nothing, and the all-clear below covers it.
 
-    # Only claim "all clear" if every rule was actually checked and held. If any
-    # rule errored, results is non-empty and the error is what the user sees.
+    # THE ALL-CLEAR NAMES EXACTLY THE DEVICES IT VOUCHES FOR (#364): the
+    # covered devices no finding above is about. An error of unknown scope
+    # still suppresses it -- see coverage.devices_still_clean().
+    clean = coverage.devices_still_clean(results, {r["node"] for r in applicable})
+    if clean:
+        held = [r for r in applicable if r["node"] in clean]
+        results.append(
+            findings.no_issues_finding(
+                check=CHECK_NAME,
+                device=clean[0],
+                summary="No issues found by policy compliance",
+                detail=_with_provenance(
+                    f"All {len(held)} policy rule(s) about the device(s) listed hold",
+                    policy_label,
+                ),
+                source=coverage.device_list_source(clean),
+                number=0,
+            )
+        )
     if not results:
         return [
             findings.no_issues_finding(
