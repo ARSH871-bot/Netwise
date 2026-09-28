@@ -136,6 +136,27 @@ FOLLOW-UPS: ENTITIES CARRIED FORWARD, NEVER INTENT (#318)
         already-existing fallback inside one already-existing path, and
         #318's own acceptance criteria say "entities", not "intents".
 
+    THE FALLBACK FIRES ON A BACK-REFERENCE, NEVER ON RESOLUTION FAILURE
+        ALONE (found by review, @ARSH871-bot). The first version fell back
+        whenever a side failed to resolve, which does not distinguish "the
+        question left this side out" from "the question named something
+        that does not resolve" -- a typo, a plain-English name, a malformed
+        address. Every one of the second kind used to refuse, and the SCOPE
+        section above says it must keep refusing: "Can the guest network
+        reach the finance server" is CLAUDE.md's own must-refuse example.
+        Measured with the old version: that exact question, a typo'd device
+        name, and a malformed IP all came back "Yes", `grounded: True`,
+        quietly using the PREVIOUS turn's entity -- the worst shape a
+        query-layer mistake can take, evidenced and confident and
+        reproducible.
+
+        So `_is_source_back_reference()`/`_is_destination_back_reference()`
+        recognise a back-reference from a CLOSED SET ("it", "that device",
+        ...; never anything containing a digit on the destination side),
+        the same discipline `_REACH_KEYWORDS` already applies to intent. A
+        segment that names something and fails to resolve it is refused,
+        never guessed at as a reference to the last turn.
+
     WHY THE CARRIED-FORWARD DEVICE IS RE-VALIDATED, NOT TRUSTED
         `previous["source_device"]` is checked against THIS call's own
         `snapshot.device_names(bf)` before being used, exactly like a
@@ -147,11 +168,12 @@ FOLLOW-UPS: ENTITIES CARRIED FORWARD, NEVER INTENT (#318)
 
     WHY EXPLICIT TEXT ALWAYS WINS, WITH NO SEPARATE OVERRIDE LOGIC
         The fallback is only ever consulted when the question's own text
-        fails to resolve a side. If the current question names a device or
-        address directly, that is what gets used, `previous` is never
-        looked at for that side. This is a property of the order operations
-        happen in, not a rule enforced separately -- see
-        tests/test_query_translation.py for the test proving it holds.
+        fails to resolve a side AND that side is a recognised back-reference.
+        If the current question names a device or address directly, that is
+        what gets used, `previous` is never looked at for that side. This is
+        a property of the order operations happen in, not a rule enforced
+        separately -- see tests/test_query_translation.py for the test
+        proving it holds.
 
     WHAT resolved_entities MEANS ON THE WAY OUT
         Populated whenever a reachability question's source AND destination
@@ -280,6 +302,83 @@ def _split_on_reach_keyword(question: str) -> Optional[tuple]:
 
 
 # ------------------------------------------------------------------------------
+# 1b. Back-references -- a closed set, exactly like everything else here
+# ------------------------------------------------------------------------------
+#
+# FOUND BY REVIEW (@ARSH871-bot, #318), FIXED HERE.
+#     The first version of the follow-up fallback fired whenever a side
+#     failed to resolve, for ANY reason -- which does not distinguish "the
+#     question left this side out" (the feature) from "the question named
+#     something that does not resolve" (a typo, a plain-English name, a
+#     malformed address). Before this, every one of the second kind
+#     REFUSED, and the module docstring's own SCOPE section says they must:
+#     "Can the guest network reach the finance server" is refused on
+#     purpose, and widening it is future work that must keep the refusal
+#     path intact. Measured live: with a previous turn resolved, that exact
+#     question -- and a typo'd device name, and a malformed IP -- all came
+#     back "Yes", `grounded: True`, using the PREVIOUS turn's entity. That
+#     is the worst shape a query-layer mistake can take: evidenced,
+#     confident, and reproducible, answering a question nobody asked.
+#
+#     So the fallback now fires on a BACK-REFERENCE, recognised positively
+#     from a closed set, exactly the same discipline `_REACH_KEYWORDS` and
+#     friends already use -- never on resolution failure alone. A segment
+#     that names something and fails still refuses.
+
+_SOURCE_BACK_REFERENCE_LEAD = re.compile(
+    r"^\s*(?:can|does|is|could|would|will|do)\b\s*", re.IGNORECASE
+)
+#: Stripped from EITHER end after the lead, so "does it also reach" and
+#: "does it reach too" both still match "it" -- filler, not content, and
+#: still a closed set rather than a general parser. Adding a word here
+#: never widens what counts as a REFERENCE, only how much filler around one
+#: is tolerated.
+_LEADING_FILLER = re.compile(r"^(?:also|still|too|even)\s+", re.IGNORECASE)
+_TRAILING_FILLER = re.compile(r"\s+(?:also|still|too|even)$", re.IGNORECASE)
+_SOURCE_BACK_REFERENCES = {
+    "it", "that", "this", "that device", "this device", "the same device",
+}
+_DESTINATION_BACK_REFERENCES = {
+    "it", "that", "there", "that address", "the same address",
+}
+
+
+def _strip_back_reference_filler(text: str) -> str:
+    """Remove AT MOST ONE filler word, from either end -- "does it also
+    still reach" is two filler words, and this project's own discipline is
+    to refuse the unusual rather than parse harder to accept it, so only
+    one substitution is ever attempted, tried leading first."""
+    stripped = _LEADING_FILLER.sub("", text, count=1)
+    if stripped == text:
+        stripped = _TRAILING_FILLER.sub("", text, count=1)
+    return stripped.strip()
+
+
+def _is_source_back_reference(source_text: str) -> bool:
+    """True only for a closed set of literal back-references ("it", "that
+    device", ...), never for text that merely failed to name a real device.
+    "rtr-brnch" (a typo) and "the guest network" (CLAUDE.md's own
+    must-refuse example) are both real text that named something -- neither
+    is in the set, so neither is treated as a reference to the last turn."""
+    stripped = _SOURCE_BACK_REFERENCE_LEAD.sub("", source_text).strip().lower()
+    stripped = _strip_back_reference_filler(stripped)
+    return stripped in _SOURCE_BACK_REFERENCES
+
+
+def _is_destination_back_reference(destination_text: str) -> bool:
+    """Same discipline, destination side. ANY digit disqualifies it on
+    purpose -- something IP-shaped that failed to parse (a typo'd address,
+    an out-of-range octet) is a malformed address, not a reference to the
+    last turn's destination, and must still refuse rather than silently
+    substitute a different address than the one the user typed."""
+    stripped = destination_text.strip().rstrip("?.!").strip().lower()
+    if any(ch.isdigit() for ch in stripped):
+        return False
+    stripped = _strip_back_reference_filler(stripped)
+    return stripped in _DESTINATION_BACK_REFERENCES
+
+
+# ------------------------------------------------------------------------------
 # 2. The public entry point
 # ------------------------------------------------------------------------------
 
@@ -370,9 +469,11 @@ def _answer_reachability_question(
         )
 
     source_device = _find_device(source_text, present)
-    if source_device is None and previous is not None:
-        # A follow-up's source side ("it", "that device", or nothing at
-        # all) did not resolve on its own. Fall back to what the LAST
+    if (source_device is None and previous is not None
+            and _is_source_back_reference(source_text)):
+        # The source side is a literal back-reference ("it", "that
+        # device", ...), not merely unresolved text -- see "1b." above for
+        # why the distinction is load-bearing. Fall back to what the LAST
         # question resolved -- but re-validate it against THIS snapshot,
         # exactly like a name typed directly: a device from a different,
         # earlier upload must not survive into this one just because the
@@ -389,11 +490,13 @@ def _answer_reachability_question(
         )
 
     resolved = _resolve_destination(destination_text)
-    if resolved is None and previous is not None:
-        # Same fallback, destination side. Already-validated by the call
-        # that originally resolved it, so no re-validation needed here --
-        # unlike a device name, a literal IP carries no snapshot-specific
-        # meaning to go stale.
+    if (resolved is None and previous is not None
+            and _is_destination_back_reference(destination_text)):
+        # Same fallback, destination side, same "back-reference, not just
+        # unresolved" gate. Already-validated by the call that originally
+        # resolved it, so no re-validation needed here -- unlike a device
+        # name, a literal IP carries no snapshot-specific meaning to go
+        # stale.
         candidate_ip = previous.get("destination_ip")
         candidate_display = previous.get("destination_display")
         if candidate_ip and candidate_display:

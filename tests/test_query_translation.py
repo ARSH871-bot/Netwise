@@ -15,6 +15,8 @@ RUN
     pytest tests/ -v
 """
 
+import pytest
+
 from ai.query import answer_question
 
 
@@ -569,3 +571,89 @@ def test_a_bare_follow_up_with_no_reach_keyword_still_refuses():
     assert result["grounded"] is False
     assert result["question_understood"] is None
     assert session.q.traceroute_calls == []
+
+
+# --- The fallback fires on a back-reference, never on failure alone --------
+# (found by review, @ARSH871-bot -- the fallback used to fire whenever a
+# side failed to resolve, for ANY reason, which did not distinguish "the
+# question left this side out" from "the question named something that does
+# not resolve". Every case below used to come back grounded=True, silently
+# answering with the PREVIOUS turn's entity instead of refusing.)
+
+
+@pytest.mark.parametrize("question", [
+    "Can the guest network reach the finance server?",
+    "Can rtr-brnch reach 10.10.10.5?",
+    "Can it reach 10.10.10.500?",
+])
+def test_a_named_but_unresolvable_segment_still_refuses_even_with_previous(
+        question):
+    """THE ONE ARSH'S REVIEW FOUND. Each of these names something -- a
+    plain-English name, a typo'd device, a malformed address -- and none of
+    them is a recognised back-reference. All three must refuse exactly as
+    they would with no `previous`, never silently answer using the last
+    turn's entity."""
+    session = _session_with_devices({"rtr-us5"})
+    previous = _resolved_entities("rtr-us5", "10.10.10.5")
+
+    result = answer_question(question, session, previous)
+
+    assert result["grounded"] is False, (
+        f"{question!r} was answered using a carried-forward entity instead "
+        "of refusing -- exactly the regression this test exists to catch"
+    )
+    assert result["question_understood"] is None
+    assert result["resolved_entities"] is None
+    assert session.q.traceroute_calls == []
+
+
+def test_mutating_the_back_reference_gate_is_caught(monkeypatch):
+    """The mutation itself, run as a test rather than only by hand: revert
+    to the old "fall back on any failure" behaviour and confirm at least
+    one of the three guarded cases above starts (wrongly) succeeding."""
+    import ai.query as query_module
+
+    monkeypatch.setattr(query_module, "_is_source_back_reference", lambda _: True)
+    monkeypatch.setattr(query_module, "_is_destination_back_reference", lambda _: True)
+
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    previous = _resolved_entities("rtr-us5", "10.10.10.5")
+
+    result = answer_question(
+        "Can the guest network reach the finance server?", session, previous
+    )
+    assert result["grounded"] is True, (
+        "expected the mutated (unguarded) fallback to wrongly succeed here -- "
+        "if it still refuses, this test is not exercising the gate it claims to"
+    )
+
+
+def test_filler_words_are_tolerated_around_a_real_back_reference():
+    """"also"/"still"/"too" are filler, not content -- "does it ALSO reach"
+    must still be recognised as the same reference "does it reach" is.
+    This is the exact phrasing used in this PR's own live verification, so
+    it is worth pinning as a test rather than trusting a terminal transcript."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    previous = _resolved_entities("rtr-us5", "10.10.10.5")
+
+    result = answer_question("Does it also reach 8.8.8.8?", session, previous)
+
+    assert result["grounded"] is True
+    assert result["question_understood"] == "Can rtr-us5 reach 8.8.8.8?"
+
+
+def test_a_second_filler_word_is_not_tolerated():
+    """Deliberately narrow: one filler word, stripped once from each end.
+    "does it also still reach" is unusual enough that refusing it is the
+    right call, matching this project's own discipline of refusing the
+    unfamiliar rather than parsing harder to accept it."""
+    session = _session_with_devices({"rtr-us5"})
+    previous = _resolved_entities("rtr-us5", "10.10.10.5")
+
+    result = answer_question(
+        "Does it also still reach 8.8.8.8?", session, previous
+    )
+
+    assert result["grounded"] is False
