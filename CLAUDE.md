@@ -315,6 +315,23 @@ Batfish runs in Docker container `batfish` (image `batfish/allinone`), exposing
   > raised as the more complete fix and deliberately left for a separate,
   > properly scoped change rather than folded into this one -- see #306.
 
+  > **UPDATE, 28 September: #80 answered from pfSense's own source, not the
+  > client** (who had not replied in 25 days). pfSense saves "any" by
+  > *unsetting* `<protocol>` (`firewall_rules_edit.php:1195`), so the client's
+  > four protocol-less rules really are "any" and `ip` is right for them.
+  > Refusing them would have been wrong. Two real widenings were found
+  > instead, and both are now translated exactly rather than skipped,
+  > because skipping a `pass` rule is the dangerous direction above:
+  >
+  > ```
+  > no <protocol> + a port   pfSense: tcp, any port (filter.inc:4497)   was: ip
+  > tcp/udp + source port    pfSense: enforces it (filter.inc:3930)     was: dropped
+  >
+  > Batfish, testFilters, old -> new conversion:
+  >   udp -> host with a protocol-less block rule   DENY   -> PERMIT  (pfSense: PERMIT)
+  >   tcp :2000 -> a rule allowing only :1024        PERMIT -> DENY    (pfSense: DENY)
+  > ```
+
 ## 7a. The finding format (F-1) — the one contract
 
 **`docs/finding-format.md` is authoritative.** It was agreed by all four team

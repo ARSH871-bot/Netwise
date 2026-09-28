@@ -626,6 +626,119 @@ def test_port_is_not_emitted_for_protocol_any():
     assert "eq" not in output
 
 
+# --- #80: what an ABSENT <protocol> means, read from pfSense's own source ------------
+#
+# Commit 480a1c0626 of github.com/pfsense/pfsense, read 28 September 2026:
+#
+#   firewall_rules_edit.php:1195  a rule saved as "any" has its <protocol>
+#                                 UNSET -- absence is how "any" is stored
+#   firewall_rules_edit.php:619   the GUI zeroes every port unless the
+#                                 protocol is tcp, udp or tcp/udp
+#   filter.inc:4497               no <protocol> BUT a port set -> "proto tcp"
+#   filter.inc:3930               a port is emitted only for tcp/udp
+#
+# So an absent <protocol> is "any" (-> Cisco `ip`, correct), EXCEPT when the rule
+# still carries a port, which only hand-edited XML can produce: pfSense then
+# enforces TCP to any port. And a tcp/udp rule's SOURCE port is enforced by
+# pfSense and was silently dropped here. Both are now translated EXACTLY rather
+# than refused: skipping a pass rule narrows the model, which turns a real policy
+# violation into a clean result (#302) -- the one direction worse than widening.
+
+
+def test_an_absent_protocol_without_ports_is_any_and_still_converts_to_ip():
+    """The case #80 was worried about, and it is correct: pfSense stores
+    "any" by omitting <protocol>. Refusing it would refuse valid rules --
+    four of the client's seven (#78)."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>pass</type><interface>lan</interface>
+        <source><any/></source><destination><address>192.0.2.5</address></destination></rule>
+    """)
+    result = _convert_string_full(xml_text)
+    assert result.skipped == []
+    assert "permit ip any host 192.0.2.5" in result.text
+
+
+def test_an_explicit_any_with_a_port_stays_ip_unlike_an_absent_protocol():
+    """The two look alike and pfSense treats them differently: an explicit
+    "any" sets no protocol clause at all (filter.inc:4492), while an ABSENT
+    <protocol> with a port becomes "proto tcp" (:4497). Only the absent one
+    is inferred to be TCP."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>pass</type><interface>lan</interface><protocol>any</protocol>
+        <source><any/></source><destination><address>192.0.2.5</address><port>443</port></destination></rule>
+    """)
+    assert "permit ip any host 192.0.2.5\n" in _convert_string(xml_text)
+
+
+@pytest.mark.parametrize("action,cisco", [("pass", "permit"), ("block", "deny")])
+@pytest.mark.parametrize("endpoint", ["destination", "source"])
+@pytest.mark.parametrize("protocol_xml", ["", "<protocol></protocol>"])
+def test_an_absent_protocol_with_a_port_is_tcp_to_any_port_as_pfsense_enforces(
+        action, cisco, endpoint, protocol_xml):
+    """pfSense emits "proto tcp" and no port at all (filter.inc:4497, :3930):
+    its port generator still sees the empty protocol. This used to become
+    `ip`, every protocol -- for a block rule, the model then denied traffic
+    the real firewall lets through. An empty element is the same as an
+    absent one to pfSense's empty()."""
+    ports = {"source": "", "destination": ""}
+    ports[endpoint] = "<port>443</port>"
+    xml_text = _minimal_xml(rules_xml=f"""
+        <rule><type>{action}</type><interface>lan</interface>{protocol_xml}
+        <source><any/>{ports['source']}</source>
+        <destination><address>192.0.2.5</address>{ports['destination']}</destination></rule>
+    """)
+    result = _convert_string_full(xml_text)
+    assert result.skipped == []
+    assert f"{cisco} tcp any host 192.0.2.5\n" in result.text
+    assert "eq 443" not in result.text
+
+
+@pytest.mark.parametrize("protocol", ["tcp", "udp"])
+def test_a_source_port_is_written_not_silently_dropped(protocol):
+    """pfSense enforces a tcp/udp rule's source port (filter.inc:3930).
+    Before this, the converter emitted the rule without it -- every source
+    port -- and marked nothing skipped."""
+    xml_text = _minimal_xml(rules_xml=f"""
+        <rule><type>pass</type><interface>lan</interface><protocol>{protocol}</protocol>
+        <source><any/><port>1024</port></source>
+        <destination><address>192.0.2.5</address><port>443</port></destination></rule>
+    """)
+    result = _convert_string_full(xml_text)
+    assert result.skipped == []
+    assert f"permit {protocol} any eq 1024 host 192.0.2.5 eq 443" in result.text
+
+
+@pytest.mark.parametrize("bad_port", ["1024-65535", "EPHEMERAL", "0", "65536"])
+def test_a_source_port_that_is_not_one_valid_number_is_skipped(bad_port):
+    """Ranges and aliases are refused for the source exactly as they already
+    are for the destination -- named in `skipped`, never written literally."""
+    xml_text = _minimal_xml(rules_xml=f"""
+        <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol>
+        <source><any/><port>{bad_port}</port></source>
+        <destination><address>192.0.2.5</address></destination></rule>
+    """)
+    result = _convert_string_full(xml_text)
+    assert len(result.skipped) == 1
+    assert REFUSALS["invalid_port"] in result.skipped[0]
+    assert "<source> <port>" in result.skipped[0]
+    assert f"eq {bad_port}" not in result.text
+    assert "host 192.0.2.5" not in result.text
+
+
+def test_a_source_port_on_a_protocol_without_ports_is_ignored_like_pfsense():
+    """The other side of the same rule: pfSense emits no port for icmp, so
+    neither does this, and refusing would be refusing something pfSense
+    itself ignores."""
+    xml_text = _minimal_xml(rules_xml="""
+        <rule><type>pass</type><interface>lan</interface><protocol>icmp</protocol>
+        <source><any/><port>1024</port></source>
+        <destination><address>192.0.2.5</address></destination></rule>
+    """)
+    result = _convert_string_full(xml_text)
+    assert result.skipped == []
+    assert "permit icmp any host 192.0.2.5" in result.text
+
+
 def test_a_named_alias_in_address_is_skipped_not_emitted_as_a_host():
     """Regression coverage for the review finding: PF Sense's <address> can
     hold a named alias (e.g. "TRUSTED_HOSTS") instead of a literal IP.
