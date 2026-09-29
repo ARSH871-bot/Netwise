@@ -701,7 +701,7 @@ def _one_entry_policy(tag: str):
     return policy.load_policy({
         "device": tag,
         "policy_compliance": [{
-            "description": "d", "kind": "must_deny", "filter": "acl_in",
+            "description": "d", "kind": "prohibition", "filter": "acl_in",
             "node": tag, "queries": [{"dstIps": "10.0.0.1"}],
             "violation_severity": "high", "violation_summary": tag,
         }],

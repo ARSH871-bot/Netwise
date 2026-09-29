@@ -107,14 +107,26 @@ That file is validated by the test suite on every run
 (`tests/test_policy_example_is_valid.py`), so it cannot quietly stop being a
 policy the loader accepts.
 
-**What reads it, today.** `policy_compliance` asserts your rules instead of
-our built-in ones, and every finding says which of the two it used.
-`access_control` and `routing` do not read a supplied policy yet — they say
-so rather than staying silent about it (#196), so you are never left
-believing rules were checked that were not.
+**What reads it.** All three checks: `policy_compliance`, `access_control`
+and `routing` each assert your rules instead of our built-in ones, and every
+finding says which of the two it used. (Until #353 and #355 merged on 22
+September, only `policy_compliance` did; this paragraph said so for a week
+after it stopped being true.)
 
 **A policy that cannot be loaded stops the run** and names the entry and the
-missing field. It never analyses against half a policy.
+problem: a missing field, or a value that is not one of these, spelled
+exactly as shown:
+
+| Field | Allowed values |
+|---|---|
+| `expected` in `access_control` | `PERMIT`, `DENY` |
+| `expected` in `routing` | `REACHABLE`, `UNREACHABLE` |
+| `kind` in `policy_compliance` | `prohibition`, `requirement` |
+| `violation_severity` everywhere | `high`, `medium`, `low` |
+
+It never analyses against half a policy, and never guesses what a misspelt
+value meant: `"expected": "ALLOW"` used to load and report DNS as blocked on a
+config where it was allowed.
 
 The format is JSON. `docs/examples/policy.example.json` is the reference —
 it shows both rule kinds and a multi-arm rule, which are the two things that

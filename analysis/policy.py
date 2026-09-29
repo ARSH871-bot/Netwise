@@ -154,6 +154,17 @@ _REQUIRED_KEYS = ("description", "node")
 #:     defect in a new costume.
 #:
 #: `number` is NOT here: see _assign_missing_numbers().
+#: The values a check compares against or builds findings from. Anything else
+#: loaded before this existed, and a typo became a false finding -- see the
+#: value check in _validate_entry().
+_SEVERITIES = ("high", "medium", "low")
+_ALLOWED_VALUES: Dict[str, Dict[str, Tuple[str, ...]]] = {
+    "access_control": {"expected": ("PERMIT", "DENY"), "violation_severity": _SEVERITIES},
+    "policy_compliance": {"kind": ("prohibition", "requirement"),
+                          "violation_severity": _SEVERITIES},
+    "routing": {"expected": ("REACHABLE", "UNREACHABLE"), "violation_severity": _SEVERITIES},
+}
+
 _SECTION_REQUIRED: Dict[str, frozenset] = {
     "access_control": frozenset({
         "filter", "headers", "expected",
@@ -320,6 +331,22 @@ def _validate_entry(
                 else ""
             )
         )
+
+    # VALUES, NOT ONLY KEYS (measured 29 September). With only keys checked,
+    # `"expected": "ALLOW"` -- or "Permit" -- loaded, and access_control
+    # compares `actual == statement["expected"]`. On rtr-us5-secure, where DNS
+    # IS allowed, that reported "DNS to the approved server is blocked": a
+    # confident false finding produced by a typo in the user's own file.
+    # Every enumerated value is checked, all bad ones reported together, and
+    # none is corrected silently -- the same "refuse and name it" rule as a
+    # missing key.
+    bad = [
+        f"{key} must be one of {', '.join(choices)}, got {normalised[key]!r}"
+        for key, choices in _ALLOWED_VALUES.get(section, {}).items()
+        if key in normalised and normalised[key] not in choices
+    ]
+    if bad:
+        raise PolicyError(f"{where}: " + "; ".join(bad))
 
     return normalised, renamed
 
