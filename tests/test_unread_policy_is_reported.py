@@ -142,6 +142,7 @@ def test_access_control_no_longer_says_the_rules_were_not_read(
     monkeypatch.setattr(access_control, "_check_guarantees", lambda *a, **k: [])
     monkeypatch.setattr(access_control, "_check_dead_rules", lambda *a, **k: [])
     monkeypatch.setattr(access_control, "_check_undefined_references", lambda *a, **k: [])
+    monkeypatch.setattr(access_control, "_check_unused_filters", lambda *a, **k: [])
 
     results = access_control.run(bf=None)
     card = next((f for f in results if "not read" in f["summary"]), None)

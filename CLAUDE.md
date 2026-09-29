@@ -705,7 +705,7 @@ project's recurring failure family arriving through process rather than code.
 |---|---|---|
 | Shared pipeline (F-3) | Arsh | Done — connect, snapshot, parse check, dispatch, error isolation, duplicate-`id` guard |
 | F-1 format in code | team | Done — `analysis/findings.py`, validated |
-| `access_control` check | Arsh | Done — four analyses: `testFilters`, `searchFilters`, `filterLineReachability`, `undefinedReferences` |
+| `access_control` check | Arsh | Done — five analyses: `testFilters`, `searchFilters`, `filterLineReachability`, `undefinedReferences`, and `unusedStructures` for filters defined but never applied. That last one needs no policy, and reports only for files Batfish parsed completely: on `vendor-asa` it listed an ACL as unused because the line applying it was one Batfish did not understand, so a partly parsed file gets "could not tell" instead |
 | `policy_compliance` check | Shubham | Done — see `docs/policy-rules.md` |
 | `routing` check | Ankeet | Done — `traceroute`-based reachability, two-router fixtures |
 | **AI explanation layer** | Ankeet | Done — `ai/explain.py` + `ai/Modelfile` (Warden, local Ollama). Explains one finding, and **never raises**: an unreachable Ollama, an unbuilt model, or a finding with no real evidence all degrade to deterministic text (#52) |

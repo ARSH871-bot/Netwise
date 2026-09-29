@@ -118,6 +118,7 @@ def _run_with_devices(monkeypatch, present, dead_rules=()):
         monkeypatch.setattr(access_control, fn, lambda bf, n, items: [])
     monkeypatch.setattr(access_control, "_check_dead_rules", lambda bf, n: list(dead_rules))
     monkeypatch.setattr(access_control, "_check_undefined_references", lambda bf, n: [])
+    monkeypatch.setattr(access_control, "_check_unused_filters", lambda bf, n: [])
     return access_control.run(_FakeSession())
 
 
