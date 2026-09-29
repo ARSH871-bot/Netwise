@@ -479,9 +479,15 @@ def test_routing_empty_section_reports_one_loud_none(monkeypatch):
     routing returns early here -- unlike access_control it has no analysis
     that needs no policy -- so the whole result must be exactly the one
     "nothing to check" card, and no traceroute may be asked at all.
+
+    Since the routing hygiene analyses, routing DOES have analyses that need
+    no policy, and they rightly still run here. They are stubbed so this test
+    stays about what it pins -- no route ASSERTION is asked -- and are tested
+    in tests/test_routing_hygiene.py.
     """
     policy.set_active_policy(policy.load_policy({"routing": []}))
     monkeypatch.setattr(routing.snapshot, "device_names", lambda bf: {"rtr-hq"})
+    monkeypatch.setattr(routing, "_routing_hygiene", lambda bf: [])
 
     class NoQueries:
         def __getattr__(self, name):
