@@ -457,7 +457,7 @@ def test_access_control_empty_section_reports_one_loud_none(monkeypatch):
                         lambda bf, numbering, statements:
                         queried.extend(statements) or [])
     for name in ("_check_guarantees", "_check_dead_rules",
-                 "_check_undefined_references"):
+                 "_check_undefined_references", "_check_unused_filters"):
         monkeypatch.setattr(access_control, name, lambda *a, **k: [])
 
     results = access_control.run(bf=None)
