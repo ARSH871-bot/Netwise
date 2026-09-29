@@ -1365,3 +1365,81 @@ body {
 .notice-next {
   margin: 0;
 }
+
+/* --- Saved scans: what changed since last time? (#223) ------------------- */
+
+.history {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.history-heading {
+  margin: 0 0 0.6rem;
+  font-size: 1rem;
+}
+
+.history-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.history-form input {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.history-summary,
+.history-caveat {
+  margin: 0 0 0.6rem;
+  font-size: 0.88rem;
+}
+
+.history-caveat,
+.history-sample {
+  color: var(--blind-ink);
+}
+
+.history-sample {
+  margin: 0 0 0.6rem;
+  padding: 0.5rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.88rem;
+  background: var(--blind-fill);
+  border: 1px solid var(--blind);
+}
+
+.history-section {
+  margin-bottom: 0.8rem;
+}
+
+.history-section-title {
+  margin: 0 0 0.3rem;
+  font-size: 0.9rem;
+}
+
+.history-section ul,
+.history-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  font-size: 0.88rem;
+}
+
+.history-reason {
+  color: var(--ink-soft);
+}
+
+.history-item {
+  margin-bottom: 0.3rem;
+}
+
+.history-item-name {
+  font-weight: 600;
+}
+
+.history-item-meta {
+  color: var(--ink-soft);
+}
