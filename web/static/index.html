@@ -319,6 +319,35 @@
 
         <!-- ---- The findings themselves, grouped by status ---- -->
         <div id="findings"></div>
+
+        <!-- ---- Saved scans: what changed since last time? (#223) ----
+             Nothing is saved by scanning. The user names the network and
+             clicks Save; Compare diffs the latest saved scan of that name
+             with what is on screen now. A problem is listed as fixed only if
+             its check ran on that device again (analysis/scan_diff.py). -->
+        <div class="history" id="history">
+          <h3 class="history-heading">Compare with an earlier scan</h3>
+          <form id="history-form" class="history-form">
+            <label for="history-name">Network name</label>
+            <input
+              id="history-name"
+              name="history-name"
+              type="text"
+              maxlength="64"
+              autocomplete="off"
+              placeholder="e.g. Head office"
+            />
+            <button type="submit" id="history-save">Save this scan</button>
+            <button type="button" id="history-compare">Compare with last saved</button>
+          </form>
+          <p class="hint" id="history-message" role="status"></p>
+          <div id="history-result" aria-live="polite"></div>
+          <details id="history-saved">
+            <summary>Saved scans</summary>
+            <ul id="history-list" class="history-list"></ul>
+            <button type="button" id="history-delete-all">Delete all saved scans</button>
+          </details>
+        </div>
           </div>
         </section>
       </div>

@@ -27,7 +27,8 @@ import json
 import pytest
 
 from analysis.policy import (POLICY_SECTIONS, Policy, PolicyError, load_policy,
-                             load_policy_file, _LEGACY_KEYS, _SECTION_REQUIRED)
+                             load_policy_file, _ALLOWED_VALUES, _LEGACY_KEYS,
+                             _SECTION_REQUIRED)
 
 
 def _entry(**overrides):
@@ -332,8 +333,15 @@ def test_a_legacy_key_loads_and_is_reported_rather_than_refused(section, legacy)
     reconsider it, not to add one back on principle.
     """
     entry = {"description": "x", "node": "rtr-us5", legacy: "high"}
+    # Enumerated keys get their first ALLOWED value: since values are checked,
+    # a filler "x" would be refused for a reason this test is not about.
+    allowed = _ALLOWED_VALUES.get(section, {})
     for key in _SECTION_REQUIRED.get(section, ()):
-        entry.setdefault(key, [{"srcIps": "10.0.0.0/8"}] if key == "queries" else "x")
+        if key == "queries":
+            filler = [{"srcIps": "10.0.0.0/8"}]
+        else:
+            filler = allowed[key][0] if key in allowed else "x"
+        entry.setdefault(key, filler)
 
     loaded = load_policy({section: [entry]})
 
@@ -360,3 +368,73 @@ def test_the_canonical_name_is_what_the_check_actually_reads(section=None):
         "the legacy key survived alongside its canonical name -- a check "
         "reading one and a validator reading the other is how they drift"
     )
+
+
+# --- Values, not only keys (29 September) ---------------------------------------
+#
+# Only keys used to be checked. `"expected": "ALLOW"` loaded, and on
+# rtr-us5-secure -- where DNS IS allowed -- access_control then reported "DNS to
+# the approved server is blocked": a confident false finding from a typo.
+
+#: What each check actually compares against, written out HERE rather than
+#: read from policy._ALLOWED_VALUES. A test built from that table passed when a
+#: rule was deleted from it, because the test case was deleted along with it.
+EXPECTED_CHOICES = {
+    ("access_control", "expected"): ("PERMIT", "DENY"),
+    ("routing", "expected"): ("REACHABLE", "UNREACHABLE"),
+    ("policy_compliance", "kind"): ("prohibition", "requirement"),
+    ("access_control", "violation_severity"): ("high", "medium", "low"),
+    ("policy_compliance", "violation_severity"): ("high", "medium", "low"),
+    ("routing", "violation_severity"): ("high", "medium", "low"),
+}
+
+
+def _valid_entry(section):
+    entry = {"description": "d", "node": "rtr-us5"}
+    for key in _SECTION_REQUIRED[section]:
+        if key == "queries":
+            entry[key] = [{"srcIps": "10.0.0.0/8"}]
+        elif key == "headers":
+            entry[key] = {"srcIps": "10.0.0.0/8"}
+        else:
+            entry[key] = EXPECTED_CHOICES.get((section, key), ("any text",))[0]
+    return entry
+
+
+def test_a_valid_entry_in_every_section_still_loads():
+    for section in _SECTION_REQUIRED:
+        assert load_policy({section: [_valid_entry(section)]}).entries_for(section)
+
+
+@pytest.mark.parametrize("section,key", sorted(EXPECTED_CHOICES))
+@pytest.mark.parametrize("bad", ["x", "ALLOW", "Permit", "High", ""])
+def test_a_value_outside_the_allowed_set_is_refused_and_named(section, key, bad):
+    entry = dict(_valid_entry(section), **{key: bad})
+    with pytest.raises(PolicyError) as refusal:
+        load_policy({section: [entry]})
+    message = str(refusal.value)
+    assert key in message and repr(bad) in message
+    assert all(choice in message for choice in EXPECTED_CHOICES[(section, key)])
+
+
+@pytest.mark.parametrize("section,key", sorted(EXPECTED_CHOICES))
+def test_every_allowed_value_loads(section, key):
+    for choice in EXPECTED_CHOICES[(section, key)]:
+        assert load_policy({section: [dict(_valid_entry(section), **{key: choice})]})
+
+
+def test_every_bad_value_in_an_entry_is_reported_together():
+    entry = dict(_valid_entry("access_control"), expected="ALLOW", violation_severity="High")
+    with pytest.raises(PolicyError) as refusal:
+        load_policy({"access_control": [entry]})
+    assert "expected" in str(refusal.value) and "violation_severity" in str(refusal.value)
+
+
+def test_the_measured_false_finding_is_now_refused_at_load():
+    """The typo that produced "DNS to the approved server is blocked" on a
+    config where DNS is allowed now never reaches a check."""
+    from analysis.checks import access_control
+    typo = dict(access_control.POLICY[0], expected="ALLOW")
+    with pytest.raises(PolicyError):
+        load_policy({"access_control": [typo]})
+

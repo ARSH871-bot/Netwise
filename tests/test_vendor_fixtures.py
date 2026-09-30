@@ -215,3 +215,28 @@ def test_vendor_asa_parses_only_partially_and_still_finds_something():
         "real regression: a user would be told nothing about the lines "
         "Batfish could not read"
     )
+
+
+@needs_batfish
+def test_an_unused_filter_is_found_where_the_file_parsed_fully():
+    """vendor-nxos applies FINANCE_IN, which does not exist, and never applies
+    SERVER_IN, which does. Real Batfish, the real pipeline."""
+    from analysis import pipeline
+
+    results = pipeline.analyse(str(FIXTURES / "vendor-nxos"), snapshot_name="vendor_nxos_unused")
+    assert any(f["status"] == "found"
+               and f["summary"] == "Filter 'SERVER_IN' is defined but never applied"
+               for f in results)
+
+
+@needs_batfish
+def test_a_partly_parsed_file_never_gets_an_unused_filter_finding():
+    """vendor-asa DOES apply OUTSIDE_IN -- on line 29, which Batfish does not
+    understand, so it lists the ACL as unused. That must come out as could
+    not tell, never as a finding."""
+    from analysis import pipeline
+
+    results = pipeline.analyse(str(FIXTURES / "vendor-asa"), snapshot_name="vendor_asa_unused")
+    assert not any("defined but never applied" in f["summary"] for f in results)
+    assert any(f["status"] == "error" and f["summary"].startswith("Could not tell whether")
+               for f in results)

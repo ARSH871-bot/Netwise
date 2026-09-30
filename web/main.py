@@ -47,7 +47,7 @@ from ai.explain import (
 from ai.propose import propose_change
 from ai.query import answer_question
 from analysis import egress
-from analysis import findings, pipeline as analysis_pipeline, report
+from analysis import findings, pipeline as analysis_pipeline, report, scan_diff
 from analysis.business_context import (
     TIERS,
     BusinessContextError,
@@ -61,6 +61,7 @@ from analysis.checks.risk import (
 from analysis.pfsense_convert import PfSenseConversionError, convert as pfsense_convert
 from analysis.policy import PolicyError, load_policy_file
 from web.audit_log import event as audit_event
+from web.history import HistoryError, ScanHistory
 from web.session import (
     DEFAULT_SESSION,
     SESSION_COOKIE,
@@ -1286,6 +1287,7 @@ def get_findings(http_response: Response = None) -> List[Dict[str, Any]]:
             policy=_staged_policy(),
         )
         _remember_analysis(key, results)
+    _record_last_scan(key, results)
 
     # --- Business context (#87, risk side) ---------------------------------
     #
@@ -1747,6 +1749,162 @@ def load_sample() -> Dict[str, Any]:
         "policy_cleared": policy_was_staged,
         "business_context_cleared": context_was_staged,
     }
+
+
+# --- Saved scans: what changed since the last time? (#223) -----------------
+#
+# Nothing here runs unless the user asks. Scanning saves nothing; "Save this
+# scan" stores the scan they are looking at under a network name they type,
+# and "Compare" diffs the latest saved scan of that name with the current
+# one through analysis/scan_diff.py, which only calls a problem fixed if its
+# check actually ran on that device again. web/history.py says why the three
+# decisions #223 left open were settled this way.
+
+HISTORY_PATH = CONFIG_ROOT / "history.sqlite3"
+_history = ScanHistory(HISTORY_PATH)
+
+#: The F-1 fields, and nothing else, go into a saved scan. The cached results
+#: carry explanations and remediation attached for display; those are
+#: regenerable model output, not evidence, and #223 says not to store them.
+_F1_FIELDS = ("id", "check", "severity", "device", "summary", "evidence", "status")
+
+
+def last_scan_path(session_id: Optional[str] = None) -> Path:
+    """Where a session keeps the scan it was last shown (#223)."""
+    return snapshot_dir(session_id) / "last-scan.json"
+
+
+def _record_last_scan(key: Optional[str], results: List[Dict[str, Any]]) -> None:
+    """Keep the F-1 findings just served, with the key they were computed under.
+
+    NOT the analysis cache, on purpose. The cache refuses results that
+    contain operational errors, so a Batfish-down scan is never replayed --
+    right for a cache, and exactly the scan a comparison most needs: its
+    whole point is to say nothing was fixed when nobody looked.
+    """
+    if key is None:
+        return
+    try:
+        last_scan_path().write_text(json.dumps({
+            "key": key,
+            "findings": [{field: f[field] for field in _F1_FIELDS} for f in results],
+        }), encoding="utf-8")
+    except OSError:
+        pass  # saving is then refused with "scan first", which is true
+
+
+def _current_scan() -> Optional[Dict[str, Any]]:
+    """The scan this session is looking at, as a scan_diff row, or None.
+
+    None when nothing is uploaded, the upload has not been scanned yet, or
+    the staged config or policy changed since the last scan -- saving or
+    comparing then has nothing honest to work with.
+    """
+    if not _is_uploaded():
+        return None
+    try:
+        record = json.loads(last_scan_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if record.get("key") != _analysis_key():
+        return None
+    results = record["findings"]
+    policy_file = policy_path()
+    skips = _staged_pfsense_skips()
+    return scan_diff.make_scan(
+        results,
+        config_fingerprint=_snapshot_fingerprint(configs_dir()),
+        policy_hash=(hashlib.sha256(policy_file.read_bytes()).hexdigest()
+                     if policy_file.exists() else "built-in"),
+        # An unreadable skip record must still block "resolved": a skipped
+        # rule may be exactly why a finding vanished.
+        conversion_skips=(["the record of skipped pfSense rules could not be read"]
+                          if skips is None else skips),
+        is_sample=_is_sample_session(),
+    )
+
+
+def _diff_for_json(result: Dict[str, Any]) -> Dict[str, Any]:
+    """scan_diff.diff()'s tuples as named fields, for the browser."""
+    return {
+        "resolved": result["resolved"],
+        "unverified": [{"finding": f, "reason": why} for f, why in result["unverified"]],
+        "new": result["new"],
+        "newly_visible": [{"finding": f, "reason": why} for f, why in result["newly_visible"]],
+        "newly_blind": [{"check": c, "device": d, "reason": why}
+                        for c, d, why in result["newly_blind"]],
+        "newly_checked": [{"check": c, "device": d} for c, d in result["newly_checked"]],
+        "unchanged_count": len(result["unchanged"]),
+        "possibly_same": [{"disappeared": a, "appeared": b, "similarity": s}
+                          for a, b, s in result["possibly_same"]],
+        "caveats": result["caveats"],
+    }
+
+
+class SaveScanRequest(BaseModel):
+    name: str
+
+
+_NOTHING_TO_SAVE = ("There is no scan to work with yet. Upload a config and "
+                    "click Scan Now first.")
+
+
+@app.post("/api/history")
+def save_scan(body: SaveScanRequest) -> Dict[str, Any]:
+    """Save the current scan under a network name the user chose."""
+    scan = _current_scan()
+    if scan is None:
+        raise HTTPException(status_code=409, detail=_NOTHING_TO_SAVE)
+    try:
+        saved = _history.save(body.name, scan)
+    except HistoryError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit_event("history_saved", **{f"{k}_count": v for k, v in saved["counts"].items()})
+    return dict(saved, is_sample=scan["is_sample"])
+
+
+@app.get("/api/history")
+def list_saved_scans() -> Dict[str, Any]:
+    """Every saved scan, newest first -- names, times and counts only."""
+    return {"scans": _history.list()}
+
+
+@app.get("/api/history/compare")
+def compare_with_saved(name: str) -> Dict[str, Any]:
+    """What changed between the latest scan saved as `name` and this one."""
+    try:
+        saved = _history.latest(name)
+    except HistoryError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if saved is None:
+        raise HTTPException(status_code=404, detail=f"Nothing has been saved as {name.strip()!r}.")
+    current = _current_scan()
+    if current is None:
+        raise HTTPException(status_code=409, detail=_NOTHING_TO_SAVE)
+    return {
+        "saved": {"id": saved["id"], "name": saved["name"],
+                  "created_at": saved["created_at"],
+                  "is_sample": bool(saved["scan"].get("is_sample"))},
+        "current_is_sample": current["is_sample"],
+        **_diff_for_json(scan_diff.diff(saved["scan"], current)),
+    }
+
+
+@app.delete("/api/history/{scan_id}")
+def delete_saved_scan(scan_id: int) -> Dict[str, Any]:
+    """Delete one saved scan. Its bytes are overwritten, not just unlinked."""
+    if not _history.delete(scan_id):
+        raise HTTPException(status_code=404, detail="No saved scan has that id.")
+    audit_event("history_deleted", deleted_count=1)
+    return {"deleted": 1}
+
+
+@app.delete("/api/history")
+def delete_all_saved_scans() -> Dict[str, Any]:
+    """Delete every saved scan on this install."""
+    deleted = _history.delete_all()
+    audit_event("history_deleted", deleted_count=deleted)
+    return {"deleted": deleted}
 
 
 @app.post("/api/policy")
