@@ -1243,6 +1243,64 @@ function setUpPolicyUpload() {
 }
 
 /**
+ * "Draft one from my config" (#326): fetch a policy drafted from the staged
+ * config and hand it to the user as a file.
+ *
+ * FETCH, NOT A PLAIN LINK. Drafting needs Batfish, and when it is stopped the
+ * server answers 503 with a reason. A link would navigate the whole page to
+ * that raw JSON; this shows the reason where the policy messages already go.
+ *
+ * NOTHING IS STAGED. The file goes to the user's downloads and nowhere else --
+ * the only way a draft reaches a check is the user choosing it in the policy
+ * picker above, after deciding every rule. So this never calls
+ * clearStaleResults(): the findings on screen are still current.
+ */
+function setUpPolicyDraft() {
+  const button = document.getElementById("policy-draft");
+  if (!button) return;
+
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    showPolicyMessage("Drafting a policy from your config…", "");
+    try {
+      const response = await fetch("/api/policy/draft");
+      if (!response.ok) {
+        const result = await response.json();
+        showPolicyMessage(result.detail, "bad");
+        return;
+      }
+
+      // The server names the file (with a timestamp), as it does the report.
+      const disposition = response.headers.get("Content-Disposition") || "";
+      const match = disposition.match(/filename="([^"]+)"/);
+      const name = match ? match[1] : "netwise-draft-policy.json";
+      const text = await response.text();
+      const summary = JSON.parse(text).draft.summary;
+
+      const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+
+      showPolicyMessage(
+        `Draft saved as ${name}. ${summary} It will not load until you ` +
+          `replace every <FILL IN …> with your decision and delete its ` +
+          `"draft" block — then choose it above.`,
+        "ok"
+      );
+    } catch (error) {
+      showPolicyMessage(`Could not draft a policy: ${error.message}`, "bad");
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+/**
  * Show the loader's rename notes under the policy message.
  *
  * textContent, never innerHTML -- these strings quote the user's own file
@@ -1854,6 +1912,7 @@ refreshSampleBanner();
 loadFindings();
 setUpUpload();
 setUpPolicyUpload();
+setUpPolicyDraft();
 setUpBusinessContextUpload();
 setUpChat();
 setUpProposeChange();

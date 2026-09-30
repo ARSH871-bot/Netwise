@@ -46,7 +46,7 @@ from ai.explain import (
 )
 from ai.propose import propose_change
 from ai.query import answer_question
-from analysis import egress
+from analysis import draft_policy, egress
 from analysis import findings, pipeline as analysis_pipeline, report, scan_diff
 from analysis.business_context import (
     TIERS,
@@ -59,7 +59,7 @@ from analysis.checks.risk import (
     unusable_entries,
 )
 from analysis.pfsense_convert import PfSenseConversionError, convert as pfsense_convert
-from analysis.policy import PolicyError, load_policy_file
+from analysis.policy import DRAFT_KEY, PolicyError, load_policy_file
 from web.audit_log import event as audit_event
 from web.history import HistoryError, ScanHistory
 from web.session import (
@@ -2039,6 +2039,67 @@ async def upload_policy(file: UploadFile) -> Dict[str, Any]:
             "Access control and routing still use our built-in rules (#87)."
         ),
     }
+
+
+@app.get("/api/policy/draft")
+def download_policy_draft() -> Response:
+    """A policy drafted from this session's staged config, as a file (#326).
+
+    HANDED BACK, NEVER STAGED. The draft describes what the config does
+    today, so applying it would assert "the config should do what it does"
+    -- a clean result on any config, the insecure one included. It goes to
+    the user as a download, `analysis.policy` refuses it until every
+    decision in it is made, and the only way back in is `/api/policy`,
+    which a person has to choose.
+
+    Connects and loads the snapshot fresh, as `/api/ask` does. A failure is
+    a 503 carrying the reason rather than a 500: the most likely cause is a
+    stopped Batfish, and the user can fix that.
+    """
+    if not _is_uploaded():
+        raise HTTPException(
+            status_code=409,
+            detail="Upload a config first. A draft is made from your own config.",
+        )
+    try:
+        bf = analysis_pipeline.connect()
+        analysis_pipeline.load_snapshot(bf, snapshot_dir(), "netwise", SNAPSHOT_NAME)
+        draft = draft_policy.draft_policy(bf)
+    except Exception as error:
+        raise HTTPException(
+            status_code=503,
+            detail=("Could not draft a policy: Batfish could not be reached or "
+                    "could not load the config. " + findings.describe_error(error)),
+        ) from error
+
+    # Say what it was drafted from IN the file, for #347's reason: it will
+    # outlive this tab, and a draft of the invented sample network reads
+    # exactly like a draft of a real one.
+    #
+    # And say what the file NAME is. The upload is staged under our own name
+    # (device.cfg), never the client's, so without this every citation names
+    # a file the user has never seen. A converted PF Sense export has a
+    # further gap: its lines are the converted Cisco text, not the XML, and
+    # nothing staged records that a conversion happened -- so it is said
+    # unconditionally rather than guessed at.
+    staged = sorted(p.name for p in configs_dir().glob("*") if p.is_file())
+    drafted_from = (
+        f"{', '.join(staged) or 'an uploaded configuration'} -- the name the "
+        "dashboard gives the file you uploaded, and the name every citation "
+        "uses. For a converted PF Sense export, cited line numbers are lines "
+        "of the converted Cisco text, not of your XML."
+    )
+    if _is_sample_session():
+        drafted_from = f"SAMPLE NETWORK (invented demonstration data) -- {drafted_from}"
+    draft[DRAFT_KEY]["drafted_from"] = drafted_from
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    return Response(
+        content=json.dumps(draft, indent=2) + "\n",
+        media_type="application/json",
+        headers={"Content-Disposition":
+                 f'attachment; filename="netwise-draft-policy-{stamp}.json"'},
+    )
 
 
 # --- The business-context upload (#87, risk side) ---------------------------

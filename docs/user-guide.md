@@ -107,6 +107,37 @@ That file is validated by the test suite on every run
 (`tests/test_policy_example_is_valid.py`), so it cannot quietly stop being a
 policy the loader accepts.
 
+**Or draft one from your own config** (#326):
+
+```bash
+python -m analysis.draft_policy my-network/ --out my-policy.json
+```
+
+On the dashboard, upload the config and click **Draft one from my config**
+under the policy picker. Either way you get one `policy_compliance` rule for
+each line of every filter applied to an interface, citing the file and line it
+came from. Batfish checks each rule against your config before it is written
+down, so every drafted rule is true of the config today.
+
+That is exactly why the draft **will not load as it stands**. Accepted
+unchanged, it only says "the config should do what it does", which passes on
+any config, the insecure one included. So each rule's two judgements are left
+as `<FILL IN ...>`, and the loader refuses the file, listing every decision
+still to make, until you have:
+
+1. set each `kind` to `requirement` (this traffic must stay allowed) or
+   `prohibition` (it must be blocked), and set each `violation_severity`;
+2. deleted any rule you do not care about;
+3. read the `not_drafted` list, then deleted the whole top-level `draft` block.
+
+A line is **not drafted**, and is listed with the reason, when an earlier line
+decides part of its traffic (Batfish's own example packet is quoted), when it
+matches on something a rule cannot copy exactly (object-groups, TCP flags,
+compound terms), when Batfish could not read the whole file, or when its filter
+is not applied to any interface. Nothing is approximated. A draft holds at most
+48 rules, the most `policy_compliance` can number without two findings sharing
+an id.
+
 **What reads it.** All three checks: `policy_compliance`, `access_control`
 and `routing` each assert your rules instead of our built-in ones, and every
 finding says which of the two it used. (Until #353 and #355 merged on 22
