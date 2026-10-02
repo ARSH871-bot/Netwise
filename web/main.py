@@ -327,6 +327,15 @@ _uploaded: bool = False
 #: to -- see #242's own scope.
 _uploaded_sessions: "set[str]" = set()
 
+#: Per-session, keyed by current_session_id(): the resolved_entities dict
+#: ai.query.answer_question() returned for that session's last successful
+#: reachability resolution, so a follow-up ("does it reach ...") can reuse
+#: it (#318). Same "unbounded, deliberately, and small" justification as
+#: _uploaded_sessions above -- ephemeral conversation state for a handful
+#: of local users, not a reason to touch disk the way the file-based
+#: policy/business-context state does.
+_last_resolved_entities: "Dict[str, Dict[str, Any]]" = {}
+
 
 def _is_uploaded() -> bool:
     """Has THIS session staged a config?
@@ -344,6 +353,34 @@ def _is_uploaded() -> bool:
         state on purpose.
     """
     return _uploaded or current_session_id() in _uploaded_sessions
+
+
+def _discard_last_resolved_entities() -> None:
+    """Forget this session's carried-forward reachability entities.
+
+    A NEW NETWORK MUST NOT INHERIT THE OLD NETWORK'S RESOLVED DEVICE.
+        Same reasoning as clearing the staged policy and business context on
+        upload (#318): a follow-up must not silently reuse a device or
+        address resolved against a snapshot that no longer exists, even if
+        a same-named device happens to exist in the new one by coincidence.
+        `ai.query.answer_question()` re-validates a carried-forward device
+        against the CURRENT snapshot regardless, so this is not the only
+        guard -- but the right answer to "does this apply to the new
+        network" is "there is no previous turn", not "check and see".
+    """
+    _last_resolved_entities.pop(current_session_id(), None)
+
+
+def reset_last_resolved_entities() -> None:
+    """Empty the whole cache, every session -- for tests (#318 review,
+    @SamikaPerera). `tests/conftest.py` calls this between every test,
+    the same reason `reset_explanation_cache()`/`reset_analysis_cache()`
+    already exist: module-level state that survives a test is how one
+    test starts passing for a reason belonging to another one. Unlikely
+    to bite in practice, since each TestClient gets its own session id --
+    worth having before someone writes a test that shares one, not after.
+    """
+    _last_resolved_entities.clear()
 
 # ---------------------------------------------------------------------------
 # N-1, enforced rather than promised (US-40, #332)
@@ -1499,6 +1536,11 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     context_was_staged = business_context_path().exists()
     _discard_staged_business_context()
 
+    # A follow-up question must not carry a resolved device or address
+    # forward into a new network -- see _discard_last_resolved_entities()'s
+    # own docstring (#318).
+    _discard_last_resolved_entities()
+
     # Stage THIS upload's PF Sense skip notes, if any -- and clear whatever
     # was staged before, unconditionally, so a plain Cisco upload after a
     # PF Sense one cannot leave a stale note pointing at a config that is no
@@ -2292,9 +2334,11 @@ class AskRequest(BaseModel):
 
 @app.post("/api/ask")
 def ask_question(request: AskRequest) -> Dict[str, Any]:
-    """Answer one plain-English question about the uploaded config (US-11).
+    """Answer one plain-English question about the uploaded config (US-11),
+    reusing the last question's resolved device/address for a reachability
+    follow-up within THIS session (#318).
 
-    Always returns ai.query.answer_question()'s three keys
+    Always returns ai.query.answer_question()'s three PUBLIC keys
     (question_understood, answer, grounded), whether the question was
     answerable or refused. Never a 500 for an operational failure -- an
     empty question, no upload yet, an unreachable Batfish, or a config
@@ -2306,6 +2350,13 @@ def ask_question(request: AskRequest) -> Dict[str, Any]:
     reusing a cached session, the same choice /api/findings already
     makes for analyse() -- consistency over a caching optimisation
     nothing here has needed yet.
+
+    answer_question()'s FOURTH key, resolved_entities, is read here and
+    stored keyed by current_session_id() -- so the next call in the same
+    session can pass it back in as `previous` -- and then popped before
+    the response goes out. It is a signal between this endpoint and
+    answer_question(), not new public API surface; the wire contract of
+    /api/ask is unchanged.
     """
     if not _is_uploaded():
         return {
@@ -2327,7 +2378,15 @@ def ask_question(request: AskRequest) -> Dict[str, Any]:
             "grounded": False,
         }
 
-    return answer_question(request.question, bf)
+    session_id = current_session_id()
+    previous = _last_resolved_entities.get(session_id)
+    result = answer_question(request.question, bf, previous)
+
+    resolved_entities = result.pop("resolved_entities", None)
+    if resolved_entities:
+        _last_resolved_entities[session_id] = resolved_entities
+
+    return result
 
 
 class ProposeRequest(BaseModel):
