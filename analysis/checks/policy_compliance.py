@@ -163,6 +163,14 @@ SKIPPED_NUMBER = ERROR_NUMBER_OFFSET
 # disjoint, so a future N of 49 fails loudly rather than silently colliding.
 UNCOVERED_NUMBER = 49
 
+# The highest `number` a rule may take, so no two findings share an id (#376).
+# Rule n is PC-n, or PC-(n + ERROR_NUMBER_OFFSET) if it cannot run, and 49 and
+# 50 are this check's own cards, so rules must stop below the first of those.
+# `analysis/policy.py` refuses a user policy that goes past it, and
+# `analysis/draft_policy.py` stops drafting at it. Derived, so it moves with
+# the bands above.
+HIGHEST_POLICY_NUMBER = min(UNCOVERED_NUMBER, SKIPPED_NUMBER) - 1
+
 # --- The policy being asserted ----------------------------------------------
 #
 # Kept as plain data so the policy can be edited without reading the code below

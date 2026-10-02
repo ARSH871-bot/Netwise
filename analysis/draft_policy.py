@@ -64,11 +64,6 @@ from analysis import findings, pipeline
 from analysis.checks import policy_compliance
 from analysis.policy import DRAFT_KEY, PLACEHOLDER_PREFIX
 
-#: The most rules one draft may hold. `policy_compliance` files rule n's error
-#: under PC-(n+50) and reserves 49 and 50 for its own cards, so a 49th rule
-#: would share a finding id with one of them. Derived, so it moves if they do.
-MAX_RULES = policy_compliance.UNCOVERED_NUMBER - 1
-
 #: What a line's action says about its traffic today, as a policy_compliance
 #: kind: a permit line's traffic is allowed ("requirement"), a deny line's is
 #: blocked ("prohibition"). Used only to CHECK the rule; the user chooses.
@@ -287,6 +282,10 @@ def draft_policy(bf: Session) -> Dict[str, Any]:
         key=lambda item: item[:2],
     )
 
+    # The most rules one draft may hold: the limit the loader enforces on any
+    # policy (#376), owned by policy_compliance because it comes from that
+    # check's finding-id bands. Read here, not copied into this module.
+    limit = policy_compliance.HIGHEST_POLICY_NUMBER
     rules: List[Dict[str, Any]] = []
     past_limit = 0
     for node, name, definition in filters:
@@ -302,7 +301,7 @@ def draft_policy(bf: Session) -> Dict[str, Any]:
             continue
 
         for position, line in enumerate((definition or {}).get("lines", []), start=1):
-            if len(rules) >= MAX_RULES:
+            if len(rules) >= limit:
                 past_limit += 1
                 continue
             label = f"{node} {name} line {position}: {line.get('name', '')}"
@@ -351,7 +350,7 @@ def draft_policy(bf: Session) -> Dict[str, Any]:
     if past_limit:
         not_drafted.append(
             f"{past_limit} more line(s) were not examined: one policy numbers at most "
-            f"{MAX_RULES} policy_compliance rules, so its finding ids stay distinct."
+            f"{limit} policy_compliance rules, so its finding ids stay distinct."
         )
 
     return {

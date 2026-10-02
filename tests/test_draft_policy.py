@@ -138,6 +138,7 @@ import pandas as pd  # noqa: E402
 from pybatfish.datamodel.primitives import FileLines, Interface  # noqa: E402
 
 from analysis import draft_policy  # noqa: E402
+from analysis.checks import policy_compliance  # noqa: E402
 
 CFG = "configs/rtr-us5.cfg"
 
@@ -414,7 +415,7 @@ def test_the_draft_stops_at_the_number_of_rules_policy_compliance_can_number():
             for i in range(1, 61)]
     session = _Session([("rtr-us5", "acl_in", many)])
     result = draft_policy.draft_policy(session)
-    assert len(result["policy_compliance"]) == draft_policy.MAX_RULES == 48
+    assert len(result["policy_compliance"]) == policy_compliance.HIGHEST_POLICY_NUMBER == 48
     assert len(session.searches) == 48
     assert any("12 more line(s)" in note for note in result["draft"]["not_drafted"])
 
