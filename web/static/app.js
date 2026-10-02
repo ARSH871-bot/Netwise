@@ -1906,8 +1906,30 @@ function setUpDeviceFilter() {
 }
 
 /* ------------------------------------------------------------------------ */
-// Ask what is staged BEFORE rendering anything, so a reloaded sample session
-// is labelled from the first paint rather than after a round trip.
+// Asked first, so the label normally lands before the findings do.
+//
+// NOT "from the first paint", WHICH IS WHAT THIS COMMENT USED TO CLAIM.
+//     refreshSampleBanner() is async and deliberately not awaited, so these
+//     two requests race. The banner can only appear after /api/sample's
+//     round trip -- never at first paint -- so the old sentence described
+//     something the code does not and cannot do. Raised by @ARSH871-bot in
+//     review on #347 and left as a non-blocking note; this is that note.
+//
+//     The ORDER still comes out right, and it is worth recording why rather
+//     than trusting it: /api/sample only tests whether a marker file exists,
+//     while /api/findings may run a full Batfish scan. Measured in Chromium
+//     across 60 samples of a reloaded sample session, polling every 50ms:
+//
+//         samples showing findings WITHOUT the banner:  0 / 60
+//
+//     Chaining them (refreshSampleBanner().finally(loadFindings)) would make
+//     the order a guarantee instead of a consequence, and is safe because
+//     that function never rejects. Deliberately NOT done: it serialises the
+//     two for a window nothing has been able to observe, and the honest fix
+//     for a comment that overclaims is the comment. If the label is ever
+//     seen arriving late, chain it -- the argument for ordering is real
+//     ("whose network is this" should be settled before the numbers are
+//     read), only the urgency is not.
 refreshSampleBanner();
 loadFindings();
 setUpUpload();
