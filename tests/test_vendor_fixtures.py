@@ -1,17 +1,22 @@
 """Netwise is not a Cisco-IOS-only tool, and these fixtures prove it.
 
 WHAT THIS IS FOR
-    Until now every fixture in this repository was Cisco IOS, so "we support
-    one vendor" was true of our evidence even though it was not true of our
-    engine. Measured by feeding Batfish hand-written configs on the version
-    already pinned in requirements.txt, with no tuning:
+    Until this file existed every fixture in this repository was Cisco IOS,
+    so "we support one vendor" was true of our evidence even though it was
+    not true of our engine. Measured by feeding Batfish hand-written configs
+    on the version already pinned in requirements.txt, with no tuning:
 
         arista_eos.cfg    PASSED                   ['sw-arista']
         cisco_nxos.cfg    PASSED                   ['sw-nexus']
         juniper.conf      PASSED                   ['rtr-juniper']
         cisco_asa.cfg     PARTIALLY_UNRECOGNIZED   ['fw-asa']
 
-    Three parse cleanly. The restriction was ours, not Batfish's.
+    Three parse cleanly. The fourth is not a Batfish gap either (#320): #217
+    already taught `analyse()` to run the checks on a partially-parsed
+    config AND attach a loud "results may be incomplete" caveat, rather than
+    discard the whole analysis over a few unrecognised lines. All four are
+    wired into this file now -- the restriction was ours, not Batfish's, and
+    it no longer is.
 
 PARSING IS NOT THE CLAIM
     "Batfish parsed it" is much weaker than "Netwise finds real problems in
@@ -27,6 +32,13 @@ PARSING IS NOT THE CLAIM
         vendor-nxos      AC-002  Config refers to ipv4 acl 'FINANCE_IN'
                                  which is not defined
         vendor-juniper   AC-002  ACL rule never takes effect in BRANCH_IN
+        vendor-asa       AC-002  ACL rule never takes effect in OUTSIDE_IN
+                                 -- AND a parse-caveat finding in the same
+                                 run (#320's own test below pins both at
+                                 once, because "parses" and "produces a
+                                 finding" are different claims and vendor-asa
+                                 is the one fixture where they genuinely
+                                 diverge)
 
 TWO PARTS, AND WHY
     PART 1 needs nothing but Python. It asserts each fixture still exists and
@@ -66,6 +78,11 @@ VENDORS = {
         "rtr-juniper.conf",
         "term block-smb",
         "a dead firewall term, shadowed by allow-all above it",
+    ),
+    "vendor-asa": (
+        "fw-asa.cfg",
+        "access-list OUTSIDE_IN extended deny tcp any host 10.60.0.9 eq 3389",
+        "a dead deny, shadowed by the permit above it",
     ),
 }
 
@@ -107,10 +124,18 @@ def test_the_vendor_fixture_still_contains_its_deliberate_fault(vendor):
 def test_we_have_more_than_one_vendor():
     """The claim itself, asserted once.
 
-    If this file ever shrinks to a single vendor, "Netwise is multi-vendor"
-    has stopped being true of our evidence.
+    Checked against the length of VENDORS itself rather than a hand-typed
+    number (#320) -- a hardcoded `>= 3` kept being technically true after
+    vendor-asa joined as the fourth, which is exactly how a number in this
+    project quietly stops meaning what it once did. If this file ever
+    shrinks to a single vendor, "Netwise is multi-vendor" has stopped being
+    true of our evidence, and this still catches it.
     """
     present = [v for v in VENDORS if (FIXTURES / v).is_dir()]
+    assert len(present) == len(VENDORS), (
+        f"{len(present)} of {len(VENDORS)} declared vendor fixture(s) "
+        f"present: {present}"
+    )
     assert len(present) >= 3, (
         f"only {len(present)} vendor fixture(s) present: {present}"
     )
@@ -147,6 +172,48 @@ def test_each_vendor_produces_a_real_finding_end_to_end(vendor):
         f"finding. Either Batfish stopped parsing this vendor, or the fault "
         f"was edited out of the fixture. Statuses seen: "
         f"{sorted({f['status'] for f in results})}"
+    )
+
+
+@needs_batfish
+def test_vendor_asa_parses_only_partially_and_still_finds_something():
+    """#320's actual claim, pinned directly rather than left implicit.
+
+    The other three vendor fixtures parse cleanly (`PASSED`). vendor-asa is
+    the one where "parses" and "produces a finding" genuinely come apart --
+    Batfish reports it `PARTIALLY_UNRECOGNIZED` (see the module docstring's
+    measurement), and #217 is what makes that survivable: the checks still
+    run AND a loud caveat finding is attached, rather than either being
+    silently dropped for the other.
+
+    Both must be true in the SAME run, or this fixture is not proving what
+    it claims to:
+
+      - a genuine `status="found"` finding (the deliberate dead-rule fault
+        -- Netwise still works on this vendor)
+      - a `number == PARTIAL_PARSE_NUMBER` caveat finding (the honest
+        admission that some lines went unread -- Netwise does not pretend
+        it read everything)
+    """
+    from analysis import pipeline
+
+    results = pipeline.analyse(
+        str(FIXTURES / "vendor-asa"), snapshot_name="vendor_asa")
+
+    found = [f for f in results if f["status"] == "found"]
+    assert found, (
+        "vendor-asa produced no status=\"found\" finding -- either Batfish "
+        "stopped parsing it at all, or the fault was edited out"
+    )
+
+    caveat_id_suffix = f"-{pipeline.PARTIAL_PARSE_NUMBER:03d}"
+    caveats = [f for f in results if f.get("id", "").endswith(caveat_id_suffix)]
+    assert caveats, (
+        "vendor-asa produced a finding but no partial-parse caveat -- "
+        "either Batfish now parses it cleanly (update the module docstring "
+        "and this test) or #217's caveat stopped firing, which would be a "
+        "real regression: a user would be told nothing about the lines "
+        "Batfish could not read"
     )
 
 
