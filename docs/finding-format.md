@@ -455,9 +455,10 @@ somewhere later reports it as agreed, sourced from nothing.
 | **Arsh** | Owns `analysis/findings.py`, where the vocabulary is validated, and `pipeline.CHECKS`, which would dispatch it | ⬜ |
 | **Ankeet** | The AI layer switches on `check`; `ai/explain.py` and `ai/Modelfile` would meet a name they have never seen, and this is the first check whose `found` means "worth checking" rather than "this is wrong" | ⬜ |
 | **Shubham** | `policy_compliance` shares the results list, and a new check changes what a scan's totals mean | ⬜ |
-| **Samika** | Wrote it; the dashboard and `analysis/report.py` render by check, and `risk` now carries a severity ceiling keyed on this name | ⬜ |
+| **Samika** | Wrote it; the dashboard and `analysis/report.py` render by check, and `risk` now carries a severity ceiling keyed on this name | ✅ |
 
-> **NOT RATIFIED — zero of four, as of 8 September.** Merging #304 means the
+> **NOT RATIFIED — one of four, as of 6 October** (zero of four from 8
+> September to 6 October). Merging #304 means the
 > code is worth having and is safe to sit inert. It does **not** mean the
 > amendment is agreed, and **`cve_mapping` must not be added to
 > `pipeline.CHECKS` until this table is full.**
