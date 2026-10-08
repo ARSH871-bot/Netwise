@@ -110,7 +110,8 @@ HOW IT DECIDES WHAT TO REPORT
     automatically "clean" -- see F-4 in docs/finding-format.md.
 """
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from itertools import count
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from pybatfish.client.session import Session
 from pybatfish.datamodel.flow import HeaderConstraints
@@ -138,6 +139,11 @@ SKIPPED_NUMBER = 50
 #: fact from 50: that one says "your snapshot lacks the device our assertions
 #: name", this one says "you gave us assertions and we did not read them".
 UNREAD_POLICY_NUMBER = 51
+
+#: Routing hygiene findings -- facts Batfish reports with NO policy: duplicate
+#: addresses, forwarding loops, BGP and OSPF sessions that cannot form. Numbered
+#: from here up so they can never meet a route assertion's own number.
+HYGIENE_FIRST_NUMBER = 100
 
 # See the "WHAT COUNTS AS REACHABLE" section of the module docstring for why
 # this is NOT the same set pybatfish's own tooling treats as success.
@@ -327,7 +333,7 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                 number=UNREAD_POLICY_NUMBER,
             )
         )
-        return results
+        return results + _routing_hygiene(bf)
 
     # --- Scope the statements to the devices actually in this snapshot -------
     #
@@ -369,7 +375,7 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                 source="analysis/checks/routing.py",
                 number=SKIPPED_NUMBER,
             )
-        ]
+        ] + _routing_hygiene(bf)
 
     applicable = [r for r in routes if r["node"] in present]
     absent = sorted({r["node"] for r in routes if r["node"] not in present})
@@ -487,6 +493,7 @@ def run(bf: Session) -> List[Dict[str, Any]]:
     # THE ALL-CLEAR NAMES EXACTLY THE DEVICES IT VOUCHES FOR (#364): the
     # covered devices no finding above is about. An error of unknown scope
     # still suppresses it -- see coverage.devices_still_clean().
+    results.extend(_routing_hygiene(bf))
     clean = coverage.devices_still_clean(results, {r["node"] for r in applicable})
     if clean:
         held = [r for r in applicable if r["node"] in clean]
@@ -511,4 +518,160 @@ def run(bf: Session) -> List[Dict[str, Any]]:
             )
         ]
 
+    return results
+
+
+# --- Routing hygiene: facts Batfish reports with no policy at all -----------
+#
+# Everything above needs route assertions -- ours or the user's -- naming
+# specific devices. These four need nothing: each is a Batfish question about
+# the config itself, so a stranger's first scan gets real results from them.
+# All four fire on tests/fixtures/routing-faults, and on none of the other
+# fixtures, which are single routers with static routes.
+#
+# ONE FINDING PER FAULT, NOT PER ROW. A duplicate address, a broken BGP or
+# OSPF session each involve two routers, and Batfish reports each from both
+# ends. They are grouped, and every router involved is listed in the
+# finding's source (coverage.device_list_source), so the all-clear above can
+# never vouch for any of them (coverage.devices_still_clean).
+
+#: BGP statuses that mean both ends are in the snapshot and do not match.
+#: UNKNOWN_REMOTE -- the peer is not in the uploaded files, typically an ISP --
+#: is deliberately absent: that is "could not see the other side", not a fault.
+_BGP_MISMATCH = {"HALF_OPEN", "NO_MATCH_FOUND"}
+
+
+def _routing_hygiene(bf: Session) -> List[Dict[str, Any]]:
+    """Every policy-free routing analysis, numbered from HYGIENE_FIRST_NUMBER."""
+    numbering = count(HYGIENE_FIRST_NUMBER)
+    return (_check_duplicate_addresses(bf, numbering)
+            + _check_forwarding_loops(bf, numbering)
+            + _check_bgp_sessions(bf, numbering)
+            + _check_ospf_sessions(bf, numbering))
+
+
+def _could_not_run(question: str, what: str, error: Exception,
+                   numbering: Iterator[int]) -> List[Dict[str, Any]]:
+    return [findings.error_finding(
+        check=CHECK_NAME, summary=f"Could not check for {what}",
+        detail=findings.describe_error(error), source=question,
+        number=next(numbering))]
+
+
+def _hygiene_finding(devices: Sequence[str], summary: str, detail: str,
+                     numbering: Iterator[int]) -> Dict[str, Any]:
+    ordered = sorted(set(devices))
+    return findings.make_finding(
+        check=CHECK_NAME, severity="medium", device=ordered[0],
+        summary=summary, detail=detail,
+        source=coverage.device_list_source(ordered),
+        status="found", number=next(numbering))
+
+
+def _check_duplicate_addresses(bf: Session, numbering: Iterator[int]) -> List[Dict[str, Any]]:
+    """Two active interfaces in one VRF with the same address."""
+    try:
+        frame = bf.q.ipOwners(duplicatesOnly=True).answer().frame()
+    except Exception as error:
+        return _could_not_run("ipOwners", "duplicate IP addresses", error, numbering)
+    groups: Dict[Tuple[str, str], List[Any]] = {}
+    for _, row in frame.iterrows():
+        if str(row["Active"]).lower() == "true":
+            groups.setdefault((str(row["VRF"]), str(row["IP"])), []).append(row)
+    results = []
+    for (vrf, ip), rows in sorted(groups.items()):
+        if len(rows) < 2:
+            continue
+        where = " and ".join(f"{r['Node']} {r['Interface']}" for r in rows)
+        results.append(_hygiene_finding(
+            [str(r["Node"]) for r in rows],
+            f"{ip} is assigned to {len(rows)} interfaces",
+            f"{where} all use {ip} (VRF {vrf}), so traffic for that address can "
+            "be delivered to any of them. If the address is meant to be shared "
+            "(anycast), this is expected; otherwise one of them is wrong.",
+            numbering))
+    return results
+
+
+def _check_forwarding_loops(bf: Session, numbering: Iterator[int]) -> List[Dict[str, Any]]:
+    """Traffic that is forwarded round in a circle and never arrives."""
+    try:
+        frame = bf.q.detectLoops().answer().frame()
+    except Exception as error:
+        return _could_not_run("detectLoops", "forwarding loops", error, numbering)
+    seen = set()
+    results = []
+    for _, row in frame.iterrows():
+        flow = row["Flow"]
+        trace = row["Traces"][0] if len(row["Traces"]) else None
+        path = ([str(hop.node) for hop in trace.hops] if trace is not None
+                else [str(flow.ingressNode)])
+        key = (frozenset(path), str(flow.dstIp))
+        if key in seen:
+            continue
+        seen.add(key)
+        results.append(_hygiene_finding(
+            path,
+            f"Traffic to {flow.dstIp} loops between routers",
+            f"A packet from {flow.ingressNode} to {flow.dstIp} goes "
+            f"{' -> '.join(path)} and never arrives: each router forwards it to "
+            "the other.",
+            numbering))
+    return results
+
+
+def _check_bgp_sessions(bf: Session, numbering: Iterator[int]) -> List[Dict[str, Any]]:
+    """BGP sessions between two routers in the snapshot that cannot come up."""
+    try:
+        frame = bf.q.bgpSessionCompatibility().answer().frame()
+    except Exception as error:
+        return _could_not_run("bgpSessionCompatibility", "BGP session problems",
+                              error, numbering)
+    pairs: Dict[frozenset, List[Any]] = {}
+    for _, row in frame.iterrows():
+        if str(row["Configured_Status"]) in _BGP_MISMATCH:
+            key = frozenset({str(row["Local_IP"]), str(row["Remote_IP"])})
+            pairs.setdefault(key, []).append(row)
+    results = []
+    for _, rows in sorted(pairs.items(), key=lambda item: sorted(item[0])):
+        sides = "; ".join(
+            f"{r['Node']} (AS {r['Local_AS']}, {r['Local_IP']}) expects AS "
+            f"{r['Remote_AS']} at {r['Remote_IP']}" for r in rows)
+        nodes = sorted({str(r["Node"]) for r in rows})
+        results.append(_hygiene_finding(
+            nodes,
+            f"BGP session between {' and '.join(nodes)} cannot come up"
+            if len(nodes) > 1 else f"BGP session from {nodes[0]} cannot come up",
+            f"{sides}. Batfish's verdict: {rows[0]['Configured_Status']} -- the two "
+            "ends are not configured to match.",
+            numbering))
+    return results
+
+
+def _check_ospf_sessions(bf: Session, numbering: Iterator[int]) -> List[Dict[str, Any]]:
+    """OSPF adjacencies that cannot form because the two ends disagree."""
+    try:
+        frame = bf.q.ospfSessionCompatibility().answer().frame()
+    except Exception as error:
+        return _could_not_run("ospfSessionCompatibility", "OSPF session problems",
+                              error, numbering)
+    pairs: Dict[frozenset, List[Any]] = {}
+    for _, row in frame.iterrows():
+        status = str(row["Session_Status"])
+        if status.endswith("_MISMATCH") or status == "DUPLICATE_ROUTER_ID":
+            pairs.setdefault(frozenset({str(row["IP"]), str(row["Remote_IP"])}), []).append(row)
+    results = []
+    for _, rows in sorted(pairs.items(), key=lambda item: sorted(item[0])):
+        first = rows[0]
+        nodes = sorted({str(r["Interface"]).split("[")[0] for r in rows}
+                       | {str(r["Remote_Interface"]).split("[")[0] for r in rows})
+        status = str(first["Session_Status"])
+        results.append(_hygiene_finding(
+            nodes,
+            f"OSPF between {' and '.join(nodes)} cannot form: "
+            f"{status.replace('_', ' ').lower()}",
+            f"{first['Interface']} is in area {first['Area']}, "
+            f"{first['Remote_Interface']} in area {first['Remote_Area']}. "
+            f"Batfish's verdict: {status}.",
+            numbering))
     return results

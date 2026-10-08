@@ -863,6 +863,9 @@ function clearStaleResults(reason) {
   document.getElementById("findings").replaceChildren(
     el("div", "notice staged", reason)
   );
+  // A comparison on screen describes the previous config too (#223).
+  const comparison = document.getElementById("history-result");
+  if (comparison) comparison.replaceChildren();
 
   // Nothing on screen means nothing to export. Without this, the control
   // would stay available over a cleared pane and a click would start a real
@@ -1235,6 +1238,64 @@ function setUpPolicyUpload() {
         "bad"
       );
       input.value = "";
+    }
+  });
+}
+
+/**
+ * "Draft one from my config" (#326): fetch a policy drafted from the staged
+ * config and hand it to the user as a file.
+ *
+ * FETCH, NOT A PLAIN LINK. Drafting needs Batfish, and when it is stopped the
+ * server answers 503 with a reason. A link would navigate the whole page to
+ * that raw JSON; this shows the reason where the policy messages already go.
+ *
+ * NOTHING IS STAGED. The file goes to the user's downloads and nowhere else --
+ * the only way a draft reaches a check is the user choosing it in the policy
+ * picker above, after deciding every rule. So this never calls
+ * clearStaleResults(): the findings on screen are still current.
+ */
+function setUpPolicyDraft() {
+  const button = document.getElementById("policy-draft");
+  if (!button) return;
+
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    showPolicyMessage("Drafting a policy from your config…", "");
+    try {
+      const response = await fetch("/api/policy/draft");
+      if (!response.ok) {
+        const result = await response.json();
+        showPolicyMessage(result.detail, "bad");
+        return;
+      }
+
+      // The server names the file (with a timestamp), as it does the report.
+      const disposition = response.headers.get("Content-Disposition") || "";
+      const match = disposition.match(/filename="([^"]+)"/);
+      const name = match ? match[1] : "netwise-draft-policy.json";
+      const text = await response.text();
+      const summary = JSON.parse(text).draft.summary;
+
+      const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+
+      showPolicyMessage(
+        `Draft saved as ${name}. ${summary} It will not load until you ` +
+          `replace every <FILL IN …> with your decision and delete its ` +
+          `"draft" block — then choose it above.`,
+        "ok"
+      );
+    } catch (error) {
+      showPolicyMessage(`Could not draft a policy: ${error.message}`, "bad");
+    } finally {
+      button.disabled = false;
     }
   });
 }
@@ -1851,11 +1912,13 @@ refreshSampleBanner();
 loadFindings();
 setUpUpload();
 setUpPolicyUpload();
+setUpPolicyDraft();
 setUpBusinessContextUpload();
 setUpChat();
 setUpProposeChange();
 setUpReportDownload();
 setUpDeviceFilter();
+setUpHistory();
 
 /* ------------------------------------------------------------------------ *
  * The bundled sample network (US-56, #347)
@@ -1963,4 +2026,184 @@ async function loadSampleNetwork() {
   } finally {
     if (button) button.disabled = false;
   }
+}
+
+/* ------------------------------------------------------------------------ *
+ * Saved scans: what changed since the last time? (#223)
+ *
+ * Nothing is saved by scanning. The user names the network, saves, and
+ * later compares the latest saved scan of that name with what is on screen.
+ * The server (analysis/scan_diff.py) decides every category; this only
+ * renders them, always with textContent.
+ *
+ * "Fixed" means the check ran on that device again and the problem was not
+ * there. Anything that merely disappeared is listed under its own heading
+ * with the reason it cannot be confirmed -- the difference F-4 exists for.
+ * ------------------------------------------------------------------------ */
+
+function historyName() {
+  return document.getElementById("history-name").value.trim();
+}
+
+function setHistoryMessage(text) {
+  document.getElementById("history-message").textContent = text;
+}
+
+function formatWhen(iso) {
+  const when = new Date(iso);
+  return Number.isNaN(when.getTime()) ? iso : when.toLocaleString();
+}
+
+function countsText(counts) {
+  return `${counts.found} problem(s), ${counts.none} checked clean, ` +
+    `${counts.error} could not check`;
+}
+
+/** A request whose error message is the server's own `detail`, if it sent one. */
+async function historyRequest(url, options) {
+  const response = await fetch(url, options);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body.detail || `the server returned ${response.status}`);
+  }
+  return body;
+}
+
+async function refreshSavedScans() {
+  const list = document.getElementById("history-list");
+  list.replaceChildren();
+  let scans;
+  try {
+    scans = (await historyRequest("/api/history")).scans;
+    // A body that is not the expected list says nothing about what is saved,
+    // so it is reported as a failure rather than read as "nothing saved".
+    if (!Array.isArray(scans)) throw new Error("the answer was not a list of scans");
+  } catch (error) {
+    list.appendChild(el("li", "hint", `Saved scans could not be loaded: ${error.message}`));
+    return;
+  }
+  if (!scans.length) {
+    list.appendChild(el("li", "hint", "Nothing saved yet."));
+    return;
+  }
+  for (const scan of scans) {
+    const item = el("li", "history-item");
+    item.appendChild(el("span", "history-item-name", scan.name));
+    item.appendChild(
+      el("span", "history-item-meta", ` ${formatWhen(scan.created_at)} · ${countsText(scan.counts)} `)
+    );
+    const remove = el("button", "history-delete", "Delete");
+    remove.type = "button";
+    remove.addEventListener("click", async () => {
+      try {
+        await historyRequest(`/api/history/${scan.id}`, { method: "DELETE" });
+        setHistoryMessage(`Deleted the scan saved as “${scan.name}”.`);
+      } catch (error) {
+        setHistoryMessage(`Could not delete it: ${error.message}`);
+      }
+      refreshSavedScans();
+    });
+    item.appendChild(remove);
+    list.appendChild(item);
+  }
+}
+
+function findingLine(finding) {
+  return `${finding.summary} (${finding.device})`;
+}
+
+function renderComparison(diff) {
+  const box = document.getElementById("history-result");
+  box.replaceChildren();
+  box.appendChild(
+    el("p", "history-summary",
+      `Compared with the scan saved as “${diff.saved.name}” on ${formatWhen(diff.saved.created_at)}.`)
+  );
+  if (diff.saved.is_sample || diff.current_is_sample) {
+    box.appendChild(el("p", "history-sample",
+      "This comparison involves the sample network, which is invented demonstration data."));
+  }
+  for (const caveat of diff.caveats) {
+    box.appendChild(el("p", "history-caveat", caveat));
+  }
+
+  const sections = [
+    ["Fixed: checked again and no longer found", diff.resolved.map((f) => [findingLine(f), null])],
+    ["Gone, but not confirmed fixed", diff.unverified.map((x) => [findingLine(x.finding), x.reason])],
+    ["New problems", diff.new.map((f) => [findingLine(f), null])],
+    ["Seen for the first time, but not new", diff.newly_visible.map((x) => [findingLine(x.finding), x.reason])],
+    ["Checks that could not run this time", diff.newly_blind.map((x) => [`${x.check} on ${x.device}`, x.reason])],
+    ["Checks running again", diff.newly_checked.map((x) => [`${x.check} on ${x.device}`, null])],
+  ];
+  for (const [title, rows] of sections) {
+    if (!rows.length) continue;
+    const section = el("div", "history-section");
+    section.appendChild(el("h4", "history-section-title", `${title} (${rows.length})`));
+    const list = el("ul");
+    for (const [text, reason] of rows) {
+      const item = el("li", null, text);
+      if (reason) item.appendChild(el("span", "history-reason", ` Why: ${reason}.`));
+      list.appendChild(item);
+    }
+    section.appendChild(list);
+    box.appendChild(section);
+  }
+  box.appendChild(el("p", "hint",
+    `Unchanged: ${diff.unchanged_count} problem(s) reported in both scans.`));
+}
+
+function setUpHistory() {
+  document.getElementById("history-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const name = historyName();
+    if (!name) {
+      setHistoryMessage("Type a name for this network first.");
+      return;
+    }
+    try {
+      const saved = await historyRequest("/api/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      setHistoryMessage(
+        `Saved as “${saved.name}”: ${countsText(saved.counts)}.` +
+          (saved.is_sample ? " This is the sample network." : "")
+      );
+      refreshSavedScans();
+    } catch (error) {
+      setHistoryMessage(error.message);
+    }
+  });
+
+  document.getElementById("history-compare").addEventListener("click", async () => {
+    const name = historyName();
+    if (!name) {
+      setHistoryMessage("Type the name you saved the network under.");
+      return;
+    }
+    document.getElementById("history-result").replaceChildren();
+    try {
+      renderComparison(
+        await historyRequest(`/api/history/compare?name=${encodeURIComponent(name)}`)
+      );
+      setHistoryMessage("");
+    } catch (error) {
+      setHistoryMessage(error.message);
+    }
+  });
+
+  document.getElementById("history-delete-all").addEventListener("click", async () => {
+    if (!window.confirm("Delete every saved scan on this computer? This cannot be undone.")) return;
+    try {
+      const result = await historyRequest("/api/history", { method: "DELETE" });
+      setHistoryMessage(`Deleted ${result.deleted} saved scan(s).`);
+    } catch (error) {
+      setHistoryMessage(`Could not delete them: ${error.message}`);
+    }
+    document.getElementById("history-result").replaceChildren();
+    refreshSavedScans();
+  });
+
+  refreshSavedScans();
 }

@@ -120,11 +120,14 @@
                stale copy was the one carrying the REASON for the wording,
                which is the copy a future editor would have trusted.
 
-               What the hint must keep saying is WHICH checks read it. Not all
-               of them do: `access_control` and `routing` still assert our
-               built-in rules regardless. A control implying "your policy now
-               governs everything" would be the same overclaim pointing the
-               other way. -->
+               What the hint must not claim is that a policy governs
+               everything. All three policy-driven checks read it (since #316
+               and #319), but the analyses that need no policy -- dead rules,
+               undefined references, unused filters, routing faults -- run the
+               same either way. Until 30 September this paragraph said
+               `access_control` and `routing` ignored a supplied policy, a week
+               after #319 made that false: the same fault as the paragraph
+               above, in the same comment. -->
           <label class="file-picker policy-picker">
             <input type="file" id="policy-input" accept=".json" />
             <span>Choose a policy file (optional)</span>
@@ -133,6 +136,20 @@
             A JSON policy of your own rules (#87). Checks that can read it
             will assert <em>your</em> rules instead of our built-in examples,
             and every finding says which of the two it used.
+          </p>
+          <!-- ---- Draft a policy from the staged config (#326) ----
+               A button, not a link: drafting needs Batfish, and a link to a
+               failing endpoint would navigate away to a raw error. The draft
+               comes back as a FILE and is never staged, because it describes
+               what the config does today -- applied as it stands, it would
+               pass on any config, the insecure one included. -->
+          <p class="hint">
+            No policy yet?
+            <button type="button" id="policy-draft" class="link-button">
+              Draft one from my config
+            </button>
+            — every rule cites the line it came from, and it will not load
+            until you have decided each one.
           </p>
           <p id="policy-message" class="upload-message" role="status"></p>
 
@@ -319,6 +336,35 @@
 
         <!-- ---- The findings themselves, grouped by status ---- -->
         <div id="findings"></div>
+
+        <!-- ---- Saved scans: what changed since last time? (#223) ----
+             Nothing is saved by scanning. The user names the network and
+             clicks Save; Compare diffs the latest saved scan of that name
+             with what is on screen now. A problem is listed as fixed only if
+             its check ran on that device again (analysis/scan_diff.py). -->
+        <div class="history" id="history">
+          <h3 class="history-heading">Compare with an earlier scan</h3>
+          <form id="history-form" class="history-form">
+            <label for="history-name">Network name</label>
+            <input
+              id="history-name"
+              name="history-name"
+              type="text"
+              maxlength="64"
+              autocomplete="off"
+              placeholder="e.g. Head office"
+            />
+            <button type="submit" id="history-save">Save this scan</button>
+            <button type="button" id="history-compare">Compare with last saved</button>
+          </form>
+          <p class="hint" id="history-message" role="status"></p>
+          <div id="history-result" aria-live="polite"></div>
+          <details id="history-saved">
+            <summary>Saved scans</summary>
+            <ul id="history-list" class="history-list"></ul>
+            <button type="button" id="history-delete-all">Delete all saved scans</button>
+          </details>
+        </div>
           </div>
         </section>
       </div>

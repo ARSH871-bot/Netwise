@@ -107,14 +107,57 @@ That file is validated by the test suite on every run
 (`tests/test_policy_example_is_valid.py`), so it cannot quietly stop being a
 policy the loader accepts.
 
-**What reads it, today.** `policy_compliance` asserts your rules instead of
-our built-in ones, and every finding says which of the two it used.
-`access_control` and `routing` do not read a supplied policy yet — they say
-so rather than staying silent about it (#196), so you are never left
-believing rules were checked that were not.
+**Or draft one from your own config** (#326):
+
+```bash
+python -m analysis.draft_policy my-network/ --out my-policy.json
+```
+
+On the dashboard, upload the config and click **Draft one from my config**
+under the policy picker. Either way you get one `policy_compliance` rule for
+each line of every filter applied to an interface, citing the file and line it
+came from. Batfish checks each rule against your config before it is written
+down, so every drafted rule is true of the config today.
+
+That is exactly why the draft **will not load as it stands**. Accepted
+unchanged, it only says "the config should do what it does", which passes on
+any config, the insecure one included. So each rule's two judgements are left
+as `<FILL IN ...>`, and the loader refuses the file, listing every decision
+still to make, until you have:
+
+1. set each `kind` to `requirement` (this traffic must stay allowed) or
+   `prohibition` (it must be blocked), and set each `violation_severity`;
+2. deleted any rule you do not care about;
+3. read the `not_drafted` list, then deleted the whole top-level `draft` block.
+
+A line is **not drafted**, and is listed with the reason, when an earlier line
+decides part of its traffic (Batfish's own example packet is quoted), when it
+matches on something a rule cannot copy exactly (object-groups, TCP flags,
+compound terms), when Batfish could not read the whole file, or when its filter
+is not applied to any interface. Nothing is approximated. A draft holds at most
+48 rules, the most `policy_compliance` can number without two findings sharing
+an id.
+
+**What reads it.** All three checks: `policy_compliance`, `access_control`
+and `routing` each assert your rules instead of our built-in ones, and every
+finding says which of the two it used. (Until #353 and #355 merged on 22
+September, only `policy_compliance` did; this paragraph said so for a week
+after it stopped being true.)
 
 **A policy that cannot be loaded stops the run** and names the entry and the
-missing field. It never analyses against half a policy.
+problem: a missing field, or a value that is not one of these, spelled
+exactly as shown:
+
+| Field | Allowed values |
+|---|---|
+| `expected` in `access_control` | `PERMIT`, `DENY` |
+| `expected` in `routing` | `REACHABLE`, `UNREACHABLE` |
+| `kind` in `policy_compliance` | `prohibition`, `requirement` |
+| `violation_severity` everywhere | `high`, `medium`, `low` |
+
+It never analyses against half a policy, and never guesses what a misspelt
+value meant: `"expected": "ALLOW"` used to load and report DNS as blocked on a
+config where it was allowed.
 
 The format is JSON. `docs/examples/policy.example.json` is the reference —
 it shows both rule kinds and a multi-arm rule, which are the two things that

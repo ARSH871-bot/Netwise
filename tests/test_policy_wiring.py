@@ -457,7 +457,7 @@ def test_access_control_empty_section_reports_one_loud_none(monkeypatch):
                         lambda bf, numbering, statements:
                         queried.extend(statements) or [])
     for name in ("_check_guarantees", "_check_dead_rules",
-                 "_check_undefined_references"):
+                 "_check_undefined_references", "_check_unused_filters"):
         monkeypatch.setattr(access_control, name, lambda *a, **k: [])
 
     results = access_control.run(bf=None)
@@ -479,9 +479,15 @@ def test_routing_empty_section_reports_one_loud_none(monkeypatch):
     routing returns early here -- unlike access_control it has no analysis
     that needs no policy -- so the whole result must be exactly the one
     "nothing to check" card, and no traceroute may be asked at all.
+
+    Since the routing hygiene analyses, routing DOES have analyses that need
+    no policy, and they rightly still run here. They are stubbed so this test
+    stays about what it pins -- no route ASSERTION is asked -- and are tested
+    in tests/test_routing_hygiene.py.
     """
     policy.set_active_policy(policy.load_policy({"routing": []}))
     monkeypatch.setattr(routing.snapshot, "device_names", lambda bf: {"rtr-hq"})
+    monkeypatch.setattr(routing, "_routing_hygiene", lambda bf: [])
 
     class NoQueries:
         def __getattr__(self, name):
@@ -695,7 +701,7 @@ def _one_entry_policy(tag: str):
     return policy.load_policy({
         "device": tag,
         "policy_compliance": [{
-            "description": "d", "kind": "must_deny", "filter": "acl_in",
+            "description": "d", "kind": "prohibition", "filter": "acl_in",
             "node": tag, "queries": [{"dstIps": "10.0.0.1"}],
             "violation_severity": "high", "violation_summary": tag,
         }],

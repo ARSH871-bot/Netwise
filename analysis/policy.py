@@ -154,6 +154,17 @@ _REQUIRED_KEYS = ("description", "node")
 #:     defect in a new costume.
 #:
 #: `number` is NOT here: see _assign_missing_numbers().
+#: The values a check compares against or builds findings from. Anything else
+#: loaded before this existed, and a typo became a false finding -- see the
+#: value check in _validate_entry().
+_SEVERITIES = ("high", "medium", "low")
+_ALLOWED_VALUES: Dict[str, Dict[str, Tuple[str, ...]]] = {
+    "access_control": {"expected": ("PERMIT", "DENY"), "violation_severity": _SEVERITIES},
+    "policy_compliance": {"kind": ("prohibition", "requirement"),
+                          "violation_severity": _SEVERITIES},
+    "routing": {"expected": ("REACHABLE", "UNREACHABLE"), "violation_severity": _SEVERITIES},
+}
+
 _SECTION_REQUIRED: Dict[str, frozenset] = {
     "access_control": frozenset({
         "filter", "headers", "expected",
@@ -177,6 +188,21 @@ _LEGACY_KEYS = {
     "start_node": "node",
     "severity": "violation_severity",
 }
+
+
+#: A policy Netwise drafted from a config (#326) carries this top-level block,
+#: and the loader refuses any file that still has it. JSON has no comments, so
+#: this block IS the "clearly marked as a draft" -- and deleting it is the one
+#: deliberate act that turns a description of the config into the user's policy.
+DRAFT_KEY = "draft"
+
+#: Every decision a draft leaves to the user starts with this. Refused wherever
+#: it appears, at any depth, so a placeholder can never reach Batfish as if it
+#: were an address or a port.
+PLACEHOLDER_PREFIX = "<FILL IN"
+
+#: How many entries an unreviewed-draft refusal names before counting the rest.
+_DRAFT_ENTRIES_LISTED = 10
 
 
 class PolicyError(ValueError):
@@ -250,6 +276,96 @@ def _describe_entry(section: str, index: int, entry: Mapping[str, Any]) -> str:
     return f"{section} entry {index}"
 
 
+def _placeholder_paths(value: Any, path: str) -> List[str]:
+    """Every key path under `value` whose string still starts PLACEHOLDER_PREFIX.
+
+    Walks nested mappings and lists, so a placeholder inside `queries` is
+    named as `queries[0].dstIps` rather than as "somewhere in entry 2".
+    """
+    if isinstance(value, str):
+        return [path] if value.startswith(PLACEHOLDER_PREFIX) else []
+    if isinstance(value, Mapping):
+        found: List[str] = []
+        for key, item in value.items():
+            found += _placeholder_paths(item, f"{path}.{key}" if path else str(key))
+        return found
+    if isinstance(value, list):
+        found = []
+        for position, item in enumerate(value):
+            found += _placeholder_paths(item, f"{path}[{position}]")
+        return found
+    return []
+
+
+def _refuse_unreviewed_draft(data: Mapping[str, Any]) -> None:
+    """Refuse a drafted policy (#326) until a person has decided every rule.
+
+    WHY A DRAFT MUST NOT LOAD AS IT STANDS
+        `analysis/draft_policy.py` writes down what the config DOES, and
+        Batfish confirms every drafted rule holds for it. Accepted unedited,
+        that is a policy saying "the config should do what it does" -- which
+        passes on every config ever written, the insecure one included. So
+        the draft leaves each judgement as a `<FILL IN ...>` value, and this
+        refuses the file while any remains.
+
+    WHY IT LISTS EVERYTHING AT ONCE
+        Without this, #375's value check refused the same file one entry at
+        a time -- "kind must be one of ..." for entry 1, then entry 2 on the
+        next upload. On a forty-rule draft that is forty round trips, each
+        naming a field and never saying why it held that value.
+
+    AND WHY THE BLOCK ITSELF MUST GO
+        A file whose placeholders are all filled is still refused while its
+        `draft` block remains. That block lists the lines that could NOT be
+        drafted; deleting it is the one act that says the user has read it.
+    """
+    undecided: List[str] = []
+    decisions = 0
+    for key, value in data.items():
+        if key == DRAFT_KEY:
+            continue
+        if key in POLICY_SECTIONS and isinstance(value, list):
+            for index, entry in enumerate(value, start=1):
+                paths = _placeholder_paths(entry, "")
+                if paths:
+                    where = _describe_entry(
+                        key, index, entry if isinstance(entry, Mapping) else {}
+                    )
+                    undecided.append(f"{where}: {', '.join(paths)}")
+                    decisions += len(paths)
+        else:
+            paths = _placeholder_paths(value, str(key))
+            undecided.extend(paths)
+            decisions += len(paths)
+
+    is_draft = DRAFT_KEY in data
+    if not undecided and not is_draft:
+        return
+
+    opening = (
+        "this is a draft Netwise generated from your config, and it has not "
+        "been reviewed yet"
+        if is_draft
+        else "this policy still holds draft placeholders"
+    )
+    closing = (
+        f"delete the top-level '{DRAFT_KEY}' block to confirm you have "
+        "reviewed every rule, including the lines it lists as not drafted"
+    )
+    if not undecided:
+        raise PolicyError(f"{opening}. Every decision has been made: {closing}.")
+
+    listed = undecided[:_DRAFT_ENTRIES_LISTED]
+    more = len(undecided) - len(listed)
+    raise PolicyError(
+        f"{opening}. {decisions} decision(s) are still to make -- "
+        + "; ".join(listed)
+        + (f"; and {more} more entries" if more else "")
+        + f". Replace each '{PLACEHOLDER_PREFIX} ...>' value with your decision"
+        + (f", then {closing}." if is_draft else ".")
+    )
+
+
 def _validate_entry(
     section: str, index: int, entry: Any, default_node: Optional[str]
 ) -> Tuple[Dict[str, Any], List[str]]:
@@ -320,6 +436,22 @@ def _validate_entry(
                 else ""
             )
         )
+
+    # VALUES, NOT ONLY KEYS (measured 29 September). With only keys checked,
+    # `"expected": "ALLOW"` -- or "Permit" -- loaded, and access_control
+    # compares `actual == statement["expected"]`. On rtr-us5-secure, where DNS
+    # IS allowed, that reported "DNS to the approved server is blocked": a
+    # confident false finding produced by a typo in the user's own file.
+    # Every enumerated value is checked, all bad ones reported together, and
+    # none is corrected silently -- the same "refuse and name it" rule as a
+    # missing key.
+    bad = [
+        f"{key} must be one of {', '.join(choices)}, got {normalised[key]!r}"
+        for key, choices in _ALLOWED_VALUES.get(section, {}).items()
+        if key in normalised and normalised[key] not in choices
+    ]
+    if bad:
+        raise PolicyError(f"{where}: " + "; ".join(bad))
 
     return normalised, renamed
 
@@ -404,6 +536,10 @@ def load_policy(data: Any) -> Policy:
         raise PolicyError(
             f"a policy must be a mapping at the top level, got {type(data).__name__}"
         )
+
+    # Before anything else: an unreviewed draft is refused as a DRAFT, not as
+    # an unknown section or entry 1's bad value -- see the function.
+    _refuse_unreviewed_draft(data)
 
     default_node = data.get("device")
     if default_node is not None and not isinstance(default_node, str):

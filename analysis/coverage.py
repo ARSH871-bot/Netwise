@@ -110,10 +110,13 @@ def devices_still_clean(results: Iterable[Dict[str, Any]],
         if finding.get("status") not in ("found", "error"):
             continue
         device = str(finding.get("device") or "unknown")
-        if device != "unknown":
-            clean.discard(device)
-            continue
         listed = devices_in_source((finding.get("evidence") or {}).get("source"))
+        if device != "unknown":
+            # A fault between two routers names one in `device` and both in
+            # its source: neither may be vouched for as clean.
+            clean.discard(device)
+            clean -= set(listed or [])
+            continue
         if listed is None:
             return []
         clean -= set(listed)
