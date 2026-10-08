@@ -89,10 +89,12 @@ needs_batfish = pytest.mark.skipif(
 def _clear_web_caches():
     """Empty web.main's caches before and after every test.
 
-    BOTH of them. #92b added a second module-level cache (the analysed
+    ALL of them. #92b added a second module-level cache (the analysed
     findings list) and it has the same problem for the same reason -- a
     cached analysis surviving into another test would let one test's staged
-    config answer another test's request.
+    config answer another test's request. #318 added a third (the last
+    resolved reachability entities, for follow-up questions) -- found
+    missing here in review, added the same way.
 
     Resetting them is listed rather than discovered: a new cache added to
     web/main.py must be added here too, and the loop below fails loudly on
@@ -113,7 +115,10 @@ def _clear_web_caches():
         return
 
     resets = []
-    for name in ("reset_explanation_cache", "reset_analysis_cache"):
+    for name in (
+        "reset_explanation_cache", "reset_analysis_cache",
+        "reset_last_resolved_entities",
+    ):
         fn = getattr(web_main, name, None)
         assert fn is not None, (
             f"web.main.{name} is gone. If the cache was removed, delete it "

@@ -15,6 +15,8 @@ RUN
     pytest tests/ -v
 """
 
+import pytest
+
 from ai.query import answer_question
 
 
@@ -436,3 +438,228 @@ def test_a_dead_rule_question_does_not_trip_reachability(monkeypatch):
     )
     assert result["grounded"] is True
     assert "never take effect" in result["question_understood"]
+
+
+# --- Follow-ups: entities carried forward, never intent (#318) ---------------
+
+
+def _resolved_entities(source_device, destination_ip, destination_display=None):
+    return {
+        "source_device": source_device,
+        "destination_ip": destination_ip,
+        "destination_display": destination_display or destination_ip,
+    }
+
+
+def test_a_fresh_reachability_question_populates_resolved_entities():
+    """Turn 1 has to seed turn 2 -- follow-ups are not only useful after
+    another follow-up."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    result = answer_question("Can rtr-us5 reach 10.20.0.5?", session)
+    assert result["resolved_entities"] == _resolved_entities("rtr-us5", "10.20.0.5")
+
+
+def test_dead_rule_and_undefined_reference_questions_carry_nothing_forward():
+    """Neither whole-snapshot intent has a per-question entity to carry --
+    resolved_entities must be None, not an empty or partial dict."""
+    frame = _FakeFrame([])
+    session = FakeSession(_FakeQuestions(whole_snapshot_frame=frame))
+
+    dead_rule = answer_question("Is any ACL rule dead?", session)
+    assert dead_rule["resolved_entities"] is None
+
+    undefined = answer_question("Is anything undefined?", session)
+    assert undefined["resolved_entities"] is None
+
+
+def test_refused_question_carries_nothing_forward():
+    result = answer_question("", FakeSession(_FakeQuestions()))
+    assert result["resolved_entities"] is None
+
+
+def test_source_side_falls_back_to_the_previous_answer():
+    """The follow-up itself: "does it reach ..." resolves nothing on the
+    source side, so the previous turn's device is used instead -- and the
+    grounding guarantee holds, checked at the boundary that matters (what
+    was actually sent to Batfish), not just the returned prose."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5", "rtr-branch"}, traceroute_frame=frame)
+    previous = _resolved_entities("rtr-us5", "10.20.0.5")
+
+    result = answer_question("Does it reach 10.20.20.5?", session, previous)
+
+    assert result["question_understood"] == "Can rtr-us5 reach 10.20.20.5?"
+    [call] = session.q.traceroute_calls
+    assert call["startLocation"] == "@enter(rtr-us5)"
+    assert call["headers"].dstIps == "10.20.20.5"
+
+
+def test_destination_side_falls_back_to_the_previous_answer():
+    """Symmetric case: a new source is named, the destination is omitted."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices(
+        {"rtr-us5", "rtr-branch"}, traceroute_frame=frame
+    )
+    previous = _resolved_entities("rtr-us5", "10.20.0.5")
+
+    result = answer_question("Can rtr-branch reach it?", session, previous)
+
+    assert result["question_understood"] == "Can rtr-branch reach 10.20.0.5?"
+    [call] = session.q.traceroute_calls
+    assert call["startLocation"] == "@enter(rtr-branch)"
+    assert call["headers"].dstIps == "10.20.0.5"
+
+
+def test_explicit_text_always_wins_over_the_previous_answer():
+    """THE ONE THAT MATTERS. A follow-up naming its own device must never be
+    silently overridden by session memory -- the fallback is only ever
+    consulted when the current question's own text resolves nothing, and
+    this proves that property holds rather than trusting the mechanism."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices(
+        {"rtr-us5", "rtr-branch"}, traceroute_frame=frame
+    )
+    previous = _resolved_entities("rtr-us5", "10.20.0.5")
+
+    result = answer_question("Can rtr-branch reach 10.20.20.5?", session, previous)
+
+    assert result["question_understood"] == "Can rtr-branch reach 10.20.20.5?"
+    [call] = session.q.traceroute_calls
+    assert call["startLocation"] == "@enter(rtr-branch)"
+    assert call["headers"].dstIps == "10.20.20.5"
+
+
+def test_no_previous_answer_behaves_exactly_as_before():
+    """Regression guard: a caller that never passes `previous` (every
+    existing caller, until web/main.py is wired) sees unchanged behaviour --
+    an unresolvable segment still refuses, it does not error on the missing
+    argument or behave differently because the parameter now exists."""
+    session = _session_with_devices({"rtr-us5"})
+    result = answer_question("Can it reach 10.20.0.5?", session)
+    assert result["grounded"] is False
+    assert result["question_understood"] is None
+
+
+def test_a_previous_device_absent_from_this_snapshot_is_not_trusted():
+    """A device from an earlier, different upload must not survive into
+    this one just because the name is still sitting in session state --
+    re-validated against THIS call's snapshot, exactly like a name typed
+    directly into the question."""
+    session = _session_with_devices({"rtr-branch"})  # rtr-us5 is NOT here
+    previous = _resolved_entities("rtr-us5", "10.20.0.5")
+
+    result = answer_question("Does it reach 10.20.0.5?", session, previous)
+
+    assert result["grounded"] is False
+    assert result["question_understood"] is None
+
+
+def test_a_bare_follow_up_with_no_reach_keyword_still_refuses():
+    """THE SCOPE BOUNDARY, pinned as a real test rather than left as
+    prose (#318 design decision). A previous answer only fills a gap
+    INSIDE the reachability path -- it does not widen which questions are
+    classified as reachability in the first place. "What about rtr-branch"
+    has no reach-style keyword at all, so it is never even split into
+    (source, destination); it must refuse exactly as it would with no
+    `previous` given."""
+    session = _session_with_devices({"rtr-us5", "rtr-branch"})
+    previous = _resolved_entities("rtr-us5", "10.20.0.5")
+
+    result = answer_question("What about rtr-branch?", session, previous)
+
+    assert result["grounded"] is False
+    assert result["question_understood"] is None
+    assert session.q.traceroute_calls == []
+
+
+# --- The fallback fires on a back-reference, never on failure alone --------
+# (found by review, @ARSH871-bot -- the fallback used to fire whenever a
+# side failed to resolve, for ANY reason, which did not distinguish "the
+# question left this side out" from "the question named something that does
+# not resolve". Every case below used to come back grounded=True, silently
+# answering with the PREVIOUS turn's entity instead of refusing.)
+
+
+@pytest.mark.parametrize("question", [
+    "Can the guest network reach the finance server?",
+    "Can rtr-brnch reach 10.10.10.5?",
+    "Can it reach 10.10.10.500?",
+    # "IT" the department, not "it" the pronoun -- found by review
+    # (@ARSH871-bot, round two). A different failure shape from the three
+    # above: not text that failed to resolve, but a real word that
+    # case-collided with the back-reference set after lowercasing.
+    "Can IT reach 10.10.10.5?",
+])
+def test_a_named_but_unresolvable_segment_still_refuses_even_with_previous(
+        question):
+    """THE ONES ARSH'S REVIEW FOUND, across two rounds. Each of these names
+    something -- a plain-English name, a typo'd device, a malformed
+    address, or a real word that happens to case-collide with a
+    back-reference -- and none of them is a genuine reference to the last
+    turn. All must refuse exactly as they would with no `previous`, never
+    silently answer using the last turn's entity."""
+    session = _session_with_devices({"rtr-us5"})
+    previous = _resolved_entities("rtr-us5", "10.10.10.5")
+
+    result = answer_question(question, session, previous)
+
+    assert result["grounded"] is False, (
+        f"{question!r} was answered using a carried-forward entity instead "
+        "of refusing -- exactly the regression this test exists to catch"
+    )
+    assert result["question_understood"] is None
+    assert result["resolved_entities"] is None
+    assert session.q.traceroute_calls == []
+
+
+def test_mutating_the_back_reference_gate_is_caught(monkeypatch):
+    """The mutation itself, run as a test rather than only by hand: revert
+    to the old "fall back on any failure" behaviour and confirm at least
+    one of the three guarded cases above starts (wrongly) succeeding."""
+    import ai.query as query_module
+
+    monkeypatch.setattr(query_module, "_is_source_back_reference", lambda _: True)
+    monkeypatch.setattr(query_module, "_is_destination_back_reference", lambda _: True)
+
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    previous = _resolved_entities("rtr-us5", "10.10.10.5")
+
+    result = answer_question(
+        "Can the guest network reach the finance server?", session, previous
+    )
+    assert result["grounded"] is True, (
+        "expected the mutated (unguarded) fallback to wrongly succeed here -- "
+        "if it still refuses, this test is not exercising the gate it claims to"
+    )
+
+
+def test_filler_words_are_tolerated_around_a_real_back_reference():
+    """"also"/"still"/"too" are filler, not content -- "does it ALSO reach"
+    must still be recognised as the same reference "does it reach" is.
+    This is the exact phrasing used in this PR's own live verification, so
+    it is worth pinning as a test rather than trusting a terminal transcript."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    previous = _resolved_entities("rtr-us5", "10.10.10.5")
+
+    result = answer_question("Does it also reach 8.8.8.8?", session, previous)
+
+    assert result["grounded"] is True
+    assert result["question_understood"] == "Can rtr-us5 reach 8.8.8.8?"
+
+
+def test_a_second_filler_word_is_not_tolerated():
+    """Deliberately narrow: one filler word, stripped once from each end.
+    "does it also still reach" is unusual enough that refusing it is the
+    right call, matching this project's own discipline of refusing the
+    unfamiliar rather than parsing harder to accept it."""
+    session = _session_with_devices({"rtr-us5"})
+    previous = _resolved_entities("rtr-us5", "10.10.10.5")
+
+    result = answer_question(
+        "Does it also still reach 8.8.8.8?", session, previous
+    )
+
+    assert result["grounded"] is False
