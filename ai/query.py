@@ -359,7 +359,19 @@ def _is_source_back_reference(source_text: str) -> bool:
     device", ...), never for text that merely failed to name a real device.
     "rtr-brnch" (a typo) and "the guest network" (CLAUDE.md's own
     must-refuse example) are both real text that named something -- neither
-    is in the set, so neither is treated as a reference to the last turn."""
+    is in the set, so neither is treated as a reference to the last turn.
+
+    "IT", THE DEPARTMENT, IS NOT THE PRONOUN "it" (found by review,
+    @ARSH871-bot). The lowercase comparison below means "Can IT reach
+    10.10.10.5?" would otherwise match the set the same way "Can it reach
+    ..." does -- the 27 Sep shape again, a word that names something real,
+    answered with the previous turn's entity instead of refusing. Checked
+    on the RAW text, case-sensitively, before any lowercasing happens, so
+    the literal pronoun "it" is untouched and only the all-caps department
+    name is excluded.
+    """
+    if re.search(r"\bIT\b", source_text):
+        return False
     stripped = _SOURCE_BACK_REFERENCE_LEAD.sub("", source_text).strip().lower()
     stripped = _strip_back_reference_filler(stripped)
     return stripped in _SOURCE_BACK_REFERENCES
@@ -370,7 +382,18 @@ def _is_destination_back_reference(destination_text: str) -> bool:
     purpose -- something IP-shaped that failed to parse (a typo'd address,
     an out-of-range octet) is a malformed address, not a reference to the
     last turn's destination, and must still refuse rather than silently
-    substitute a different address than the one the user typed."""
+    substitute a different address than the one the user typed.
+
+    BELT AND BRACES, NOT A GAP (noted in review, @ARSH871-bot). No member
+    of _DESTINATION_BACK_REFERENCES itself contains a digit, so the set
+    lookup below would already reject anything IP-shaped on its own --
+    this check cannot currently change the answer, and no test can show it
+    firing. Kept anyway, deliberately: if a future back-reference phrase
+    ever DID contain a digit, the set lookup alone would no longer catch
+    it, and this is the explicit guard that would. Same "defence in
+    depth, not duplication" reasoning the duplicate-id guard in
+    analysis/findings.py already uses for itself.
+    """
     stripped = destination_text.strip().rstrip("?.!").strip().lower()
     if any(ch.isdigit() for ch in stripped):
         return False

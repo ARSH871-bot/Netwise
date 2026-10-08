@@ -216,3 +216,32 @@ def test_uploading_a_new_config_clears_the_carried_forward_entity(monkeypatch):
         "a new upload did not clear the previous network's carried-forward "
         "entity"
     )
+
+
+def test_loading_the_sample_network_clears_the_carried_forward_entity(
+        monkeypatch):
+    """THE BLOCKING FINDING, ROUND TWO (@ARSH871-bot). upload_config()
+    clears _last_resolved_entities on every new network; load_sample() is
+    the OTHER way a new network arrives and had been missed entirely. The
+    sample's only device is rtr-us5 -- the same hostname as every
+    rtr-us5-* fixture -- so a real upload's resolved entity re-validated
+    cleanly against the sample by coincidence and survived the switch.
+    Uses the real /api/sample endpoint against the real committed sample
+    fixture, not a stub, since the gap was in upload_config()/load_sample()
+    themselves, not in anything answer_question() could hide."""
+    _stub_connection(monkeypatch)
+    monkeypatch.setattr(main, "answer_question", _fake_answer_question)
+
+    c = TestClient(main.app)
+    _upload(c, "rtr-alpha")
+    first = c.post("/api/ask", json={"question": "Can rtr-us5 reach 10.20.0.5?"})
+    assert first.json()["question_understood"] == "first resolution"
+
+    sample_response = c.post("/api/sample")
+    assert sample_response.status_code == 200
+
+    second = c.post("/api/ask", json={"question": "Does it also reach that?"})
+    assert second.json()["question_understood"] == "first resolution", (
+        "loading the sample network did not clear the previous network's "
+        "carried-forward entity"
+    )

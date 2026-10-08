@@ -1770,6 +1770,16 @@ def load_sample() -> Dict[str, Any]:
     # before this line existed: a report labelled SAMPLE NETWORK named a rule
     # from the previous upload as "excluded during conversion".
     _discard_staged_pfsense_skips()
+    # A follow-up question must not carry a resolved device or address
+    # forward into the sample network either (#318 review, @ARSH871-bot).
+    # upload_config() already clears this; load_sample() is the OTHER way a
+    # new network arrives and had been missed. Measured before this line
+    # existed: the sample's only device is rtr-us5, the same hostname as
+    # every rtr-us5-* fixture, so a real upload's resolved entity survived
+    # the switch and re-validated cleanly against the sample by coincidence
+    # -- exactly the case _discard_last_resolved_entities()'s own docstring
+    # already names.
+    _discard_last_resolved_entities()
 
     # The marker is written AFTER the config is staged, so a failure above
     # cannot leave a session labelled "sample" while holding something else.
