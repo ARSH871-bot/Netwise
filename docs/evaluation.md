@@ -673,3 +673,165 @@ it is the strongest thing this round produced. @patelankeet2 filed #145 from
 — it is not, `AC-001` is two-clause and reads correctly. Same conclusion, two
 routes, four findings between them. That is a better result than agreement
 would have been.
+
+---
+
+## Part 4 - a held-out, repeatable score for the explanation layer (US-55, #346)
+
+Measured 10 October 2026. Story: US-55 (#346). Part 3 above was the first
+round of human rating and found a real bug (#145); this part turns that
+exercise into something that runs in CI without Ollama, the same way Part 1
+turned "does Netwise find the planted flaws" into a repeatable measurement
+rather than a one-off demo.
+
+Not written from scratch: the same five findings Part 3 already used
+(`RT-050`, `AC-001`, `PC-001`, `AC-002`, `PC-005`), because they are already
+real, already span three checks and both a `found` and an `error`, and are
+already outside `ai/Modelfile`'s own worked examples (checked directly - none
+of the Modelfile's examples share an id or exact wording with these five), so
+they qualify as held out without inventing a second set.
+
+### Why this round regenerated rather than reused Part 3's text
+
+Part 3's text predates #145's fix. Reusing it would pin a known-fixed bug's
+output forever and call that "current behaviour", which is not honest. So
+all five explanations were regenerated live, against the real pipeline and
+the real model, on 10 October - after #145 landed, specifically to measure
+what the system does today.
+
+### What changed since #145
+
+```
+PC-001  accuracy, old mean 2.5 (4,2,2,2 across four raters) -> new 5
+        "The policy currently permits this unauthorized access" (backwards)
+        -> "despite policy requirements blocking it... contradicts its
+           written policy that forbids it" (correct)
+
+PC-005  accuracy, old mean 1.5 (3,1,1,1 across four raters) -> new 5
+        "a policy statement that requires blocking of HTTPS traffic" (backwards)
+        -> "the written policy actually requires this traffic to be
+           allowed" (correct)
+```
+
+Both inversions #145 was filed against are gone on this regeneration. That is
+not proof they can never recur - `ai/explain.py`'s own docstring is explicit
+that a 3B model's output is not perfectly repeatable - but it is a real,
+measured confirmation of the fix, not an assumption that closing the issue
+meant it worked.
+
+### A different, new defect, found by doing this rather than assumed away
+
+`AC-002`'s regenerated text has its own problem, unrelated to #145:
+
+```
+detail: Unreachable line: permit udp ... (action PERMIT). Blocked by:
+        deny ip ... any. Reason: BLOCKING_LINES
+
+explanation: "...which is supposed to block traffic from a specific IP
+             address... even though the unreachable line in the ACL rule
+             would normally deny traffic matching its pattern..."
+```
+
+The unreachable line's own action is `PERMIT`. The text describes it twice as
+if it were a block/deny rule. The final-outcome claim (the traffic ends up
+denied, because the blocking rule wins) is correct - this is not #52
+repeating. What is backwards is the dead line's own stated action, a
+different fact.
+
+Checked for reproducibility before concluding anything: six more immediate
+live regenerations of the same finding, zero repeated it. One inversion in
+eight live generations total. Filed as
+[#384](https://github.com/ARSH871-bot/Netwise/issues/384) with the full
+repro log, a suggested fix (extend `_compute_dead_rule_outcome()` to also
+name the dead line's own action, the same way the other two computed-outcome
+functions already name both sides of their fact), and the same discipline
+#145 itself set: **not fixed here.** Fixing it now would mean rating text
+that no longer exists by the time anyone reads this table.
+
+### The held-out set and its ratings
+
+One rater so far (Ankeet) - see
+[`tests/fixtures/explanation_quality/holdout.json`](../tests/fixtures/explanation_quality/holdout.json)
+for the full captured findings, explanations and reasoning behind each
+score. Same 1-5 scale as Part 3 (accuracy: does the text claim only what the
+evidence shows; usefulness: would this sentence alone tell someone who never
+read `evidence.detail` what is wrong).
+
+| id | accuracy | usefulness | note |
+|---|---|---|---|
+| RT-050 | 5 | 4 | Deterministic fallback, cannot be wrong by construction. |
+| AC-001 | 5 | 4 | Correct, no inversion. |
+| PC-001 | 5 | 4 | Regenerated post-#145: inversion gone. |
+| AC-002 | **2** | **2** | **Real defect, kept rather than re-rolled - see #384.** |
+| PC-005 | 5 | 3 | Regenerated post-#145: inversion gone. First-sentence phrasing still asks the reader to resolve an apparent contradiction before it resolves itself - a readability risk, not a false claim this time. |
+
+@ARSH871-bot @shubhamkataria2005 @SamikaPerera - a second independent rating
+on this set, the same way Part 3 grew from one rater to four, would turn this
+from a first round into the same strength of evidence Part 3 reached. Not
+required to use the tool below; the fixture format is plain JSON.
+
+### The repeatable score
+
+```bash
+python -m tools.explanation_quality
+```
+
+```
+5 findings, 5 ratings
+accuracy:   mean 4.40  min 2
+usefulness: mean 3.40  min 2
+```
+
+**Published, and pinned in `tests/test_explanation_quality.py`** so CI
+catches it if the committed ratings ever drift from what this document
+claims - the same "generated artefact can go stale between the commit and
+the merge" risk `docs/traceability.md`'s own history already names in
+`CLAUDE.md` §11. This needs neither Batfish nor Ollama: the held-out set is a
+frozen capture, not a live call, so "repeatable" means exactly what it says -
+the same input always produces the same number.
+
+**Reported as two numbers, never blended into one**, and as a mean
+alongside a minimum rather than the mean alone - for the same reason the
+controls table earlier in this document separates "checked clean" from
+"could not check" instead of reporting one combined pass rate: a single
+figure here would have hidden `AC-002`'s accuracy=2 behind four findings at
+5, printing a reassuring 4.4 while one finding in the set is a confirmed,
+filed defect.
+
+### The documented threshold (acceptance criterion 3)
+
+`tools/explanation_quality.py` defines `EXPLANATION_QUALITY_THRESHOLD`:
+mean accuracy 4.0, mean usefulness 3.0 - both below the measurement above,
+so the threshold is a real tripwire rather than a number chosen to always
+pass.
+
+**Deliberately based on the mean, not the minimum.** `AC-002`'s accuracy=2 is
+a correctness bug in one evidence shape, the same class of thing #52 and
+#145 already were, and both of those were fixed for their one shape rather
+than by turning the model off for every finding. Tying this threshold to the
+minimum would mean one narrow, already-understood, 1-in-8 defect forces every
+explanation in the product onto the deterministic fallback - a far bigger
+change than the finding justifies. The mean is what actually answers the
+question this threshold exists for: has quality collapsed broadly, not did
+one shape have one bad day.
+
+**Why this is a documented number, not a runtime check.** There is no honest
+way to score one live generation's quality automatically without another
+model judging it, which would move the hallucination risk up a level rather
+than remove it - the same reasoning `CLAUDE.md` constraint 2 already applies
+to explanation generation itself. So crossing this threshold is something a
+human detects, by re-running this measurement (same method as this section),
+not something `ai/explain.py` checks on every call. If a future re-run ever
+reports a mean below either number, that is the trigger to seriously
+reconsider defaulting the whole explanation layer to the deterministic
+fallback - a team decision, not an automatic flag flip.
+
+### What this does not show
+
+Same discipline as Part 1's own honesty section. One rater, five findings,
+is a first round - Part 3 only reached four independent raters because
+people kept adding rows after the first. A single bad draw from the model
+(`AC-002`) was caught here only because this round happened to regenerate
+rather than reuse old text; the held-out set's SIZE is still small enough
+that a rarer defect could sit undetected for a while. Growing the set and
+adding raters is explicitly left open above rather than claimed as finished.
