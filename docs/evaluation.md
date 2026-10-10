@@ -678,7 +678,7 @@ would have been.
 
 ## Part 4 - a held-out, repeatable score for the explanation layer (US-55, #346)
 
-Measured 11 October 2026. Story: US-55 (#346). Part 3 above was the first
+Measured 10 October 2026. Story: US-55 (#346). Part 3 above was the first
 round of human rating and found a real bug (#145); this part turns that
 exercise into something that runs in CI without Ollama, the same way Part 1
 turned "does Netwise find the planted flaws" into a repeatable measurement
@@ -696,7 +696,7 @@ they qualify as held out without inventing a second set.
 Part 3's text predates #145's fix. Reusing it would pin a known-fixed bug's
 output forever and call that "current behaviour", which is not honest. So
 all five explanations were regenerated live, against the real pipeline and
-the real model, on 11 October - after #145 landed, specifically to measure
+the real model, on 10 October - after #145 landed, specifically to measure
 what the system does today.
 
 ### What changed since #145
