@@ -19,10 +19,9 @@ WHY A SEPARATE NUMBER PER DIMENSION, NOT ONE BLENDED SCORE
 WHY MINIMUM, NOT JUST MEAN
     The mean alone would have hidden AC-002's accuracy=2 behind four other
     findings at 5, printing a healthy-looking 4.4 while one finding in the
-    set is actually a confirmed defect (#384). The minimum is what a
-    threshold decision should look at -- see docs/evaluation.md Part 4 and
-    EXPLANATION_QUALITY_THRESHOLD in ai/explain.py for what this number is
-    used to decide.
+    set is actually a confirmed defect (#384). The minimum is reported for
+    that reason, but see EXPLANATION_QUALITY_THRESHOLD below for why the
+    THRESHOLD decision is deliberately based on the mean, not the minimum.
 
 RUN IT BY HAND
     python -m tools.explanation_quality
@@ -42,6 +41,40 @@ DEFAULT_HOLDOUT_PATH = (
     Path(__file__).resolve().parent.parent
     / "tests" / "fixtures" / "explanation_quality" / "holdout.json"
 )
+
+#: Acceptance criterion 3 of #346: "a documented threshold below which the
+#: deterministic fallback is preferred". Grounded in the first real
+#: measurement (see docs/evaluation.md Part 4): mean_accuracy 4.4,
+#: mean_usefulness 3.4 -- so these two numbers sit comfortably below the
+#: current measurement rather than just above it, which would make the
+#: threshold meaningless.
+#:
+#: DELIBERATELY ON THE MEAN, NOT THE MINIMUM
+#:     A single low-scoring finding (AC-002, accuracy=2, #384) is treated
+#:     as a correctness BUG to fix for that one evidence shape -- the same
+#:     way #52 and #145 were each fixed for their one shape, never by
+#:     disabling the model for every finding. Tying this threshold to the
+#:     minimum would mean one narrow, already-understood defect forces
+#:     every explanation onto the deterministic fallback, which is a far
+#:     bigger behaviour change than the finding justifies. The mean is what
+#:     answers the real question this threshold exists for: has overall
+#:     quality collapsed broadly, not did one shape have one bad day.
+#:
+#: WHY THIS IS A DOCUMENTED NUMBER AND NOT A RUNTIME CHECK
+#:     There is no way to score a single live generation's quality
+#:     automatically without another model judging it -- which would just
+#:     move the hallucination risk up one level, not remove it, the same
+#:     reasoning CLAUDE.md constraint 2 already applies to explanation
+#:     generation itself. So crossing this threshold is detected the only
+#:     honest way available: a human re-runs the held-out measurement (same
+#:     method as docs/evaluation.md Part 4), and if the new mean falls
+#:     below either number here, that is the trigger to seriously
+#:     reconsider defaulting ai/explain.py to the fallback path for every
+#:     finding, not an automatic flag flip.
+EXPLANATION_QUALITY_THRESHOLD = {
+    "mean_accuracy": 4.0,
+    "mean_usefulness": 3.0,
+}
 
 
 def load_holdout(path: Path = DEFAULT_HOLDOUT_PATH) -> List[Dict[str, Any]]:
