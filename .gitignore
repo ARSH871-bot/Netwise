@@ -182,6 +182,12 @@ Thumbs.db
 # rather than going into shared git history.
 docs/ankeet/
 
+# Personal Claude Code working rules, layered on top of the shared CLAUDE.md
+# above. Governs how Claude works with Ankeet on this repo session to
+# session (attribution, git workflow, verification discipline) -- not
+# team-facing, never pushed.
+CLAUDE.local.md
+
 # --- Personal identifiers ---------------------------------------------------
 # Student IDs and individual self-assessment prose. NOT ours to publish: the
 # repository is public, and an identifier in git history stays there after the
