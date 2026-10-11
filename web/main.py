@@ -1175,7 +1175,9 @@ def download_report(format: str = "html") -> Response:
             results, source=subject, conversion_gaps=_staged_pfsense_skips()
         )
         if format == "html"
-        else report.render_csv(results, source=subject)
+        else report.render_csv(
+            results, source=subject, conversion_gaps=_staged_pfsense_skips()
+        )
     )
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
     return Response(
