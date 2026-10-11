@@ -145,6 +145,14 @@ UNREAD_POLICY_NUMBER = 51
 #: from here up so they can never meet a route assertion's own number.
 HYGIENE_FIRST_NUMBER = 100
 
+#: The highest `number` a route statement may take, so no two findings share an
+#: id (#376). A statement is reported as RT-<number>, with no separate error
+#: band, so it must stay below every id this check uses for itself. Measured
+#: before this existed: one user entry with "number": 100 came out as RT-100
+#: twice, beside the duplicate-address finding. `analysis/policy.py` refuses a
+#: user policy that goes past it.
+HIGHEST_POLICY_NUMBER = min(SKIPPED_NUMBER, UNREAD_POLICY_NUMBER, HYGIENE_FIRST_NUMBER) - 1
+
 # See the "WHAT COUNTS AS REACHABLE" section of the module docstring for why
 # this is NOT the same set pybatfish's own tooling treats as success.
 SUCCESS_DISPOSITIONS = {"ACCEPTED", "DELIVERED_TO_SUBNET"}
