@@ -577,4 +577,6 @@ def test_no_dashboard_only_text_leaks_into_either_format(monkeypatch):
         "_attach_remediation() for why that is still an open decision, "
         "not one this test should silently start allowing"
     )
-    assert set(_rows(csv_body)[0]) == set(report.CSV_COLUMNS)
+    # The documented header and nothing else: per-finding columns plus the
+    # report-level ones (#308's excluded_during_conversion).
+    assert set(_rows(csv_body)[0]) == set(report.CSV_COLUMNS + report.CSV_REPORT_COLUMNS)
