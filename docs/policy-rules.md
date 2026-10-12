@@ -336,6 +336,83 @@ consistently with POL-4.
 
 ---
 
+### A policy that forbids what it requires is refused (#322, US-30)
+
+A `prohibition` says traffic must be DENIED. A `requirement` says traffic must
+be PERMITTED. If two such rules describe overlapping traffic **on the same
+device and the same filter**, no configuration can satisfy both: whichever way
+the network is set up, one of them reports a violation, and fixing that one
+creates the other.
+
+Before #322 such a policy loaded cleanly and the scan ran. The user got a real
+finding, fixed it, and got the opposite finding. Nothing said the rules were at
+fault.
+
+`analysis/policy_conflicts.py` now compares every prohibition against every
+requirement in the same scope, and `load_policy()` **refuses** the policy when
+it can prove an overlap:
+
+```
+PolicyError: this policy contradicts itself, so no configuration could
+satisfy it: rule 3 ('The LAN must not reach the finance server') forbids
+what rule 7 ('Accounts must reach the finance server') requires on rtr-us5
+filter acl_in: both describe src 10.10.10.64/26, dst 10.20.0.5/32,
+dst ports 443
+```
+
+The message names both rules and **the intersection**, not either rule
+restated. US-30 asks for the overlap because a message naming only the pair
+leaves the user diffing two header specifiers by eye.
+
+This needs no Batfish, no Docker and no config. It is a property of the policy
+file alone.
+
+#### What is not a contradiction
+
+Two prohibitions over the same traffic are consistent — denying twice is
+denying — and so are two requirements. Only permit-against-deny is
+unsatisfiable. Rules on different devices or different filters never collide.
+
+A rule's `queries` are a union, because `policy_compliance` fails the rule if
+any one of them fails, so a contradiction is any query of the prohibition
+meeting any query of the requirement.
+
+#### Proven, not presumed — and the third answer
+
+Batfish header specifiers are a language, not a list. `dstIps` can read
+`0.0.0.0/0 \ (218.8.104.58, 10.20.0.5)`; `ipProtocols` can read `!tcp`. This
+module parses a deliberate subset — plain addresses, CIDRs, port ranges and
+protocol names — and **refuses to guess at the rest**.
+
+So every comparison has three answers, not two:
+
+| answer | meaning | effect |
+|---|---|---|
+| overlap | proven to share traffic | the policy is **refused** |
+| no overlap | proven disjoint | loads normally |
+| **undecidable** | a specifier outside the parsed subset | loads, and is **reported** |
+
+The third is the one that matters. An undecidable pair is carried out on
+`Policy.undecidable` and printed by the pipeline as a `warning:`, never
+dropped. Treating "we could not compare these" as "these are fine" is F-4
+arriving through the policy file: *we checked and found nothing* standing in
+for *we could not check*.
+
+An unmodelled query field makes the pair undecidable rather than being
+skipped, and that direction is deliberate. Skipping a field would widen both
+header spaces and could invent an overlap that is not there — refusing a
+policy that is perfectly consistent.
+
+The shipped `docs/examples/policy.example.json` demonstrates this: it uses
+both set difference and a negated protocol, so it loads and reports two pairs
+it could not compare.
+
+`tests/test_policy_contradictions.py` pins all of it, and the five mutations
+that matter — undecidable collapsing to "no overlap", unmodelled fields being
+ignored, the scope check being dropped, two prohibitions counting as a
+conflict, and the overlap detail falling out of the message — each fail it.
+
+
 ## 4. Finding IDs
 
 Agreed with Arsh, and requiring no change to `docs/finding-format.md`:

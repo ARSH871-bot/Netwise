@@ -879,6 +879,11 @@ def main() -> None:
         # printing only half of what we changed would be exactly that.
         for note in list(user_policy.renamed) + list(user_policy.assigned):
             print(f"note: {note}")
+        # A pair we could not compare is not a pair we cleared (#322). It is
+        # louder than a note because an undetected contradiction makes every
+        # finding from those two rules suspect.
+        for note in user_policy.undecidable:
+            print(f"warning: {note}")
 
     config_dir = argv[0]
     requested = argv[1:] or None
