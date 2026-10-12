@@ -53,11 +53,22 @@ def scan_message() -> str:
     end = source.index("await loadFindings()", start)
     body = source[start:end]
 
-    # The notice is the only multi-line string literal in that span.
-    literals = re.findall(r'"((?:[^"\\]|\\.)+)"', body)
-    waiting = [s for s in literals if "Analys" in s or "analys" in s]
-    assert waiting, f"no waiting message found in runScan(). Literals: {literals}"
-    return " ".join(waiting)
+    # The notice is built by the `el("div", "notice loading", ...)` call, and
+    # its text may be SEVERAL string literals concatenated with `+`. Join all
+    # of them from that call to its closing paren.
+    #
+    # An earlier version of this fixture filtered the literals to the ones
+    # containing "analys", which silently dropped the rest of a concatenated
+    # sentence -- so a message that did mention the explanations looked as
+    # though it did not. A fixture that sees only part of the claim cannot
+    # test the claim.
+    marker = body.index('"notice loading"')
+    tail = body[marker + len('"notice loading"'):]
+    literals = re.findall(r'"([^"]*)"', tail[: tail.index(");")])
+    assert literals, (
+        f"no message literals found after 'notice loading' in: {tail[:200]!r}"
+    )
+    return "".join(literals)
 
 
 def test_the_waiting_message_promises_no_duration(scan_message):

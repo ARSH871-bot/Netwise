@@ -891,11 +891,42 @@ async function runScan() {
   // would race to render into the same container.
   button.disabled = true;
   document.getElementById("summary").replaceChildren();
+
+  // NO DURATION, AND THAT IS THE POINT (#331).
+  //     This said "this can take up to 15 seconds". Measured cold through
+  //     the real endpoint on a CPU-only machine:
+  //
+  //         rtr-us5-insecure, Ollama running   median 68.0s   5 found
+  //         rtr-us5-messy, model not resident         163.9s  6 found
+  //         rtr-us5-insecure, Ollama unreachable        7.4s
+  //         multi-device-10, the largest fixture        7.6s  0 found
+  //
+  //     True only when the AI layer does no work. False by 4.5x to 11x in
+  //     the configuration we ship and demo.
+  //
+  //     A bigger number would not fix it. The wait scales with the count of
+  //     `found` findings and with whether the 2.6 GB model is resident, so
+  //     "up to 90 seconds" is wrong on a machine with a GPU (about 1s per
+  //     finding) and wrong again at twelve findings. There is no honest
+  //     fixed number, so this gives none.
+  //
+  //     What it gives instead is the ORDER things happen in and which part
+  //     is slow, because that is what distinguishes work from a hang --
+  //     which is #331's actual story. The checks are a steady 6-8s; the
+  //     explanations are 89-96% of the wait whenever the model runs; the
+  //     first run of a session also loads the model, measured at 163.9s
+  //     against 73.4s warm on the same config. A user whose first scan
+  //     takes three times as long as their second should be told that is
+  //     expected rather than left to conclude it broke and recovered.
+  //
+  //     tests/test_scan_wait_claim.py pins each of those three claims.
   document.getElementById("findings").replaceChildren(
     el(
       "div",
       "notice loading",
-      "Analysing your upload, this can take up to 15 seconds..."
+      "Analysing your upload. The checks usually finish quickly; writing " +
+        "the plain-English explanations takes longer, and longest the " +
+        "first time you scan."
     )
   );
 
