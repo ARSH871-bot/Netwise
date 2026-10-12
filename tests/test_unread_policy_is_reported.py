@@ -142,6 +142,7 @@ def test_access_control_no_longer_says_the_rules_were_not_read(
     monkeypatch.setattr(access_control, "_check_guarantees", lambda *a, **k: [])
     monkeypatch.setattr(access_control, "_check_dead_rules", lambda *a, **k: [])
     monkeypatch.setattr(access_control, "_check_undefined_references", lambda *a, **k: [])
+    monkeypatch.setattr(access_control, "_check_unused_filters", lambda *a, **k: [])
 
     results = access_control.run(bf=None)
     card = next((f for f in results if "not read" in f["summary"]), None)
@@ -185,6 +186,7 @@ def test_routing_no_longer_says_the_assertions_were_not_read(
     here rather than left as machinery for a problem that no longer exists.
     """
     monkeypatch.setattr(routing.snapshot, "device_names", lambda bf: {"rtr-acme"})
+    monkeypatch.setattr(routing, "_routing_hygiene", lambda bf: [])
 
     results = routing.run(bf=None)
     card = next((f for f in results if "not read" in f["summary"]), None)

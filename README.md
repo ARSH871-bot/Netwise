@@ -75,6 +75,10 @@ Supplying one: a documented format (start from
 [`docs/examples/policy.example.json`](docs/examples/policy.example.json)), a
 validating loader (`analysis/policy.py`, #173), and an upload endpoint with a
 file picker (`POST /api/policy`, #186).
+Or have Netwise draft one from your own config (`python -m
+analysis.draft_policy`, or **Draft one from my config** on the dashboard, #326):
+one rule per filter line, each citing the line it came from, which will not
+load until you have decided every rule.
 
 **This section has now been wrong twice, in the same direction.** It said a
 policy was "validated and staged, and not yet applied" after #181 made that

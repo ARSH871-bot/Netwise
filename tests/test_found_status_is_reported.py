@@ -236,6 +236,7 @@ def test_routing_reports_unreachable_traffic_as_found(monkeypatch):
         "Traces": [_Trace("NO_ROUTE", ["rtr-hq"])],
     }])
     bf = _FakeSession(traceroute=frame)
+    monkeypatch.setattr(routing, "_routing_hygiene", lambda bf: [])
 
     results = routing.run(bf)
 

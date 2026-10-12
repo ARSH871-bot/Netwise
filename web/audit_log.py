@@ -37,6 +37,11 @@ EVENT_FIELDS: Final = {
     # same file every time and carries nothing configuration-derived, so
     # there is nothing about it worth recording beyond that it happened.
     "sample_loaded": {},
+    # A scan was saved to history, or saved scans were deleted (#223, #344).
+    # Counts only: the network name is user-typed text, and the scan holds
+    # config lines, so neither is recorded -- only that it happened.
+    "history_saved": {"found_count": int, "none_count": int, "error_count": int},
+    "history_deleted": {"deleted_count": int},
 }
 
 

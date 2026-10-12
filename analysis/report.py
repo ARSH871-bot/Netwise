@@ -64,6 +64,15 @@ CSV_COLUMNS = ("id", "check", "status", "severity", "device",
                "summary", "detail", "source", "nothing_to_check",
                "report_subject")
 
+#: Columns about the WHOLE REPORT rather than one finding, written by
+#: `render_csv()` after CSV_COLUMNS on every row (#308).
+#:
+#: KEPT OUT OF CSV_COLUMNS ON PURPOSE. Other renderers build their header from
+#: CSV_COLUMNS and their rows by hand (#298's comparison CSV does), so adding
+#: a column there would leave their header one wider than their rows -- a
+#: misalignment no merge conflict would show.
+CSV_REPORT_COLUMNS = ("excluded_during_conversion",)
+
 #: The `device` value a check uses when a finding is ABOUT THE CHECK rather
 #: than about any device. Today exactly one producer emits it --
 #: `analysis/checks/policy_compliance.py`, for "your policy has no rules for
@@ -142,7 +151,8 @@ def _now() -> str:
 
 
 def render_csv(findings: Sequence[Dict[str, Any]],
-               source: Optional[str] = None) -> str:
+               source: Optional[str] = None,
+               conversion_gaps: Optional[Sequence[str]] = ()) -> str:
     """Every finding, one row each, including the ones that could not run.
 
     A `status` COLUMN rather than only the rows that found something -- an
@@ -172,10 +182,30 @@ def render_csv(findings: Sequence[Dict[str, Any]],
         Optional, defaulting to None, so every existing caller keeps
         working; when it is absent the column is present and empty, which
         is the honest rendering of "this report does not say".
+
+    `excluded_during_conversion` -- WHAT A CONVERTER LEFT OUT (#308)
+        Measured on main before this existed: a PF Sense upload whose DHCP
+        WAN rule could not be converted showed the skip on the dashboard and
+        in the HTML report, and the CSV of the same scan said nothing. Every
+        row read as complete. Same three states as `render_html()`, from the
+        same `coverage.summarise()`, so the two cannot disagree:
+
+            the skip notes, joined     something was excluded
+            "UNKNOWN -- ..."           the record could not be read
+            empty                      nothing was excluded
+
+        Repeated on every row for the reason `report_subject` is.
     """
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
-    writer.writerow(CSV_COLUMNS)
+    writer.writerow(CSV_COLUMNS + CSV_REPORT_COLUMNS)
+
+    summary = coverage.summarise(findings, conversion_gaps)
+    if summary["conversion_gaps_unreadable"]:
+        excluded = ("UNKNOWN -- the record of what conversion excluded could "
+                    "not be read, so whether anything was left out is not known")
+    else:
+        excluded = "; ".join(summary["conversion_gaps"])
 
     ordered = (_sections(findings)["blind"]
                + _sections(findings)["problems"]
@@ -199,6 +229,7 @@ def render_csv(findings: Sequence[Dict[str, Any]],
             # spreadsheet, which is the point of having it at all.
             "yes" if is_nothing_to_check(finding) else "",
             source or "",
+            excluded,
         ])
     return buffer.getvalue()
 

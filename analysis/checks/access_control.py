@@ -48,6 +48,7 @@ HOW IT DECIDES WHAT TO REPORT
     docs/finding-format.md.
 """
 
+import re
 from itertools import count
 from typing import Any, Dict, Iterator, List, Tuple
 
@@ -307,6 +308,7 @@ def run(bf: Session) -> List[Dict[str, Any]]:
     results.extend(_check_guarantees(bf, numbering, guarantees))
     results.extend(_check_dead_rules(bf, numbering))
     results.extend(_check_undefined_references(bf, numbering))
+    results.extend(_check_unused_filters(bf, numbering))
 
     # THE "WE DID NOT READ YOUR RULES" CARD IS GONE, BECAUSE WE NOW DO.
     #
@@ -675,6 +677,95 @@ def _check_undefined_references(
             )
         )
 
+    return results
+
+
+#: Structure types that filter traffic. An unused route-map or class-map is
+#: tidying up; an unused FILTER is rules somebody wrote that protect nothing.
+_FILTER_TYPE = re.compile(r"access.list|firewall filter", re.IGNORECASE)
+
+
+def _check_unused_filters(
+    bf: Session, numbering: Iterator[int]
+) -> List[Dict[str, Any]]:
+    """Find filters that are defined but applied nowhere, so protect nothing.
+
+    WHY THIS MATTERS
+        An ACL written and never attached to an interface is a protection
+        its author believes exists. Needs no policy: it is a fact about the
+        config, asked of Batfish (unusedStructures), not inferred by us.
+
+    ONLY FOR FILES BATFISH FULLY UNDERSTOOD
+        Measured on tests/fixtures/vendor-asa: Batfish listed OUTSIDE_IN as
+        unused, but line 29 applies it (`access-group OUTSIDE_IN in interface
+        outside`) -- and line 29 is one of the lines it did not understand.
+        "Unused" from a partly parsed file can simply mean "applied by a line
+        we skipped". So those are reported as could-not-tell, one card per
+        file, and never as a finding.
+    """
+    try:
+        frame = bf.q.unusedStructures().answer().frame()
+        status = bf.q.fileParseStatus().answer().frame()
+    except Exception as error:
+        return [
+            findings.error_finding(
+                check=CHECK_NAME,
+                summary="Could not check for filters that are never applied",
+                detail=findings.describe_error(error),
+                source="unusedStructures",
+                number=next(numbering),
+            )
+        ]
+
+    parsed = {row["File_Name"]: row["Status"] for _, row in status.iterrows()}
+    nodes = {row["File_Name"]: row["Nodes"][0]
+             for _, row in status.iterrows() if len(row["Nodes"])}
+
+    results: List[Dict[str, Any]] = []
+    unsure: Dict[str, List[str]] = {}
+    for _, row in frame.iterrows():
+        if not _FILTER_TYPE.search(str(row["Structure_Type"])):
+            continue
+        lines = str(row["Source_Lines"])          # "configs/sw.cfg:[9, 10, 11]"
+        file_name = lines.split(":[")[0]
+        name = row["Structure_Name"]
+        if parsed.get(file_name) != "PASSED":
+            unsure.setdefault(file_name, []).append(name)
+            continue
+        results.append(
+            findings.make_finding(
+                check=CHECK_NAME,
+                severity="medium",
+                device=nodes.get(file_name, "unknown"),
+                summary=f"Filter '{name}' is defined but never applied",
+                detail=(
+                    f"{row['Structure_Type']} {name!r} is not applied to any "
+                    "interface or referenced anywhere in this config, so none "
+                    "of its rules take effect. If it was meant to protect "
+                    "something, that protection is not in place."
+                ),
+                source=lines,
+                status="found",
+                number=next(numbering),
+            )
+        )
+
+    for file_name, names in sorted(unsure.items()):
+        results.append(
+            findings.error_finding(
+                check=CHECK_NAME,
+                device=nodes.get(file_name, "unknown"),
+                summary=f"Could not tell whether {len(names)} filter(s) are applied",
+                detail=(
+                    f"Batfish lists {', '.join(sorted(names))} as unused, but it "
+                    f"did not fully understand {file_name}, and the line that "
+                    "applies a filter may be one it skipped. Nothing is claimed "
+                    "about them either way."
+                ),
+                source=file_name,
+                number=next(numbering),
+            )
+        )
     return results
 
 

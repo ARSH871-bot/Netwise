@@ -52,7 +52,7 @@ USER_POLICY = {
     "policy_compliance": [
         {
             "description": "the finance host must not be reachable",
-            "kind": "must_deny",
+            "kind": "prohibition",
             "filter": "acl_in",
             "node": "somebody-elses-router",
             "queries": [{"dstIps": "10.99.0.7", "ipProtocols": ["tcp"]}],

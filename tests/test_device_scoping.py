@@ -118,6 +118,7 @@ def _run_with_devices(monkeypatch, present, dead_rules=()):
         monkeypatch.setattr(access_control, fn, lambda bf, n, items: [])
     monkeypatch.setattr(access_control, "_check_dead_rules", lambda bf, n: list(dead_rules))
     monkeypatch.setattr(access_control, "_check_undefined_references", lambda bf, n: [])
+    monkeypatch.setattr(access_control, "_check_unused_filters", lambda bf, n: [])
     return access_control.run(_FakeSession())
 
 
@@ -298,6 +299,7 @@ class _RoutingSession:
 
 def _run_routing_with_devices(monkeypatch, present):
     monkeypatch.setattr(routing.snapshot, "device_names", lambda bf: present)
+    monkeypatch.setattr(routing, "_routing_hygiene", lambda bf: [])
     return routing.run(_RoutingSession())
 
 
@@ -543,6 +545,7 @@ def test_routing_vouches_for_the_present_device_beside_an_absent_one(monkeypatch
     and the present one's statements, which hold, still get an all-clear."""
     monkeypatch.setattr(routing.snapshot, "device_names", lambda bf: {"rtr-hq"})
     monkeypatch.setattr(routing, "_evaluate", lambda expected, traces: None)
+    monkeypatch.setattr(routing, "_routing_hygiene", lambda bf: [])
     results = routing.run(_HoldingRoutingSession())
     assert any(f["status"] == "error" for f in results), "the absent router is still reported"
     assert _vouched(results) == {"rtr-hq"}
