@@ -590,14 +590,20 @@ def test_a_bare_follow_up_with_no_reach_keyword_still_refuses():
     # above: not text that failed to resolve, but a real word that
     # case-collided with the back-reference set after lowercasing.
     "Can IT reach 10.10.10.5?",
+    # The mirror image, destination side -- found by review (@ARSH871-bot,
+    # round three). _is_destination_back_reference() had the identical gap
+    # the source side was fixed for above; "Can rtr-us5 reach IT?" matched
+    # _DESTINATION_BACK_REFERENCES the same way "...reach it?" does.
+    "Can rtr-us5 reach IT?",
 ])
 def test_a_named_but_unresolvable_segment_still_refuses_even_with_previous(
         question):
-    """THE ONES ARSH'S REVIEW FOUND, across two rounds. Each of these names
+    """THE ONES ARSH'S REVIEW FOUND, across three rounds. Each of these names
     something -- a plain-English name, a typo'd device, a malformed
     address, or a real word that happens to case-collide with a
-    back-reference -- and none of them is a genuine reference to the last
-    turn. All must refuse exactly as they would with no `previous`, never
+    back-reference, on either side -- and none of them is a genuine
+    reference to the last turn. All must refuse exactly as they would with
+    no `previous`, never
     silently answer using the last turn's entity."""
     session = _session_with_devices({"rtr-us5"})
     previous = _resolved_entities("rtr-us5", "10.10.10.5")

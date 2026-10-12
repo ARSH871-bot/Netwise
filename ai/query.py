@@ -354,6 +354,29 @@ def _strip_back_reference_filler(text: str) -> str:
     return stripped.strip()
 
 
+def _is_literally_the_word_IT(text: str) -> bool:
+    """True if `text` contains the literal, all-caps word "IT" -- the
+    department, never the pronoun "it" (found by review, @ARSH871-bot).
+
+    SHARED BY BOTH SIDES ON PURPOSE (round three, same reviewer). The
+    source side carried this exact check alone first; the destination side
+    had the identical gap the whole time, because the check lived as a
+    private copy inside one function rather than something both had to
+    call. "Can rtr-us5 reach IT?" matched `_DESTINATION_BACK_REFERENCES`
+    the same way "Can rtr-us5 reach it?" does, answered with the previous
+    turn's address instead of refusing -- the 27 Sep shape, a third time,
+    reached through the one side nothing had fixed yet. One helper both
+    `_is_source_back_reference()` and `_is_destination_back_reference()`
+    call is what makes a fourth repeat of this structurally impossible
+    rather than merely unlikely.
+
+    Checked on the RAW text, case-sensitively, before any lowercasing
+    happens in either caller, so the literal pronoun "it" is always
+    untouched and only the all-caps department name is excluded.
+    """
+    return bool(re.search(r"\bIT\b", text))
+
+
 def _is_source_back_reference(source_text: str) -> bool:
     """True only for a closed set of literal back-references ("it", "that
     device", ...), never for text that merely failed to name a real device.
@@ -361,16 +384,10 @@ def _is_source_back_reference(source_text: str) -> bool:
     must-refuse example) are both real text that named something -- neither
     is in the set, so neither is treated as a reference to the last turn.
 
-    "IT", THE DEPARTMENT, IS NOT THE PRONOUN "it" (found by review,
-    @ARSH871-bot). The lowercase comparison below means "Can IT reach
-    10.10.10.5?" would otherwise match the set the same way "Can it reach
-    ..." does -- the 27 Sep shape again, a word that names something real,
-    answered with the previous turn's entity instead of refusing. Checked
-    on the RAW text, case-sensitively, before any lowercasing happens, so
-    the literal pronoun "it" is untouched and only the all-caps department
-    name is excluded.
+    See _is_literally_the_word_IT() for why "IT" the department is excluded
+    before anything else here runs.
     """
-    if re.search(r"\bIT\b", source_text):
+    if _is_literally_the_word_IT(source_text):
         return False
     stripped = _SOURCE_BACK_REFERENCE_LEAD.sub("", source_text).strip().lower()
     stripped = _strip_back_reference_filler(stripped)
@@ -384,6 +401,10 @@ def _is_destination_back_reference(destination_text: str) -> bool:
     last turn's destination, and must still refuse rather than silently
     substitute a different address than the one the user typed.
 
+    See _is_literally_the_word_IT() for why "IT" the department is excluded
+    before anything else here runs -- this side had the same gap the
+    source side was fixed for in round two, found in round three.
+
     BELT AND BRACES, NOT A GAP (noted in review, @ARSH871-bot). No member
     of _DESTINATION_BACK_REFERENCES itself contains a digit, so the set
     lookup below would already reject anything IP-shaped on its own --
@@ -394,6 +415,8 @@ def _is_destination_back_reference(destination_text: str) -> bool:
     depth, not duplication" reasoning the duplicate-id guard in
     analysis/findings.py already uses for itself.
     """
+    if _is_literally_the_word_IT(destination_text):
+        return False
     stripped = destination_text.strip().rstrip("?.!").strip().lower()
     if any(ch.isdigit() for ch in stripped):
         return False
