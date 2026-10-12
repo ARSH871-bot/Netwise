@@ -44,10 +44,10 @@ DEFAULT_HOLDOUT_PATH = (
 
 #: Acceptance criterion 3 of #346: "a documented threshold below which the
 #: deterministic fallback is preferred". Grounded in the first real
-#: measurement (see docs/evaluation.md Part 4): mean_accuracy 4.4,
-#: mean_usefulness 3.4 -- so these two numbers sit comfortably below the
-#: current measurement rather than just above it, which would make the
-#: threshold meaningless.
+#: measurement (see docs/evaluation.md Part 4), model-written entries only:
+#: mean_accuracy 4.25, mean_usefulness 3.25 -- so these two numbers sit
+#: comfortably below the current measurement rather than just above it,
+#: which would make the threshold meaningless.
 #:
 #: DELIBERATELY ON THE MEAN, NOT THE MINIMUM
 #:     A single low-scoring finding (AC-002, accuracy=2, #384) is treated

@@ -757,13 +757,13 @@ score. Same 1-5 scale as Part 3 (accuracy: does the text claim only what the
 evidence shows; usefulness: would this sentence alone tell someone who never
 read `evidence.detail` what is wrong).
 
-| id | accuracy | usefulness | note |
-|---|---|---|---|
-| RT-050 | 5 | 4 | Deterministic fallback, cannot be wrong by construction. |
-| AC-001 | 5 | 4 | Correct, no inversion. |
-| PC-001 | 5 | 4 | Regenerated post-#145: inversion gone. |
-| AC-002 | **2** | **2** | **Real defect, kept rather than re-rolled - see #384.** |
-| PC-005 | 5 | 3 | Regenerated post-#145: inversion gone. First-sentence phrasing still asks the reader to resolve an apparent contradiction before it resolves itself - a readability risk, not a false claim this time. |
+| id | source | accuracy | usefulness | note |
+|---|---|---|---|---|
+| RT-050 | fallback | 5 | 4 | Deterministic, cannot be wrong by construction - **reported separately below, not part of the model score.** |
+| AC-001 | model | 5 | 4 | Correct, no inversion. |
+| PC-001 | model | 5 | 4 | Regenerated post-#145: inversion gone. |
+| AC-002 | model | **2** | **2** | **Real defect, kept rather than re-rolled - see #384.** |
+| PC-005 | model | 5 | 3 | Regenerated post-#145: inversion gone. First-sentence phrasing still asks the reader to resolve an apparent contradiction before it resolves itself - a readability risk, not a false claim this time. |
 
 @ARSH871-bot @shubhamkataria2005 @SamikaPerera - a second independent rating
 on this set, the same way Part 3 grew from one rater to four, would turn this
@@ -777,9 +777,13 @@ python -m tools.explanation_quality
 ```
 
 ```
-5 findings, 5 ratings
-accuracy:   mean 4.40  min 2
-usefulness: mean 3.40  min 2
+4 model-written findings, 4 ratings
+accuracy:   mean 4.25  min 2
+usefulness: mean 3.25  min 2
+
+fallback-sourced (not scored against the threshold - cannot be wrong by
+construction):
+  RT-050   accuracy 5.0  usefulness 4.0  (1 rating(s))
 ```
 
 **Published, and pinned in `tests/test_explanation_quality.py`** so CI
@@ -794,9 +798,27 @@ the same input always produces the same number.
 alongside a minimum rather than the mean alone - for the same reason the
 controls table earlier in this document separates "checked clean" from
 "could not check" instead of reporting one combined pass rate: a single
-figure here would have hidden `AC-002`'s accuracy=2 behind four findings at
-5, printing a reassuring 4.4 while one finding in the set is a confirmed,
-filed defect.
+figure here would have hidden `AC-002`'s accuracy=2 behind three other
+model-written findings at 5, printing a reassuring 4.25 while one finding
+in the set is a confirmed, filed defect.
+
+> **CORRECTED IN REVIEW, 11-12 October (@ARSH871-bot).** This section
+> originally scored all 5 findings together - 4.40/3.40, RT-050 folded in
+> with the four model-written ones. That let a held-out set with **no
+> model output at all** pass the threshold: five copies of RT-050's rating
+> alone score 5.00/4.00, comfortably above 4.0/3.0, having said nothing
+> about whether the model is any good. `EXPLANATION_QUALITY_THRESHOLD`
+> exists to judge the model specifically, and a fallback-sourced capture
+> cannot be wrong by construction, so it cannot speak to that question -
+> the same reasoning this section already applies to keeping accuracy and
+> usefulness separate, just not carried far enough the first time. RT-050
+> also carries a second, independent reason to stay out: it is
+> `status="error"`, and `web/main.py` never attaches an explanation to
+> anything but `status="found"`, so no user is ever shown it regardless of
+> source. The conclusion is unchanged - 4.25/3.25 still clears the
+> threshold - but the number it is measured from now actually measures
+> what the threshold exists to judge. RT-050 stays in the committed set and
+> is still reported, just on its own line rather than blended in.
 
 ### The documented threshold (acceptance criterion 3)
 
