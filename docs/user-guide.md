@@ -159,6 +159,15 @@ It never analyses against half a policy, and never guesses what a misspelt
 value meant: `"expected": "ALLOW"` used to load and report DNS as blocked on a
 config where it was allowed.
 
+**Rule numbers.** `number` is optional in `policy_compliance` and `routing`;
+leave it out and rules are numbered in file order. If you set it, it must be a
+whole number from 1 to that check's limit, and no two rules in a section may
+share one. A section may also hold no more rules than the limit. Today that is
+48 for `policy_compliance` and 49 for `routing` (each check's
+`HIGHEST_POLICY_NUMBER`), and the refusal always names the current figure. Past
+it, two findings would share an id, which Netwise used to report as an internal
+error of its own (#376). `access_control` rules take no number.
+
 The format is JSON. `docs/examples/policy.example.json` is the reference —
 it shows both rule kinds and a multi-arm rule, which are the two things that
 are not obvious. `docs/design/user-policy-format.md` is a **decisions**

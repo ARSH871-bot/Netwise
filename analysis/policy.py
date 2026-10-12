@@ -65,6 +65,8 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from analysis.findings import PREFIX_BY_CHECK
+
 #: The checks a policy file may configure. `risk` and `change_impact` are
 #: absent on purpose: one is a post-processor and the other compares two
 #: snapshots, and neither asserts anything a user would write down.
@@ -456,6 +458,74 @@ def _validate_entry(
     return normalised, renamed
 
 
+def _highest_numbers() -> Dict[str, int]:
+    """The highest `number` each numbered section can use (#376).
+
+    Read from the checks, which own the finding-id bands it comes from, at
+    CALL time. Importing `analysis.checks` at the top of this module would be
+    a cycle (they import this module), which is why _SECTION_REQUIRED is
+    declared by hand. By the time a policy is loaded both modules are
+    complete, so here the number can be read rather than copied.
+
+    `access_control` is absent on purpose: its entries carry no `number`. It
+    numbers every finding it emits from one counter, so a policy cannot make
+    two of them meet.
+    """
+    from analysis.checks import policy_compliance, routing
+
+    return {
+        "policy_compliance": policy_compliance.HIGHEST_POLICY_NUMBER,
+        "routing": routing.HIGHEST_POLICY_NUMBER,
+    }
+
+
+def _check_numbers(sections: Dict[str, List[Dict[str, Any]]]) -> None:
+    """Refuse any numbering that would make two findings share an id (#376).
+
+    MEASURED BEFORE THIS EXISTED, on real Batfish: one routing entry with
+    "number": 100 came out as RT-100 twice, beside a duplicate-address
+    finding; two policy_compliance entries both numbered 1 came out as PC-001
+    twice; 51 routing entries, one on an absent device, gave RT-050 twice.
+    The pipeline's duplicate-id guard caught each one -- and reported it as an
+    "Internal error", blaming Netwise for the user's file.
+
+    So three things are refused, all reported together: more entries than the
+    check can number, an explicit number that is not a whole number from 1 to
+    that limit, and two entries with the same number.
+    """
+    problems: List[str] = []
+    for section, highest in _highest_numbers().items():
+        entries = sections.get(section, [])
+        prefix = PREFIX_BY_CHECK[section]
+        if len(entries) > highest:
+            problems.append(
+                f"{section}: {len(entries)} entries, but one policy can hold at "
+                f"most {highest} -- each is reported as {prefix}-<number>, and "
+                f"higher numbers would meet ids this check uses for itself"
+            )
+        first_with: Dict[int, int] = {}
+        for index, entry in enumerate(entries, start=1):
+            if "number" not in entry:
+                continue
+            number = entry["number"]
+            where = _describe_entry(section, index, entry)
+            if isinstance(number, bool) or not isinstance(number, int) or not 1 <= number <= highest:
+                problems.append(
+                    f"{where}: number must be a whole number from 1 to {highest}, "
+                    f"got {number!r}"
+                )
+            elif number in first_with:
+                problems.append(
+                    f"{where}: number {number} is already used by {section} entry "
+                    f"{first_with[number]}, so both would be reported as "
+                    f"{prefix}-{number:03d}"
+                )
+            else:
+                first_with[number] = index
+    if problems:
+        raise PolicyError("; ".join(problems))
+
+
 def _assign_missing_numbers(
     sections: Dict[str, List[Dict[str, Any]]]
 ) -> List[str]:
@@ -576,6 +646,7 @@ def load_policy(data: Any) -> Policy:
             sections[section].append(validated)
             renamed.extend(entry_renamed)
 
+    _check_numbers(sections)
     assigned = _assign_missing_numbers(sections)
     return Policy(sections, renamed, assigned)
 
