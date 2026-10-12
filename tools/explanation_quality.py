@@ -91,23 +91,11 @@ def load_holdout(path: Path = DEFAULT_HOLDOUT_PATH) -> List[Dict[str, Any]]:
     return data["findings"]
 
 
-def score_holdout(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Aggregate accuracy/usefulness across every rating in `findings`.
-
-    Returns a dict with the overall mean and minimum of each dimension,
-    the number of findings and the total number of individual ratings
-    counted (more than one rater per finding is expected to grow over
-    time -- see docs/evaluation.md Part 4), and a per-finding breakdown
-    (that finding's own mean of each dimension) so a caller can see WHICH
-    finding is dragging the minimum down, not just that one is.
-
-    Raises ValueError on an empty `findings` list -- the same reasoning as
-    load_holdout()'s docstring: a mean of zero ratings is not a score of
-    zero, it is not a score at all, and must never print as one.
-    """
-    if not findings:
-        raise ValueError("cannot score an empty held-out set")
-
+def _aggregate(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The mean/min/per-finding arithmetic, shared by the model score and
+    the fallback report below. Does not raise on an empty list -- callers
+    decide what emptiness means for them (score_holdout() raises for the
+    model group; the fallback group is simply absent when there isn't one)."""
     accuracies: List[int] = []
     usefulnesses: List[int] = []
     per_finding: List[Dict[str, Any]] = []
@@ -136,12 +124,70 @@ def score_holdout(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def score_holdout(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Aggregate accuracy/usefulness across every MODEL-WRITTEN rating in
+    `findings`. Fallback-sourced captures (`captured_explanation_source`
+    other than `"model"`) are reported separately under the `"fallback"`
+    key, never blended into the headline numbers.
+
+    WHY THE SPLIT (found in review, @ARSH871-bot, on the first version of
+    this set)
+        `EXPLANATION_QUALITY_THRESHOLD` exists to answer one question: is
+        the MODEL good enough to prefer over the deterministic fallback.
+        `_fallback_error_explanation()` and `_fallback_plain_restatement()`
+        cannot be wrong in the way this threshold cares about -- they are
+        not generated, so "accuracy cannot be wrong by construction" (the
+        held-out set's own note on RT-050). Averaging a fallback capture's
+        score into the model's score lets a set with NO model output at
+        all pass the threshold -- measured directly: five copies of
+        RT-050's rating alone would score 5.00/4.00, comfortably above
+        4.0/3.0, having said nothing whatsoever about model quality. That
+        is a weaker claim standing in for a stronger one, the same failure
+        shape this module's own docstring already names for blending
+        accuracy into usefulness.
+
+        RT-050 has a second, independent reason to stay out of the model
+        score: it is `status="error"`, and `web/main.py` only attaches an
+        explanation to a `status="found"` finding (confirmed directly,
+        `web/main.py`'s explanation-attachment loop: `if finding.get(
+        "status") != "found": continue`) -- so no user is ever shown an
+        explanation for it regardless of what source produced the capture.
+
+    Raises ValueError if there are no model-written entries to score --
+    same reasoning as the empty-set case this function always refused: a
+    score with nothing behind it must never print as a number. A held-out
+    set consisting ENTIRELY of fallback captures hits this path too, which
+    is deliberate -- see the test for the shape of that case.
+    """
+    model_findings = [
+        f for f in findings
+        if f.get("captured_explanation_source") == "model"
+    ]
+    if not model_findings:
+        raise ValueError(
+            "cannot score: no model-written entries in this held-out set "
+            "(fallback-sourced captures cannot be wrong by construction, "
+            "so they say nothing about whether the model is good enough)"
+        )
+
+    result = _aggregate(model_findings)
+
+    fallback_findings = [
+        f for f in findings
+        if f.get("captured_explanation_source") != "model"
+    ]
+    if fallback_findings:
+        result["fallback"] = _aggregate(fallback_findings)
+
+    return result
+
+
 def _format_report(score: Dict[str, Any]) -> str:
     """Plain-text rendering of score_holdout()'s return value, for the
     command-line entry point below. Not used by the test suite, which
     asserts on the dict directly rather than parsing text back out of it."""
     lines = [
-        f"{score['n_findings']} findings, {score['n_ratings']} ratings",
+        f"{score['n_findings']} model-written findings, {score['n_ratings']} ratings",
         f"accuracy:   mean {score['mean_accuracy']:.2f}  min {score['min_accuracy']}",
         f"usefulness: mean {score['mean_usefulness']:.2f}  min {score['min_usefulness']}",
         "",
@@ -153,6 +199,18 @@ def _format_report(score: Dict[str, Any]) -> str:
             f"usefulness {row['mean_usefulness']:.1f}  "
             f"({row['n_ratings']} rating(s))"
         )
+    if "fallback" in score:
+        lines.append("")
+        lines.append(
+            f"fallback-sourced (not scored against the threshold -- "
+            f"cannot be wrong by construction):"
+        )
+        for row in score["fallback"]["per_finding"]:
+            lines.append(
+                f"  {row['id']:<8} accuracy {row['mean_accuracy']:.1f}  "
+                f"usefulness {row['mean_usefulness']:.1f}  "
+                f"({row['n_ratings']} rating(s))"
+            )
     return "\n".join(lines)
 
 

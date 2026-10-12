@@ -34,9 +34,10 @@ from tools.explanation_quality import (
 # ---------------------------------------------------------------------------
 
 
-def _finding(fid, accuracy_usefulness_pairs):
+def _finding(fid, accuracy_usefulness_pairs, source="model"):
     return {
         "id": fid,
+        "captured_explanation_source": source,
         "ratings": [
             {"rater": f"r{i}", "accuracy": acc, "usefulness": use}
             for i, (acc, use) in enumerate(accuracy_usefulness_pairs)
@@ -88,6 +89,58 @@ def test_scoring_an_empty_set_raises_rather_than_returning_a_fake_zero():
 
 
 # ---------------------------------------------------------------------------
+# Fallback captures must never count toward the model score (found in
+# review, @ARSH871-bot). A fallback-sourced explanation cannot be wrong by
+# construction, so a set with no model output at all must not be able to
+# pass the threshold that exists to judge the MODEL.
+# ---------------------------------------------------------------------------
+
+
+def test_a_holdout_set_of_only_fallback_entries_cannot_be_scored():
+    """THE CASE THE REVIEW NAMED DIRECTLY: five perfect fallback ratings
+    must not produce a passing model score -- there is no model score to
+    produce, and this must say so loudly rather than quietly report 5.0."""
+    findings = [
+        _finding("X-001", [(5, 5)], source="fallback"),
+        _finding("X-002", [(5, 5)], source="fallback"),
+    ]
+    with pytest.raises(ValueError):
+        score_holdout(findings)
+
+
+def test_fallback_entries_are_reported_separately_not_blended_in():
+    findings = [
+        _finding("MODEL-ONE", [(3, 3)], source="model"),
+        _finding("FALLBACK-ONE", [(5, 5)], source="fallback"),
+    ]
+    score = score_holdout(findings)
+    # The headline numbers are the model entry alone.
+    assert score["n_findings"] == 1
+    assert score["mean_accuracy"] == 3.0
+    assert {row["id"] for row in score["per_finding"]} == {"MODEL-ONE"}
+    # The fallback entry exists in its own section, not folded in.
+    assert score["fallback"]["n_findings"] == 1
+    assert score["fallback"]["mean_accuracy"] == 5.0
+    assert {row["id"] for row in score["fallback"]["per_finding"]} == {"FALLBACK-ONE"}
+
+
+def test_a_set_with_no_fallback_entries_has_no_fallback_key():
+    findings = [_finding("MODEL-ONE", [(5, 5)], source="model")]
+    score = score_holdout(findings)
+    assert "fallback" not in score
+
+
+def test_a_missing_source_field_is_treated_as_not_model():
+    """Defensive: an older or malformed record with no
+    captured_explanation_source at all must not be silently scored as if
+    it were model-written -- it lands in the fallback bucket, same as any
+    other non-"model" value."""
+    findings = [{"id": "X-001", "ratings": [{"rater": "r", "accuracy": 5, "usefulness": 5}]}]
+    with pytest.raises(ValueError):
+        score_holdout(findings)
+
+
+# ---------------------------------------------------------------------------
 # The real, committed held-out set -- the published number itself.
 # ---------------------------------------------------------------------------
 
@@ -101,17 +154,33 @@ def test_the_committed_holdout_set_loads():
 
 
 def test_the_published_score_matches_the_committed_ratings():
-    """Pins the current, real number. A change here means either the
-    holdout set or its ratings changed -- re-measure deliberately
-    (docs/evaluation.md Part 4), don't just update this assertion to make
-    it pass."""
+    """Pins the current, real number -- MODEL-WRITTEN entries only (RT-050
+    is fallback-sourced and reported separately, see
+    tools/explanation_quality.py's score_holdout() docstring). A change
+    here means either the holdout set or its ratings changed -- re-measure
+    deliberately (docs/evaluation.md Part 4), don't just update this
+    assertion to make it pass."""
     score = score_holdout(load_holdout())
-    assert score["n_findings"] == 5
-    assert score["n_ratings"] == 5
-    assert score["mean_accuracy"] == pytest.approx(4.4)
+    assert score["n_findings"] == 4
+    assert score["n_ratings"] == 4
+    assert score["mean_accuracy"] == pytest.approx(4.25)
     assert score["min_accuracy"] == 2
-    assert score["mean_usefulness"] == pytest.approx(3.4)
+    assert score["mean_usefulness"] == pytest.approx(3.25)
     assert score["min_usefulness"] == 2
+    assert {row["id"] for row in score["per_finding"]} == {
+        "AC-001", "PC-001", "AC-002", "PC-005",
+    }
+
+
+def test_rt_050_is_reported_as_fallback_not_scored_against_the_threshold():
+    """RT-050 is status="error" (never shown an explanation in the real
+    app -- see web/main.py's attachment loop) AND fallback-sourced (cannot
+    be wrong by construction). Both are reasons it must not count toward
+    whether the MODEL clears the threshold."""
+    score = score_holdout(load_holdout())
+    assert "RT-050" not in {row["id"] for row in score["per_finding"]}
+    assert score["fallback"]["n_findings"] == 1
+    assert score["fallback"]["per_finding"][0]["id"] == "RT-050"
 
 
 def test_the_low_scoring_finding_is_identifiable_in_the_breakdown():
