@@ -457,8 +457,8 @@ somewhere later reports it as agreed, sourced from nothing.
 | **Shubham** | `policy_compliance` shares the results list, and a new check changes what a scan's totals mean | ⬜ |
 | **Samika** | Wrote it; the dashboard and `analysis/report.py` render by check, and `risk` now carries a severity ceiling keyed on this name | ✅ |
 
-> **NOT RATIFIED — one of four, as of 6 October** (zero of four from 8
-> September to 6 October). Merging #304 means the
+> **NOT RATIFIED — one of four, as of 5 October** (zero of four from 8
+> September to 5 October). Merging #304 means the
 > code is worth having and is safe to sit inert. It does **not** mean the
 > amendment is agreed, and **`cve_mapping` must not be added to
 > `pipeline.CHECKS` until this table is full.**
