@@ -4,6 +4,11 @@
     "accuracy": "1 (poor) to 5 (excellent) -- does the text claim only what the finding's own evidence actually shows",
     "usefulness": "1 (poor) to 5 (excellent) -- would this sentence, alone, tell someone who has never read evidence.detail what is actually wrong"
   },
+  "captured_against": {
+    "_comment": "What produced every model-written explanation below. If ai/Modelfile's sha256 no longer matches this, the set is stale: re-capture and re-rate rather than editing the ratings in place (#346 review, @ARSH871-bot).",
+    "modelfile_sha256": "728bf3194f7a5f5d672c36480f3f93126753a83cda191bfc375b42eb81480e68",
+    "base_model": "llama3.2:3b"
+  },
   "findings": [
     {
       "id": "RT-050",
