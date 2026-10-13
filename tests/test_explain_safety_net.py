@@ -204,6 +204,62 @@ def test_returns_none_for_unrecognised_blocking_line_syntax():
     assert _compute_dead_rule_outcome(detail) is None
 
 
+# --- the dead line's own action, as well as the outcome (#384) -------------
+# Found live, not assumed: the original version of this function stated only
+# the OUTCOME, never what the dead line's own action actually IS. 3 of 8 live
+# generations on a real finding mischaracterised or were internally
+# inconsistent about it ("which is supposed to block traffic" for a line
+# whose real action is PERMIT) -- correct about the outcome, backwards about
+# the dead line's own stated action, a different fact.
+
+
+def test_the_dead_lines_own_action_is_stated_explicitly_permit():
+    """THE REASON THIS FIX EXISTS. A PERMIT line shadowed by a DENY line --
+    the dead line's own action must be named as PERMIT, not left for the
+    model to read off the raw evidence and risk getting backwards."""
+    detail = (
+        "Unreachable line: permit udp 10.10.10.0 0.0.0.255 host 218.8.104.58 "
+        "eq domain (action PERMIT). Blocked by: deny   ip 10.10.10.0 "
+        "0.0.0.255 any. Reason: BLOCKING_LINES"
+    )
+    outcome = _compute_dead_rule_outcome(detail)
+    assert outcome is not None
+    assert "own stated action is PERMIT" in outcome
+    assert "own stated action is DENY" not in outcome
+
+
+def test_the_dead_lines_own_action_is_stated_explicitly_deny():
+    """The mirror case -- a DENY line shadowed by a PERMIT line. The dead
+    line's own action must be named as DENY, not inferred as PERMIT just
+    because the real outcome happens to be 'permitted'."""
+    detail = (
+        "Unreachable line: deny   ip 1.128.0.0 0.0.255.255 2.128.0.0 "
+        "0.0.255.255 (action DENY). Blocked by: permit ip any "
+        "2.128.0.0 0.0.255.255. Reason: BLOCKING_LINES"
+    )
+    outcome = _compute_dead_rule_outcome(detail)
+    assert outcome is not None
+    assert "own stated action is DENY" in outcome
+    assert "own stated action is PERMIT" not in outcome
+
+
+def test_the_dead_lines_own_action_and_the_outcome_can_differ():
+    """The whole point: the dead line's own action and the real outcome are
+    two DIFFERENT facts, and a PERMIT line shadowed by a DENY line has them
+    disagree -- own action PERMIT, real outcome denied. Both must be
+    stated, not just whichever one the function used to consider more
+    important."""
+    detail = (
+        "Unreachable line: permit udp 10.10.10.0 0.0.0.255 host 218.8.104.58 "
+        "eq domain (action PERMIT). Blocked by: deny   ip 10.10.10.0 "
+        "0.0.0.255 any. Reason: BLOCKING_LINES"
+    )
+    outcome = _compute_dead_rule_outcome(detail)
+    assert outcome is not None
+    assert "own stated action is PERMIT" in outcome
+    assert "actually denied" in outcome
+
+
 # --- _compute_policy_outcome (#145) ---------------------------------------------
 # Regression coverage for the reasoning mistake found while independently
 # rating explanations for #90: the model attributed the wrong action to "the
