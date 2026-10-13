@@ -108,11 +108,12 @@ RUN IT
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from pybatfish.client.session import Session
 
 from analysis import findings
+from analysis import policy as policy_module
 from analysis.pipeline import connect, find_parse_problems, load_snapshot
 
 CHECK_NAME = "change_impact"
@@ -336,10 +337,147 @@ def _first_trace(traces: Any) -> str:
     return text[:160] if text else "(no trace)"
 
 
+# --- Every policy rule, before and after (#323, US-31) -----------------------
+#
+# WHY THIS EXISTS
+#     Change impact and policy compliance both existed and never met. The two
+#     questions above say what traffic MOVED. They do not say which of the
+#     user's own rules the move breaks or repairs -- and an engineer editing a
+#     firewall cares about every rule they have, not the one flow they were
+#     thinking about.
+#
+# WHAT IT DOES
+#     Each policy_compliance rule is asked the same Batfish question the check
+#     asks (`policy_compliance._search`, so the two can never disagree about
+#     what a breach is), once against each snapshot. Four outcomes per rule:
+#
+#         before    after
+#         clean     clean     unchanged
+#         breached  breached  unchanged   -- still broken, not caused by this
+#         breached  clean     RESOLVED    -- this change fixes a breach
+#         clean     breached  CREATED     -- this change causes a breach
+#
+#     A change that resolves one breach and creates another reports BOTH,
+#     because a net count of zero is exactly how a swap hides.
+#
+# DIRECTION, IN THIS MODULE'S EXISTING TERMS
+#     "opening" means more traffic permitted; "tightening" means less. A
+#     prohibition is breached when forbidden traffic is PERMITTED, so creating
+#     that breach is opening and resolving it is tightening. A requirement is
+#     breached when required traffic is DENIED, so it is the other way round.
+#     Opening is rated high and tightening medium, for the reason given at
+#     _OPENING_SEVERITY: nothing breaks when a hole opens, so nobody looks.
+
+_RULE_DIRECTION = {
+    # (kind, created?) -> direction
+    ("prohibition", True): "opening",
+    ("prohibition", False): "tightening",
+    ("requirement", True): "tightening",
+    ("requirement", False): "opening",
+}
+
+
+def _rule_breached(bf: Any, snapshot_name: str, rule: Dict[str, Any]) -> bool:
+    """Is this rule breached in this snapshot? Raises if it cannot be asked.
+
+    Uses the check's own query and its own kind-to-action mapping, so a
+    rule means here exactly what it means in a scan.
+    """
+    from analysis.checks import policy_compliance as pc
+
+    bf.set_snapshot(snapshot_name)
+    action = pc.ACTION_BY_KIND[rule["kind"]]
+    for headers in rule["queries"]:
+        if pc._search(bf, rule["node"], rule["filter"], action, headers):
+            return True
+    return False
+
+
+def _rule_label(rule: Dict[str, Any]) -> str:
+    number = rule.get("number")
+    head = f"policy rule {number}" if number is not None else "a policy rule"
+    return f"{head} ({rule['description']})" if rule.get("description") else head
+
+
+def _policy_change_findings(bf: Any, number: int) -> Tuple[List[Dict[str, Any]], List[str], int]:
+    """Run every applicable policy rule against both snapshots.
+
+    Returns (findings, unchanged, number). `unchanged` is returned rather than
+    turned into a card here, because analyse_change() already owns the one
+    `CH-000` this module emits, and two of them would collide on id.
+    """
+    from analysis.checks import policy_compliance as pc
+
+    rules, policy_label, _ = pc.rules_in_use()
+    if not rules:
+        return [], [], number
+
+    results: List[Dict[str, Any]] = []
+    unchanged: List[str] = []
+    not_compared: List[str] = []
+
+    for rule in rules:
+        try:
+            before = _rule_breached(bf, BEFORE_SNAPSHOT, rule)
+            after = _rule_breached(bf, AFTER_SNAPSHOT, rule)
+        except Exception as error:
+            # A rule we could not ask is a blind spot, never "unchanged" (F-4).
+            not_compared.append(f"{_rule_label(rule)}: {findings.describe_error(error)}")
+            continue
+
+        if before == after:
+            state = "still breached" if before else "holds"
+            unchanged.append(f"{rule.get('number', '?')} ({state})")
+            continue
+
+        created = after and not before
+        direction = _RULE_DIRECTION[(rule["kind"], created)]
+        if number >= ERROR_NUMBER_OFFSET:
+            not_compared.append(f"{_rule_label(rule)}: more rule changes than finding numbers")
+            continue
+        results.append(
+            findings.make_finding(
+                check=CHECK_NAME,
+                severity=(rule.get("violation_severity", "high") if created else "low"),
+                device=rule["node"],
+                summary=(
+                    f"This change BREAKS {_rule_label(rule)}"
+                    if created else
+                    f"This change FIXES {_rule_label(rule)}"
+                ),
+                detail=(
+                    f"{rule['kind']} on {rule['node']} filter {rule['filter']}: "
+                    f"{'held before, breached after' if created else 'breached before, holds after'}. "
+                    f"Direction: {direction}. "
+                    + (f"Violation if applied: {rule.get('violation_summary')}." if created
+                       else "The breach this rule reports is gone in the proposed config.")
+                ),
+                source=f"{policy_label}; rule {rule.get('number', '?')}",
+                status="found",
+                number=number,
+            )
+        )
+        number += 1
+
+    if not_compared:
+        results.append(
+            findings.error_finding(
+                check=CHECK_NAME,
+                device="unknown",
+                summary=f"{len(not_compared)} policy rule(s) could not be compared across the change",
+                detail="; ".join(not_compared),
+                source=policy_label,
+                number=SKIPPED_NUMBER + 1,
+            )
+        )
+    return results, unchanged, number
+
+
 def analyse_change(
     before_dir: str | Path,
     after_dir: str | Path,
     host: "str | None" = None,
+    policy: Any = None,
 ) -> List[Dict[str, Any]]:
     """Compare two config folders and return F-1 findings describing the change.
 
@@ -446,6 +584,33 @@ def analyse_change(
         return results
     results.extend(flow_changes)
 
+    # Every policy rule, before and after (#323). Installed the same way
+    # analyse() installs it and cleared in a `finally`, so a policy never
+    # outlives the call that supplied it.
+    policy_module.set_active_policy(policy)
+    try:
+        rule_changes, unchanged, number = _policy_change_findings(bf, number)
+    except Exception as error:
+        # Same rule as the reachability stage: what was proved above stands,
+        # and the user is told what could not be checked (#22).
+        results.extend(
+            _error(
+                summary="The policy comparison could not run",
+                detail=findings.describe_error(error),
+                source=f"{before_dir} -> {after_dir}",
+            )
+        )
+        return results
+    finally:
+        policy_module.clear_active_policy()
+    results.extend(rule_changes)
+
+    unchanged_note = (
+        " Policy rules with the same verdict before and after, rule (state): "
+        + ", ".join(unchanged) + "."
+        if unchanged else ""
+    )
+
     if not results:
         return [
             findings.no_issues_finding(
@@ -457,23 +622,45 @@ def analyse_change(
                     "flow reaches a destination it could not reach before. This "
                     "says the change moved nothing; it does not say the proposed "
                     "config is free of problems -- run the audit for that."
+                    + unchanged_note
                 ),
                 source=f"{before_dir} -> {after_dir}",
                 number=0,
             )
         ]
 
+    if unchanged:
+        # US-31 asks for a direction per rule, and "unchanged" is one. Only
+        # emitted here, alongside real changes, so it can never be mistaken
+        # for the all-clear above -- and it takes CH-000 only because that
+        # all-clear is, by construction, not in this list.
+        results.append(
+            findings.no_issues_finding(
+                check=CHECK_NAME,
+                device="unknown",
+                summary=f"{len(unchanged)} policy rule(s) unchanged by this edit",
+                detail=(
+                    "Same verdict before and after, so this change neither "
+                    "causes nor fixes them." + unchanged_note
+                ),
+                source=f"{before_dir} -> {after_dir}",
+                number=0,
+            )
+        )
     return results
 
 
 def main() -> None:
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4):
         sys.exit(
-            "usage: python -m analysis.change_impact <before-folder> <after-folder>\n"
+            "usage: python -m analysis.change_impact <before-folder> <after-folder> [policy.json]\n"
             "example: python -m analysis.change_impact "
             "tests/fixtures/rtr-us5-secure tests/fixtures/rtr-us5-insecure"
         )
-    results = analyse_change(sys.argv[1], sys.argv[2])
+    policy = None
+    if len(sys.argv) == 4:
+        policy = policy_module.load_policy_file(sys.argv[3])
+    results = analyse_change(sys.argv[1], sys.argv[2], policy=policy)
     print(json.dumps(results, indent=2))
     print()
     for status in ("found", "none", "error"):
