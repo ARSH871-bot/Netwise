@@ -171,5 +171,5 @@ def test_it_stays_in_the_checked_nothing_found_section(rendered):
     Moving it would make the section heading disagree with the tile above,
     which is the confusion this issue is about, relocated rather than fixed.
     """
-    assert _card(rendered, "PC-000")["section"] == "Checked — nothing found"
-    assert _card(rendered, "AC-000")["section"] == "Checked — nothing found"
+    assert _card(rendered, "PC-000")["section"] == "Checked -- nothing found"
+    assert _card(rendered, "AC-000")["section"] == "Checked -- nothing found"
