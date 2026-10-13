@@ -325,6 +325,85 @@ def _compute_expected_actual_outcome(detail: str) -> Optional[str]:
 
 
 # ------------------------------------------------------------------------------
+# 1c-2. Deterministic routing-assertion outcome computation (US-62, #395)
+# ------------------------------------------------------------------------------
+
+# Matches evidence.detail EXACTLY as produced by
+# analysis.checks.routing.py's assertion loop:
+#   "Expected REACHABLE for a flow from <src> to <dst>, but traceroute ended
+#    in <DISPOSITION>. Path: ..."
+#   "Expected UNREACHABLE for a flow from <src> to <dst>, but traceroute
+#    unexpectedly succeeded: <DISPOSITION>. Path: ..."
+# Deliberately narrow, same discipline as the patterns above -- this must
+# only match the two shapes _evaluate() in routing.py actually produces.
+_ROUTING_ASSERTION_DETAIL_PATTERN = re.compile(
+    r"Expected (?P<expected>REACHABLE|UNREACHABLE) for a flow from "
+    r"(?P<src>\S+) to (?P<dst>\S+), but "
+    r"(?:traceroute ended in (?P<failed_disposition>\w+)"
+    r"|traceroute unexpectedly succeeded: (?P<succeeded_disposition>\w+))"
+)
+
+
+def _compute_routing_outcome(detail: str) -> Optional[str]:
+    """For a routing-assertion finding, state -- in unambiguous words --
+    which direction the flow runs and what actually happens to it, rather
+    than asking the model to keep both straight itself.
+
+    WHY THIS EXISTS (found live, not assumed)
+        Live-tested against the local model before adding this, the same
+        way _compute_expected_actual_outcome() was: six runs of a real
+        finding in this shape (`Expected REACHABLE for a flow from
+        10.10.10.5 to 10.20.20.5, but traceroute ended in NO_ROUTE`).
+
+        The reachability direction itself (reachable vs not) was never
+        inverted in those six runs -- but 3 of 6 inverted something else:
+        the flow's SOURCE and DESTINATION. "The HQ network cannot reach the
+        branch network" (correct) became "The HQ network cannot be REACHED
+        FROM the branch network" in half the runs -- which describes the
+        opposite flow, branch-to-HQ rather than HQ-to-branch. Neither IP
+        address was invented, so `_names_an_invented_fact()` would not catch
+        it: both addresses are real, just attributed to the wrong role.
+
+        This is a different failure from the "which of two states is which"
+        shape #52/#145/_compute_expected_actual_outcome() guard against --
+        here both sides are directions of the SAME relationship (a flow
+        from A to B), not two different claims about one thing. So the
+        computed fact below states the direction explicitly ("the flow FROM
+        src TO dst, not the reverse") as well as the disposition, rather
+        than only the disposition.
+
+    Returns a plain-English statement naming the flow's direction and its
+    real disposition explicitly, or None if `detail` is not in the exact
+    shape routing.py's assertion loop produces -- nothing to compute from,
+    so the model gets no extra help and reasons from the raw finding alone.
+    """
+    match = _ROUTING_ASSERTION_DETAIL_PATTERN.search(detail)
+    if not match:
+        return None
+
+    expected = match.group("expected")
+    src, dst = match.group("src"), match.group("dst")
+    if match.group("failed_disposition"):
+        disposition = match.group("failed_disposition")
+        return (
+            f"the flow FROM {src} TO {dst} -- that direction, not the "
+            f"reverse -- currently does NOT reach {dst}; the trace ended in "
+            f"{disposition}. That is the real, observed outcome. The "
+            f"statement requires this flow to be {expected}; the network's "
+            f"current routing is what disagrees with that requirement, not "
+            f"the requirement itself."
+        )
+    disposition = match.group("succeeded_disposition")
+    return (
+        f"the flow FROM {src} TO {dst} -- that direction, not the "
+        f"reverse -- currently DOES reach {dst} ({disposition}). That is "
+        f"the real, observed outcome. The statement requires this flow to "
+        f"be {expected}; the network's current routing is what disagrees "
+        f"with that requirement, not the requirement itself."
+    )
+
+
+# ------------------------------------------------------------------------------
 # 1d. Deterministic remediation text (#221)
 #
 # A DIFFERENT QUESTION FROM SECTIONS 1a-1c ABOVE
@@ -624,17 +703,18 @@ def _build_prompt(finding: Dict[str, Any]) -> str:
        example's answer almost verbatim for an unrelated finding, rather
        than reasoning about the finding it was actually given.
 
-    2. If one of the three deterministic outcome functions can compute the
+    2. If one of the four deterministic outcome functions can compute the
        real answer from evidence.detail -- _compute_dead_rule_outcome() for
        a dead-ACL-rule finding, _compute_policy_outcome() for a
-       policy_compliance finding (#145), or _compute_expected_actual_outcome()
-       for an access_control policy-statement finding -- that computed fact,
-       labelled as already-verified. See each function's docstring for why
-       it exists and how confident it has to be before it says anything at
-       all. The three never more than one matches at once: each check
-       produces its own exact evidence.detail shape, so trying the next one
-       only when an earlier one returns None does not risk masking one with
-       another.
+       policy_compliance finding (#145), _compute_expected_actual_outcome()
+       for an access_control policy-statement finding, or
+       _compute_routing_outcome() for a routing-assertion finding (#395) --
+       that computed fact, labelled as already-verified. See each
+       function's docstring for why it exists and how confident it has to
+       be before it says anything at all. The four never more than one
+       matches at once: each check produces its own exact evidence.detail
+       shape, so trying the next one only when an earlier one returns None
+       does not risk masking one with another.
     """
     parts = [
         "Explain ONLY the finding below. Do not reuse any wording from the "
@@ -648,6 +728,7 @@ def _build_prompt(finding: Dict[str, Any]) -> str:
         _compute_dead_rule_outcome(detail)
         or _compute_policy_outcome(detail)
         or _compute_expected_actual_outcome(detail)
+        or _compute_routing_outcome(detail)
     )
     if computed_outcome is not None:
         # Deliberately NOT a distinctive, quotable label like "IMPORTANT
