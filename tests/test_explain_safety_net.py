@@ -805,6 +805,28 @@ def test_prompt_includes_the_computed_outcome_for_a_testfilters_finding():
     assert "PERMIT" in prompt
 
 
+def test_prompt_includes_the_computed_outcome_for_a_routing_finding():
+    """US-62/#395 -- a routing assertion gets the same deterministic help as
+    the other three shapes. Caught by mutation testing: removing
+    _compute_routing_outcome() from _build_prompt()'s chain broke nothing
+    in the direct unit tests above, because those call the function
+    directly rather than through the chain it is supposed to be wired
+    into -- this is the test that actually exercises the wiring."""
+    finding = {
+        "id": "RT-001",
+        "evidence": {
+            "detail": (
+                "Expected REACHABLE for a flow from 10.10.10.5 to "
+                "10.20.20.5, but traceroute ended in NO_ROUTE. Path: rtr-hq"
+            )
+        },
+    }
+    prompt = _build_prompt(finding)
+    assert "already verified" in prompt.lower()
+    assert "10.10.10.5" in prompt
+    assert "10.20.20.5" in prompt
+
+
 def test_prompt_tells_the_model_not_to_echo_the_computed_fact_as_a_label():
     """Regression coverage for a real failure: the model echoed the label
     on the injected fact verbatim as its own paragraph instead of folding
