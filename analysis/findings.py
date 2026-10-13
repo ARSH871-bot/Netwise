@@ -33,7 +33,8 @@ PLUS ONE UTILITY, which is not a finding builder:
     dashboard shows the client. See the function for the measurements.
 """
 
-from typing import Any, Dict
+import ipaddress
+from typing import Any, Dict, Optional
 
 # --- The allowed values, taken verbatim from docs/finding-format.md ---------
 
@@ -120,6 +121,53 @@ def describe_error(error: Exception, limit: int = 200) -> str:
     return text[: limit - 1] + "…"
 
 
+#: A-3's `subject` -- the traffic a finding is about, as facts rather than
+#: prose (#238). Every key optional; a check fills what it actually knows.
+#:
+#: A CLOSED set, deliberately. A-3 says `subject` carries "no new vocabulary",
+#: and a free-form dict would let `"dest"` and `"dst"` both appear -- which
+#: would make two findings about the same address fail to join, silently.
+#: That is exactly the failure A-3 was raised to remove from regex parsing,
+#: and it would come back through a typo. Add a key here only with a consumer
+#: that needs it.
+SUBJECT_KEYS = ("src", "dst", "srcPort", "dstPort", "protocol")
+
+
+def _validate_subject(subject: Any) -> Dict[str, Any]:
+    """Return a checked copy of `subject`, or raise ValueError.
+
+    Fails loudly for the same reason make_finding() does: a malformed join key
+    is a chain that never forms, and nothing downstream would say so.
+    """
+    if not isinstance(subject, dict):
+        raise ValueError(f"subject must be a dict, got {type(subject).__name__}")
+    if not subject:
+        raise ValueError(
+            "subject must not be empty -- a check with nothing to put in it "
+            "leaves it out (A-3)"
+        )
+    unknown = sorted(set(subject) - set(SUBJECT_KEYS))
+    if unknown:
+        raise ValueError(f"subject has unknown key(s) {unknown}; allowed: {SUBJECT_KEYS}")
+    checked: Dict[str, Any] = {}
+    for key, value in subject.items():
+        if key in ("src", "dst"):
+            try:
+                ipaddress.ip_network(str(value), strict=False)
+            except ValueError:
+                raise ValueError(f"subject[{key!r}] must be an address or CIDR, got {value!r}")
+            checked[key] = str(value)
+        elif key in ("srcPort", "dstPort"):
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 65535:
+                raise ValueError(f"subject[{key!r}] must be a port from 0 to 65535, got {value!r}")
+            checked[key] = value
+        else:  # protocol
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"subject['protocol'] must be a protocol name, got {value!r}")
+            checked[key] = value.strip().lower()
+    return checked
+
+
 def make_finding(
     *,  # keyword-only: with eight fields, positional arguments are a trap
     check: str,
@@ -130,6 +178,7 @@ def make_finding(
     source: str,
     status: str,
     number: int,
+    subject: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build ONE finding in the F-1 shape, validating every field.
 
@@ -143,6 +192,10 @@ def make_finding(
         source:   where the proof came from, "filename:line" where possible
         status:   "found" | "none" | "error"
         number:   sequence number within this check; 0 for sentinels
+        subject:  OPTIONAL (A-3). The traffic this finding is about, as
+                  machine-readable facts -- see SUBJECT_KEYS. Omitted from the
+                  finding entirely when not given, so no existing finding
+                  changes shape. Never a replacement for `detail`.
 
     Raises:
         ValueError: if any field is outside the agreed vocabulary. This is
@@ -158,7 +211,7 @@ def make_finding(
     if not summary:
         raise ValueError("summary is required -- it is what the user reads first")
 
-    return {
+    finding = {
         "id": f"{PREFIX_BY_CHECK[check]}-{number:03d}",
         "check": check,
         "severity": severity,
@@ -167,6 +220,13 @@ def make_finding(
         "evidence": {"detail": detail, "source": source},
         "status": status,
     }
+    # ABSENT, not None. A-3 says a check that cannot fill `subject` truthfully
+    # leaves it out, and a consumer must handle its absence -- so "no subject"
+    # is spelled as no key. A `"subject": None` on every finding would change
+    # the shape of all of them for a field nobody has populated yet.
+    if subject is not None:
+        finding["subject"] = _validate_subject(subject)
+    return finding
 
 
 def no_issues_finding(
