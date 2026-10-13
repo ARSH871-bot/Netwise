@@ -148,14 +148,36 @@ _DEAD_RULE_DETAIL_PATTERN = re.compile(
 
 def _compute_dead_rule_outcome(detail: str) -> Optional[str]:
     """For a dead-ACL-rule finding, compute what actually happens to
-    traffic matching the dead line -- rather than asking the model to
-    infer it from the raw text, which measurably goes wrong sometimes.
+    traffic matching the dead line, AND what the dead line's own action
+    actually is -- rather than asking the model to infer either from the
+    raw text, which measurably goes wrong sometimes.
 
     The rule: whichever line SHADOWS the dead one decides the outcome for
     matching traffic, because it is evaluated first. A dead line's own
     action never takes effect, regardless of what it says.
 
-    Returns a plain-English statement of the real outcome, or None if:
+    THE DEAD LINE'S OWN ACTION IS A SEPARATE FACT FROM THE OUTCOME (#384)
+        The original version of this function stated only the OUTCOME
+        (what happens to matching traffic) and deliberately did not state
+        what the dead line's own action IS -- on the reasoning that it
+        "never takes effect, regardless of what it says", so stating it
+        seemed unnecessary. Found live, not assumed: `(action PERMIT)` is
+        shown in the raw evidence text either way, and sometimes the model
+        mischaracterised a PERMIT line as a block/deny rule anyway, even
+        though it correctly stated the OUTCOME was denied -- e.g. "the
+        device's ACL rule, which is supposed to block traffic... never
+        actually takes effect". Correct about the outcome, backwards about
+        what the dead line itself says.
+
+        Re-measured on the same real finding immediately before this fix:
+        3 of 8 live generations mischaracterised or were internally
+        inconsistent about the dead line's own action (worse than the 1-in-8
+        originally reported). Fixed the same way the other computed-fact
+        functions already handle a two-sided fact: state both sides
+        explicitly, not just the one judged most important.
+
+    Returns a plain-English statement of the real outcome AND the dead
+    line's own stated action, or None if:
       - `detail` is not in the exact shape access_control.py's dead-rule
         check produces (nothing to compute from), or
       - more than one blocking line is named and they do not all agree on
@@ -187,11 +209,14 @@ def _compute_dead_rule_outcome(detail: str) -> Optional[str]:
         return None  # blocking lines disagree -- not confident enough to state one outcome
 
     outcome = outcomes.pop()
+    dead_action = match.group("dead_action")
     return (
-        f"traffic matching the unreachable line's pattern is actually "
-        f"{outcome}, because the blocking rule is evaluated first and "
-        f"decides instead. The unreachable line's own action never takes "
-        f"effect, regardless of what it says."
+        f"the unreachable line's own stated action is {dead_action} -- that "
+        f"is what it says, not what happens. What actually happens is "
+        f"different: traffic matching the unreachable line's pattern is "
+        f"actually {outcome}, because the blocking rule is evaluated first "
+        f"and decides instead. The unreachable line's own action never "
+        f"takes effect, regardless of what it says."
     )
 
 
