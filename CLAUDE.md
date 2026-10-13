@@ -716,6 +716,7 @@ project's recurring failure family arriving through process rather than code.
 | **`change_impact`** | Shubham | Done (#140, merged 17 August) — `analysis/change_impact.py`, `analyse_change(before, after)`. Shape C: **not** in `CHECKS`, and both the module docstring and the registry comment say so. Pairs `compareFilters` (which ACL *lines* moved) with `differentialReachability` (which *traffic* changed fate), because a changed line that moves no traffic is noise and moved traffic with no changed line is the case a filter diff alone misses. Direction-aware per `docs/policy-rules.md`: opening `high`, tightening `medium`, both reported |
 | **A user policy reaching a check** | Arsh | Done (#181, merged 28 August) — `analysis/policy.py` loads and validates it; `policy_compliance` reads it via `rules_in_use()`, keyed on `active_policy() is None` rather than on emptiness. Measured below: policy-driven detections on a stranger's network go 3 → 8 |
 | **Draft a policy from your own config** | Arsh | Done (#326) — `analysis/draft_policy.py`, `/api/policy/draft`, a button under the policy picker. One `policy_compliance` rule per line of each applied filter, citing the file and line Batfish records for it. Each rule is checked with the same `searchFilters` question the check will ask, so a line an earlier line partly decides is listed as not drafted, with Batfish's example packet, rather than copied. `kind` and `violation_severity` are left as `<FILL IN ...>`, and `analysis/policy.py` refuses the file until they are decided and its `draft` block is deleted: accepted as it stands, a draft passes on `rtr-us5-insecure` |
+| **What Netwise could not read** | Arsh | Done (#317) — `analysis/parse_coverage.py`. A partly parsed file's "Results may be incomplete" finding now says how many configuration lines Batfish did not recognise, by kind and line number, from Batfish's own `parseWarning`. On `vendor-asa`: 5 of 16, including the `access-group` line behind #373. Comment and blank lines are left out of the count only where the format's marker is known; "31 of 36" would have overstated it. Lives in the finding's detail, so it reaches every surface without an F-1 change |
 | **AI: natural-language questions, on screen** | Ankeet + Samika | Done — `ai/query.py` + `/api/ask` (#66), crossing the ACL since #108/#141, and the chat pane is wired (`app.js` `chat-form` → `fetch("/api/ask")`). `question_understood` is rendered, which §7c says is the safety argument, not decoration |
 | **The AI byline tells the truth** | Samika | Done (#109, closed) — `app.js` branches on `explanation_source === "model"`, and `style.css` gives fallback text its own byline, *"Plain-English summary"*, in neutral grey rather than the violet reserved for model output. Written `=== "model"` so an absent or unexpected value claims LESS, never more |
 | **Findings that can leave the screen** | Arsh | Done (#233, merged 28 August) — `analysis/report.py`, `/api/report?format=html\|csv`. Pure function, no web import; "could not check" is rendered FIRST and is present even when empty |
@@ -998,16 +999,16 @@ Nothing in Layer 1 or 2 is now unjoined. What remains is features, not plumbing.
   instead of silently mistranslating them. See §7. What remains is a **client
   question, not a decision of ours**: whether the real export uses `quick`.
 
+- **Parse strictness** (#217, closed 26 August by `537ac7d`). `analyse()` runs
+  the checks on a `PARTIALLY_UNRECOGNIZED` file and attaches a
+  `status="error"` "Results may be incomplete" finding; `find_parse_problems()`
+  stays strict, for `change_impact` only. Since #317 that finding says how many
+  configuration lines Batfish did not recognise, and which.
+
+  **This sat under "Open decisions" for six weeks after #217 settled it**,
+  still describing the fix as future work. Moved here on 12 October, while
+  #317 was changing the finding it describes.
+
 ### Open decisions — do not settle these alone
 
-1. **Parse strictness.** *(Was item 2; item 1 is settled — see below.)*
-   `find_parse_problems()` currently treats any status
-   other than `PASSED` as fatal, including `PARTIALLY_UNRECOGNIZED`. Safe for
-   test configs, likely too strict for real ones. The fix is to run the checks
-   and attach a loud "results may be incomplete" finding — never to ignore it.
-
-   It used to carry a second argument: that it was *the only thing catching a
-   mis-converted PF Sense config*. **That is no longer true** — #58 catches
-   ambiguous rule order in the converter itself, where the fault actually is.
-   Relaxing parse strictness is now a question about parse strictness alone,
-   which is the shape it should always have had.
+None at the moment. The last one, parse strictness, is under Settled above.

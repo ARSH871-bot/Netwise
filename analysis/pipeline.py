@@ -49,7 +49,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pybatfish.client.session import Session
 
-from analysis import findings
+from analysis import findings, parse_coverage
 from analysis import policy as policy_module
 from analysis.checks import access_control, policy_compliance, risk, routing
 
@@ -487,7 +487,19 @@ def _analyse(
     #
     #     Emitted after the checks rather than before so it cannot be mistaken
     #     for a reason the checks did not run. They did run.
+    #
+    #     HOW MUCH, NOT ONLY WHICH FILES (#317). The detail used to open
+    #     "Batfish understood most of", which nothing measured: a file read
+    #     at 20% got the same sentence. parse_coverage counts the lines
+    #     Batfish named as unrecognised against the file's configuration
+    #     lines. If that measurement fails for any reason, the caveat still
+    #     goes out naming the files -- losing the caveat to a failure in
+    #     describing it would be the worse outcome by far.
     if partial:
+        try:
+            read = parse_coverage.describe(bf, Path(config_dir), PARTIAL_PARSE_STATUS)
+        except Exception:
+            read = []
         results.append(
             findings.error_finding(
                 check=names[0] if names else "access_control",
@@ -496,8 +508,8 @@ def _analyse(
                     "be read"
                 ),
                 detail=(
-                    "Batfish understood most of, but not all of: "
-                    + "; ".join(partial)
+                    ("; ".join(read) if read
+                     else "Batfish could not read all of: " + "; ".join(partial))
                     + ". The findings above are about the part it did read, "
                     "and are as reliable as any other. Nothing is claimed "
                     "about the lines it skipped -- if a rule you expected to "
