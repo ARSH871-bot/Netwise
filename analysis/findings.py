@@ -133,8 +133,35 @@ def describe_error(error: Exception, limit: int = 200) -> str:
 SUBJECT_KEYS = ("src", "dst", "srcPort", "dstPort", "protocol")
 
 
+#: The protocol VALUES a subject may carry, by name and by IANA number, each
+#: mapped to one canonical name (#390 review). Closing the keys alone was half
+#: the argument: `tcp` and `6` would never join, and `!tcp` -- which is
+#: policy_compliance's own syntax for "not TCP" -- means the opposite of `tcp`
+#: and was accepted. A value outside this map is refused, not stored.
+SUBJECT_PROTOCOLS = {"tcp": "tcp", "udp": "udp", "icmp": "icmp",
+                     "6": "tcp", "17": "udp", "1": "icmp"}
+
+
+def _canonical_address(key: str, value: Any) -> str:
+    """One spelling per address, so two findings about it always join.
+
+    `10.20.0.5` and `10.20.0.5/32` are the same host; `2001:DB8::1` and
+    `2001:db8::1` the same address. Both are stored as the network in
+    Python's canonical form -- `10.20.0.5/32`, `2001:db8::1/128`. Host bits
+    set below the prefix (`10.20.0.1/16`) are REFUSED rather than silently
+    masked, because the caller meant something and we cannot tell what.
+    """
+    try:
+        return str(ipaddress.ip_network(str(value), strict=True))
+    except ValueError:
+        raise ValueError(
+            f"subject[{key!r}] must be an address or a CIDR with no host bits "
+            f"set, got {value!r}"
+        ) from None
+
+
 def _validate_subject(subject: Any) -> Dict[str, Any]:
-    """Return a checked copy of `subject`, or raise ValueError.
+    """Return a canonical, checked copy of `subject`, or raise ValueError.
 
     Fails loudly for the same reason make_finding() does: a malformed join key
     is a chain that never forms, and nothing downstream would say so.
@@ -152,24 +179,24 @@ def _validate_subject(subject: Any) -> Dict[str, Any]:
     checked: Dict[str, Any] = {}
     for key, value in subject.items():
         if key in ("src", "dst"):
-            try:
-                ipaddress.ip_network(str(value), strict=False)
-            except ValueError:
-                raise ValueError(f"subject[{key!r}] must be an address or CIDR, got {value!r}")
-            checked[key] = str(value)
+            checked[key] = _canonical_address(key, value)
         elif key in ("srcPort", "dstPort"):
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 65535:
                 raise ValueError(f"subject[{key!r}] must be a port from 0 to 65535, got {value!r}")
             checked[key] = value
         else:  # protocol
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError(f"subject['protocol'] must be a protocol name, got {value!r}")
-            checked[key] = value.strip().lower()
+            name = SUBJECT_PROTOCOLS.get(str(value).strip().lower()) if not isinstance(value, bool) else None
+            if name is None:
+                raise ValueError(
+                    f"subject['protocol'] must be one of tcp, udp, icmp (or 6, 17, 1), "
+                    f"got {value!r}"
+                )
+            checked[key] = name
     return checked
 
 
 def make_finding(
-    *,  # keyword-only: with eight fields, positional arguments are a trap
+    *,  # keyword-only: with nine fields, positional arguments are a trap
     check: str,
     severity: str,
     device: str,
