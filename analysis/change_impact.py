@@ -660,6 +660,11 @@ def main() -> None:
     policy = None
     if len(sys.argv) == 4:
         policy = policy_module.load_policy_file(sys.argv[3])
+        # Same contract as `python -m analysis.pipeline --policy` (#387
+        # review): a pair the contradiction check could not compare is said,
+        # not dropped.
+        for note in policy.undecidable:
+            print(f"warning: {note}")
     results = analyse_change(sys.argv[1], sys.argv[2], policy=policy)
     print(json.dumps(results, indent=2))
     print()

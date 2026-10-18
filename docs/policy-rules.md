@@ -336,6 +336,110 @@ consistently with POL-4.
 
 ---
 
+### A policy that forbids what it requires is refused (#322, US-30)
+
+A `prohibition` says traffic must be DENIED. A `requirement` says traffic must
+be PERMITTED. If two such rules describe overlapping traffic **on the same
+device and the same filter**, no configuration can satisfy both: whichever way
+the network is set up, one of them reports a violation, and fixing that one
+creates the other.
+
+Before #322 such a policy loaded cleanly and the scan ran. The user got a real
+finding, fixed it, and got the opposite finding. Nothing said the rules were at
+fault.
+
+`analysis/policy_conflicts.py` now compares every prohibition against every
+requirement in the same scope, and `load_policy()` **refuses** the policy when
+it can prove an overlap:
+
+```
+PolicyError: this policy contradicts itself, so no configuration could
+satisfy it: rule 3 ('The LAN must not reach the finance server') forbids
+what rule 7 ('Accounts must reach the finance server') requires on rtr-us5
+filter acl_in: both describe src 10.10.10.64/26, dst 10.20.0.5/32,
+dst ports 443
+```
+
+The message names both rules and **the intersection**, not either rule
+restated. US-30 asks for the overlap because a message naming only the pair
+leaves the user diffing two header specifiers by eye.
+
+This needs no Batfish, no Docker and no config. It is a property of the policy
+file alone.
+
+#### What is not a contradiction
+
+Two prohibitions over the same traffic are consistent — denying twice is
+denying — and so are two requirements. Only permit-against-deny is
+unsatisfiable. Rules on different devices never collide, and nor do rules on
+filters that are plainly different names.
+
+Filter names are the exception that needs care. Batfish resolves `ACL_IN`,
+`acl_in ` and the regex `/acl_in/` all to `acl_in`, so two rules can name the
+same ACL in different spellings. When two filters match only after trimming
+and ignoring case, or either is a specifier rather than a plain name (`/`,
+`@`, `(`, `,`), the pair is reported as **undecidable**, not skipped. Found in
+review on #387: the first version compared the raw strings and called
+`ACL_IN` versus `acl_in` "cannot collide".
+
+A rule's `queries` are a union, because `policy_compliance` fails the rule if
+any one of them fails, so a contradiction is any query of the prohibition
+meeting any query of the requirement.
+
+#### Proven, not presumed — and the third answer
+
+Batfish header specifiers are a language, not a list. `dstIps` can read
+`0.0.0.0/0 \ (218.8.104.58, 10.20.0.5)`; `ipProtocols` can read `!tcp`. This
+module parses a deliberate subset — plain addresses, CIDRs, port ranges, and
+the protocols `tcp`, `udp` and `icmp` by name or number (`6`, `17`, `1`), with
+comma-separated lists split the way pybatfish splits them — and **refuses to
+guess at the rest**. An unrecognised protocol token is undecidable, not a new
+protocol: the first version took `"6"` as a name, so it never met `"tcp"`, and
+a real contradiction loaded as consistent.
+
+So every comparison has three answers, not two:
+
+| answer | meaning | effect |
+|---|---|---|
+| overlap | proven to share traffic | the policy is **refused** |
+| no overlap | proven disjoint | loads normally |
+| **undecidable** | a specifier outside the parsed subset | loads, and is **reported** |
+
+The third is the one that matters. An undecidable pair is carried out on
+`Policy.undecidable`. Both command lines print each pair as a `warning:` —
+`python -m analysis.pipeline … --policy` and `python -m analysis.change_impact
+… policy.json`. **The dashboard does not show them yet**: `/api/policy` returns
+renamed keys only, so an upload through the browser drops the pairs silently.
+That gap is #404, and until it closes "never dropped" holds on the command
+line only. Treating "we could not compare these" as "these are fine" is F-4
+arriving through the policy file: *we checked and found nothing* standing in
+for *we could not check*.
+
+Comparison is **field by field**. A query is a conjunction, so one field that
+is provably disjoint makes the pair disjoint whatever the other fields say —
+including fields this module could not parse. That can never invent an
+overlap, because a conjunct only shrinks a space. Only when nothing proves the
+pair disjoint does an unparsed field make it undecidable.
+
+An unmodelled query field makes the pair undecidable rather than being
+skipped, and that direction is deliberate. Skipping a field would widen both
+header spaces and could invent an overlap that is not there — refusing a
+policy that is perfectly consistent.
+
+The shipped `docs/examples/policy.example.json` demonstrates this: it uses
+set difference, so it loads and reports **one** pair it could not compare:
+rule 1 against rule 4. It used to report two. The second, rule 2 against
+rule 4, was a false warning — rule 2 negates a protocol, but it is about
+10.20.0.5 and rule 4 about 218.8.104.58, which is provably disjoint on a field
+that *is* parsed. A false warning in our own example would teach people to
+skip the real ones.
+
+`tests/test_policy_contradictions.py` pins all of it, and the five mutations
+that matter — undecidable collapsing to "no overlap", unmodelled fields being
+ignored, the scope check being dropped, two prohibitions counting as a
+conflict, and the overlap detail falling out of the message — each fail it.
+
+
 ## 4. Finding IDs
 
 Agreed with Arsh, and requiring no change to `docs/finding-format.md`:

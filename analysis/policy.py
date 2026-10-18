@@ -65,6 +65,8 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from analysis import policy_conflicts
+
 from analysis.findings import PREFIX_BY_CHECK
 
 #: The checks a policy file may configure. `risk` and `change_impact` are
@@ -231,6 +233,7 @@ class Policy:
         sections: Dict[str, List[Dict[str, Any]]],
         renamed: Optional[List[str]] = None,
         assigned: Optional[List[str]] = None,
+        undecidable: Optional[List[str]] = None,
     ) -> None:
         self.sections = sections
         #: Legacy key names that were corrected, as human-readable notes.
@@ -242,6 +245,13 @@ class Policy:
         #: this module forbids SILENT defaults, not defaults. A user whose
         #: finding ids were chosen for them is entitled to know (#181).
         self.assigned = assigned or []
+        #: Rule pairs that MIGHT contradict each other and could not be
+        #: decided, because a header specifier is outside the subset
+        #: `policy_conflicts` parses (#322). Same contract as the two above:
+        #: silence here would mean "we checked and found nothing" standing
+        #: in for "we could not check", which is F-4 arriving through the
+        #: policy file. A contradiction we can PROVE raises instead.
+        self.undecidable = undecidable or []
 
     @property
     def is_empty(self) -> bool:
@@ -526,6 +536,30 @@ def _check_numbers(sections: Dict[str, List[Dict[str, Any]]]) -> None:
         raise PolicyError("; ".join(problems))
 
 
+def _check_contradictions(sections: Dict[str, List[Dict[str, Any]]]) -> List[str]:
+    """Refuse a policy that forbids what it requires (#322, US-30).
+
+    A `prohibition` and a `requirement` over overlapping traffic on the same
+    device and filter cannot both be satisfied, so a scan against them
+    produces a violation whichever way the network is configured, and fixing
+    one creates the other. The rules are at fault, and the scan is the wrong
+    place to find that out.
+
+    Raises on anything PROVEN to contradict. Returns the pairs that could not
+    be decided, for the caller to carry on `Policy.undecidable` -- see
+    `policy_conflicts` for why those are never silently treated as fine.
+    """
+    conflicts, undecided = policy_conflicts.contradictions(
+        sections.get("policy_compliance", [])
+    )
+    if conflicts:
+        raise PolicyError(
+            "this policy contradicts itself, so no configuration could satisfy "
+            "it: " + "; ".join(conflicts)
+        )
+    return undecided
+
+
 def _assign_missing_numbers(
     sections: Dict[str, List[Dict[str, Any]]]
 ) -> List[str]:
@@ -648,7 +682,10 @@ def load_policy(data: Any) -> Policy:
 
     _check_numbers(sections)
     assigned = _assign_missing_numbers(sections)
-    return Policy(sections, renamed, assigned)
+    # Last, because it reasons about numbers and nodes that the passes above
+    # fill in: an entry whose number was assigned here is still named by it.
+    undecidable = _check_contradictions(sections)
+    return Policy(sections, renamed, assigned, undecidable)
 
 
 def load_policy_file(path: Any) -> Policy:
