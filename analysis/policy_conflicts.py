@@ -64,8 +64,8 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 KNOWN_FIELDS = ("srcIps", "dstIps", "srcPorts", "dstPorts", "ipProtocols")
 
 #: Characters that put a specifier outside the plain-list subset parsed here.
-#: `\` is set difference, `!` negation, `(`/`)` grouping, `@` and `/` with
-#: letters are named specifiers like `@enter(...)` or `ref.Interface(...)`.
+#: `\` is set difference, `!` negation, `(`/`)` grouping, and `@` or `ref.`
+#: start a named specifier like `@enter(...)` or `ref.Interface(...)`.
 _COMPLEX = re.compile(r"[\\!()@]|\bref\.", re.IGNORECASE)
 
 ANY = "ANY"  #: the field was absent, so it constrains nothing
@@ -102,6 +102,8 @@ def _networks(field: str, spec: Any) -> List[ipaddress.IPv4Network]:
 
 def _ports(field: str, spec: Any) -> List[Tuple[int, int]]:
     """`"443"`, `"0-442,444-65535"` -> inclusive integer ranges."""
+    if isinstance(spec, bool):
+        raise _Undecidable(field, spec, "a boolean is not a port")
     if isinstance(spec, int):
         return [(spec, spec)]
     if not isinstance(spec, str):
@@ -130,6 +132,15 @@ def _ports(field: str, spec: Any) -> List[Tuple[int, int]]:
     return out
 
 
+#: Protocol tokens this module understands, by name and by IANA number.
+#: A CLOSED list (#387 review, @ARSH871-bot): anything else is undecidable.
+#: Taking every unrecognised token as a protocol name was a guess, and it
+#: guessed wrong in the reassuring direction -- `"6"` never met `"tcp"`, so a
+#: real contradiction loaded as consistent. Batfish reads `"6"` as TCP.
+_PROTOCOLS = {"tcp": "tcp", "udp": "udp", "icmp": "icmp",
+              "6": "tcp", "17": "udp", "1": "icmp"}
+
+
 def _protocols(field: str, spec: Any) -> Set[str]:
     if isinstance(spec, str):
         spec = [spec]
@@ -137,33 +148,55 @@ def _protocols(field: str, spec: Any) -> Set[str]:
         raise _Undecidable(field, spec, "not a list")
     out = set()
     for item in spec:
-        text = str(item).strip().lower()
-        if not text or _COMPLEX.search(text):
-            raise _Undecidable(field, spec, f"{item!r} is negated or not a plain protocol name")
-        out.add(text)
+        # pybatfish splits "tcp,udp" into two protocols, so this does too.
+        for token in str(item).split(","):
+            text = token.strip().lower()
+            if text not in _PROTOCOLS:
+                raise _Undecidable(
+                    field, spec,
+                    f"{token.strip()!r} is not a protocol this check recognises "
+                    f"({', '.join(sorted(k for k in _PROTOCOLS if not k.isdigit()))}, "
+                    "or their numbers)",
+                )
+            out.add(_PROTOCOLS[text])
     if not out:
         raise _Undecidable(field, spec, "empty")
     return out
 
 
-def _parse(query: Any) -> Dict[str, Any]:
-    """One query to {field: parsed value or ANY}. Raises _Undecidable."""
+class _Unknown:
+    """One field we could not parse. Kept per field, not per query (#387)."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+
+
+def _parse_field(field: str, value: Any) -> Any:
+    try:
+        if field in ("srcIps", "dstIps"):
+            return _networks(field, value)
+        if field in ("srcPorts", "dstPorts"):
+            return _ports(field, value)
+        return _protocols(field, value)
+    except _Undecidable as exc:
+        return _Unknown(str(exc))
+
+
+def _parse(query: Any) -> Tuple[Dict[str, Any], List[str]]:
+    """One query to ({field: value, ANY, or _Unknown}, [reasons]).
+
+    Unmodelled keys are returned as reasons rather than raised: they make a
+    pair undecidable, but they cannot make it OVERLAP, and a field we did
+    parse may still prove the two queries disjoint.
+    """
     if not isinstance(query, dict):
         raise _Undecidable("query", query, "not an object")
-    unknown = sorted(set(query) - set(KNOWN_FIELDS))
-    if unknown:
-        raise _Undecidable("query", query, f"has field(s) this check does not model: {', '.join(unknown)}")
-    parsed: Dict[str, Any] = {}
-    for field in KNOWN_FIELDS:
-        if field not in query:
-            parsed[field] = ANY
-        elif field in ("srcIps", "dstIps"):
-            parsed[field] = _networks(field, query[field])
-        elif field in ("srcPorts", "dstPorts"):
-            parsed[field] = _ports(field, query[field])
-        else:
-            parsed[field] = _protocols(field, query[field])
-    return parsed
+    reasons = [
+        f"query has field(s) this check does not model: {', '.join(sorted(set(query) - set(KNOWN_FIELDS)))}"
+    ] if set(query) - set(KNOWN_FIELDS) else []
+    parsed = {f: (ANY if f not in query else _parse_field(f, query[f])) for f in KNOWN_FIELDS}
+    reasons += [v.reason for v in parsed.values() if isinstance(v, _Unknown)]
+    return parsed, reasons
 
 
 def _nets_meet(a: Sequence[ipaddress.IPv4Network],
@@ -174,7 +207,9 @@ def _nets_meet(a: Sequence[ipaddress.IPv4Network],
     for x in a:
         for y in b:
             if x.overlaps(y):
-                shared.append(x if x.prefixlen >= y.prefixlen else y)
+                pick = x if x.prefixlen >= y.prefixlen else y
+                if pick not in shared:
+                    shared.append(pick)
     return shared
 
 
@@ -184,7 +219,7 @@ def _ranges_meet(a: Sequence[Tuple[int, int]],
     for lo1, hi1 in a:
         for lo2, hi2 in b:
             lo, hi = max(lo1, lo2), min(hi1, hi2)
-            if lo <= hi:
+            if lo <= hi and (lo, hi) not in shared:
                 shared.append((lo, hi))
     return shared
 
@@ -222,25 +257,61 @@ def overlap(query_a: Any, query_b: Any) -> Tuple[Optional[bool], str]:
     """Do two queries describe any traffic in common?
 
     Returns `(True, "src ..., dst ...")` when they provably do, `(False, "")`
-    when they provably do not, and `(None, reason)` when a specifier is
-    outside the subset this module parses. Never guesses.
+    when they provably do not, and `(None, reason)` when it cannot be decided.
+    Never guesses.
+
+    FIELD BY FIELD (#387 review). A query is a conjunction, so ONE field that
+    is provably disjoint makes the pair disjoint -- whatever the other fields
+    say, including ones we could not parse. That can never invent an overlap,
+    because a conjunct only ever shrinks a space. Only when nothing proves
+    them disjoint does an unparsed field make the answer undecidable.
     """
     try:
-        a, b = _parse(query_a), _parse(query_b)
+        a, reasons_a = _parse(query_a)
+        b, reasons_b = _parse(query_b)
     except _Undecidable as exc:
         return None, str(exc)
     parts = []
     for field in KNOWN_FIELDS:
-        meets, detail = _field_meet(field, a[field], b[field])
+        x, y = a[field], b[field]
+        if isinstance(x, _Unknown) or isinstance(y, _Unknown):
+            continue
+        meets, detail = _field_meet(field, x, y)
         if not meets:
             return False, ""
         if detail:
             parts.append(detail)
+    reasons = reasons_a + reasons_b
+    if reasons:
+        return None, reasons[0]
     return True, ", ".join(parts) if parts else "all traffic"
 
 
-def _scope(entry: Any) -> Tuple[str, str]:
-    return (str(entry.get("node", "")), str(entry.get("filter", "")))
+#: Characters that make a `filter` a Batfish SPECIFIER rather than a name --
+#: `/acl_in/` is a regex, `@in(Gi0/0)` an interface's filter, `a,b` a list.
+#: Such a filter can name the same ACL as another rule's plain name.
+_FILTER_SPECIFIER = re.compile(r"[/@(,]")
+
+
+def _same_scope(a: Any, b: Any) -> Optional[bool]:
+    """Are two rules about the same device AND the same filter?
+
+    True or False when it is clear, None when it is not. Batfish resolves
+    `ACL_IN`, `acl_in ` and `/acl_in/` all to `acl_in` (#387 review), so a raw
+    string comparison called those "different filter: cannot collide" and
+    skipped a real contradiction. Node is compared exactly: a mis-cased node
+    never runs at all, so it cannot produce a contradictory result.
+    """
+    if str(a.get("node", "")) != str(b.get("node", "")):
+        return False
+    fa, fb = str(a.get("filter", "")), str(b.get("filter", ""))
+    if fa == fb:
+        return True
+    if _FILTER_SPECIFIER.search(fa) or _FILTER_SPECIFIER.search(fb):
+        return None
+    if fa.strip().casefold() == fb.strip().casefold():
+        return None
+    return False
 
 
 def _ref(entry: Any) -> str:
@@ -265,10 +336,18 @@ def contradictions(entries: Sequence[Any]) -> Tuple[List[str], List[str]]:
     undecided: List[str] = []
     for forbid in prohibitions:
         for require in requirements:
-            if _scope(forbid) != _scope(require):
+            scope = _same_scope(forbid, require)
+            if scope is False:
                 continue                      # different device or filter: cannot collide
-            node, filter_name = _scope(forbid)
+            node, filter_name = forbid.get("node", ""), forbid.get("filter", "")
             where = f"on {node} filter {filter_name}" if node and filter_name else ""
+            if scope is None:
+                undecided.append(
+                    f"{_ref(forbid)} and {_ref(require)} name filters "
+                    f"{forbid.get('filter')!r} and {require.get('filter')!r} on {node}, "
+                    "which Batfish may resolve to the same ACL; could not be compared"
+                )
+                continue
             unknown_here: List[str] = []
             found = False
             for qa in forbid.get("queries", []) or []:

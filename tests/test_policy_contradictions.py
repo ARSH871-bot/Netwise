@@ -16,10 +16,15 @@ WHAT THESE PIN
        policy file.
 """
 
+from pathlib import Path
+
 import pytest
 
 from analysis import policy_conflicts
 from analysis.policy import PolicyError, load_policy, load_policy_file
+
+REPO = Path(__file__).resolve().parents[1]
+EXAMPLE = REPO / "docs" / "examples" / "policy.example.json"
 
 
 def rule(number, kind, queries, node="rtr-us5", filter_name="acl_in", description=None):
@@ -211,12 +216,115 @@ def test_a_proven_contradiction_wins_over_an_undecidable_one():
 def test_the_example_policy_still_loads_and_reports_what_it_could_not_compare():
     """docs/examples/policy.example.json is what a user copies. It uses the
     specifier syntax this module does not parse, so it must load AND say so."""
-    loaded = load_policy_file("docs/examples/policy.example.json")
+    loaded = load_policy_file(EXAMPLE)
     assert loaded.entries_for("policy_compliance")
-    assert loaded.undecidable, (
-        "the example uses set-difference and a negated protocol; reporting "
-        "no undecidable pairs would mean the third answer had been lost"
-    )
+    assert len(loaded.undecidable) == 1, loaded.undecidable
+    assert "rule 1" in loaded.undecidable[0] and "rule 4" in loaded.undecidable[0]
+
+
+def test_the_example_does_not_warn_about_a_pair_a_parsed_field_proves_disjoint():
+    """#387 review. Rules 2 and 4 used to warn because rule 2 says `!tcp` --
+    but rule 2 is about 10.20.0.5 and rule 4 about 218.8.104.58, which is
+    provably disjoint on a field we DO parse. A false warning in our own
+    example teaches people to skip the warnings."""
+    loaded = load_policy_file(EXAMPLE)
+    assert not any("rule 2" in u for u in loaded.undecidable)
+
+
+# --- 4b. what the review found ---------------------------------------------
+
+P = {"srcIps": "10.10.10.0/24", "dstIps": "10.20.0.5"}
+R = {"srcIps": "10.10.10.64/26", "dstIps": "10.20.0.0/16", "ipProtocols": ["tcp"], "dstPorts": "443"}
+
+
+@pytest.mark.parametrize("tokens", [["6"], "tcp,udp", ["tcp, udp"], ["TCP"]])
+def test_protocol_numbers_and_comma_lists_are_understood_not_guessed(tokens):
+    """Batfish reads `"6"` as TCP and pybatfish splits `"tcp,udp"`. Taking
+    them as unknown names made a real contradiction load as consistent."""
+    with pytest.raises(PolicyError):
+        load_policy(policy(rule(1, "prohibition", [{**P, "ipProtocols": tokens}]),
+                           rule(2, "requirement", [R])))
+
+
+def test_an_unrecognised_protocol_is_undecidable_not_disjoint():
+    loaded = load_policy(policy(rule(1, "prohibition", [{**P, "ipProtocols": ["banana"]}]),
+                                rule(2, "requirement", [R])))
+    assert len(loaded.undecidable) == 1
+
+
+@pytest.mark.parametrize("other", ["ACL_IN", "acl_in ", "/acl_in/", "@in(GigabitEthernet0/0)"])
+def test_a_filter_batfish_may_resolve_to_the_same_acl_is_not_skipped(other):
+    """`ACL_IN` and `acl_in` were "different filter: cannot collide". Batfish
+    resolves them to the same ACL, so the pair is reported, not skipped."""
+    loaded = load_policy(policy(rule(1, "prohibition", [P]),
+                                rule(2, "requirement", [R], filter_name=other)))
+    assert len(loaded.undecidable) == 1
+    assert "could not be compared" in loaded.undecidable[0]
+
+
+def test_one_disjoint_parsed_field_beats_an_unparsed_one():
+    verdict, _ = policy_conflicts.overlap(
+        {"dstIps": "10.20.0.5", "ipProtocols": ["!tcp"]}, {"dstIps": "218.8.104.58"})
+    assert verdict is False
+
+
+def test_an_unparsed_field_earlier_in_field_order_cannot_hide_a_disjoint_later_one():
+    """The order matters for the mutant this pins. srcIps is compared before
+    dstIps, so an implementation that gave up at the first unparsed field
+    would answer "undecidable" here instead of "disjoint"."""
+    verdict, _ = policy_conflicts.overlap(
+        {"srcIps": "0.0.0.0/0 \\ (1.1.1.1)", "dstIps": "10.20.0.5"},
+        {"dstIps": "218.8.104.58"})
+    assert verdict is False
+
+
+def test_an_unmodelled_field_cannot_hide_a_disjoint_parsed_one():
+    verdict, _ = policy_conflicts.overlap(
+        {"dstIps": "10.20.0.5", "icmpCodes": "0"}, {"dstIps": "218.8.104.58"})
+    assert verdict is False
+
+
+def test_rules_without_numbers_are_named_by_the_numbers_assigned_to_them():
+    """Pins the ordering in load_policy(): the contradiction check runs AFTER
+    numbers are assigned. Before it, both rules read "an unnumbered rule"."""
+    a, b = rule(1, "prohibition", [P]), rule(2, "requirement", [R])
+    del a["number"], b["number"]
+    with pytest.raises(PolicyError) as caught:
+        load_policy(policy(a, b))
+    assert "unnumbered" not in str(caught.value)
+    assert "rule 1" in str(caught.value) and "rule 2" in str(caught.value)
+
+
+def test_overlapping_port_ranges_are_described_once():
+    _, detail = policy_conflicts.overlap({"dstPorts": "1-100,50-200"}, {"dstPorts": "60-70"})
+    assert detail == "dst ports 60-70"
+
+
+def test_a_boolean_is_not_a_port():
+    verdict, _ = policy_conflicts.overlap({"dstPorts": True}, {"dstPorts": "1"})
+    assert verdict is None
+
+
+# --- 4c. the CLIs say it -----------------------------------------------------
+
+def test_the_pipeline_cli_prints_each_undecidable_pair(monkeypatch, capsys):
+    """Deleting the print in analysis/pipeline.py used to fail no test."""
+    from analysis import pipeline
+    monkeypatch.setattr(pipeline, "analyse", lambda *a, **k: [])
+    monkeypatch.setattr(pipeline, "_print_summary", lambda results: None)
+    monkeypatch.setattr("sys.argv", ["pipeline", "unused-dir", "--policy", str(EXAMPLE)])
+    pipeline.main()
+    warnings = [line for line in capsys.readouterr().out.splitlines() if line.startswith("warning:")]
+    assert len(warnings) == 1 and "rule 1" in warnings[0] and "rule 4" in warnings[0]
+
+
+def test_the_change_impact_cli_prints_each_undecidable_pair(monkeypatch, capsys):
+    from analysis import change_impact
+    monkeypatch.setattr(change_impact, "analyse_change", lambda *a, **k: [])
+    monkeypatch.setattr("sys.argv", ["change_impact", "before", "after", str(EXAMPLE)])
+    change_impact.main()
+    warnings = [line for line in capsys.readouterr().out.splitlines() if line.startswith("warning:")]
+    assert len(warnings) == 1
 
 
 # --- 5. the overlap primitive itself -------------------------------------
