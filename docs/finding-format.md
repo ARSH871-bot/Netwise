@@ -389,7 +389,7 @@ is refused at `make_finding()`.
 |---|---|
 | **Shubham** | ✅ — proposed it in #390 |
 | **Arsh** | ⬜ |
-| **Ankeet** | ⬜ |
+| **Ankeet** | ✅ - checked `SUBJECT_KEYS`, `SUBJECT_PROTOCOLS` and `_canonical_address()` directly against this table and mutation-tested the two checks that matter most (host-bits-set addresses, and `True` passing as a port), both killed for the right reason |
 | **Samika** | ⬜ |
 
 > **NOT RATIFIED — one of four.** `analysis/findings.py` enforces this set in
