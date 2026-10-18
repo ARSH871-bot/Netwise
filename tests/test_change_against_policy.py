@@ -92,15 +92,31 @@ def test_a_rule_with_the_same_verdict_either_side_is_unchanged_not_a_finding(mon
     )
 
 
-@pytest.mark.parametrize("kind,before,after,direction", [
-    ("prohibition", False, True, "opening"),     # forbidden traffic now permitted
-    ("prohibition", True, False, "tightening"),
-    ("requirement", False, True, "tightening"),  # required traffic now denied
-    ("requirement", True, False, "opening"),
+@pytest.mark.parametrize("kind,before,after,direction,normalised", [
+    ("prohibition", False, True, "opening", "opening"),     # forbidden traffic now permitted
+    ("prohibition", True, False, "tightening", "closing"),
+    ("requirement", False, True, "tightening", "closing"),  # required traffic now denied
+    ("requirement", True, False, "opening", "opening"),
 ])
-def test_direction_is_stated_in_this_modules_own_terms(monkeypatch, kind, before, after, direction):
+def test_direction_is_stated_in_this_modules_own_terms(monkeypatch, kind, before, after, direction, normalised):
     found, _, _ = stage(monkeypatch, [rule(1, kind)], {1: (before, after)})
     assert f"Direction: {direction}" in found[0]["evidence"]["detail"]
+
+
+@pytest.mark.parametrize("kind,before,after,normalised", [
+    ("prohibition", False, True, "opening"),
+    ("prohibition", True, False, "closing"),
+    ("requirement", False, True, "closing"),
+    ("requirement", True, False, "opening"),
+])
+def test_direction_field_is_set_regardless_of_severity(monkeypatch, kind, before, after, normalised):
+    """#402: severity alone cannot be used to infer direction for a policy
+    finding (a high-severity REQUIREMENT breach closes access, it does not
+    open it) -- this is the field a caller should read instead."""
+    found, _, _ = stage(
+        monkeypatch, [rule(1, kind, severity="high")], {1: (before, after)},
+    )
+    assert found[0]["direction"] == normalised
 
 
 # --- F-4: could-not-ask is never unchanged ----------------------------------

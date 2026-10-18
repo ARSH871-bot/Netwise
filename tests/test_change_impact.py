@@ -238,6 +238,7 @@ def test_reachability_findings_rate_an_opening_high():
 
     assert len(results) == 1
     assert results[0]["severity"] == "high"
+    assert results[0]["direction"] == "opening"
     assert "could not reach before" in results[0]["summary"]
 
 
@@ -250,7 +251,46 @@ def test_reachability_findings_rate_a_tightening_medium():
     assert results[0]["severity"] == "medium", (
         "a change that blocks traffic is not a new exposure"
     )
+    assert results[0]["direction"] == "closing"
     assert "no longer reaches" in results[0]["summary"]
+
+
+class _FakeSessionWithFilterRows:
+    def __init__(self, rows):
+        self.q = SimpleNamespace(compareFilters=lambda **kw: _FakeQuestion(rows))
+
+
+def _filter_row(line_action):
+    return {
+        "Node": "rtr-us5",
+        "Filter_Name": "acl_in",
+        "Line_Action": line_action,
+        "Line_Content": f"{line_action.lower()} tcp any any eq 443",
+        "Line_Index": 0,
+        "Reference_Line_Content": "deny tcp any any eq 443",
+        "Reference_Line_Index": 0,
+    }
+
+
+def test_filter_findings_carry_the_direction_opening():
+    bf = _FakeSessionWithFilterRows([_filter_row("PERMIT")])
+    results, _ = change_impact._filter_change_findings(bf, 1)
+
+    assert len(results) == 1
+    assert results[0]["severity"] == "high"
+    assert results[0]["direction"] == "opening"
+    assert "opens traffic" in results[0]["summary"]
+
+
+def test_filter_findings_carry_the_direction_closing():
+    """The mutation guard: hardcoding 'opening' here fails, not above."""
+    bf = _FakeSessionWithFilterRows([_filter_row("DENY")])
+    results, _ = change_impact._filter_change_findings(bf, 1)
+
+    assert len(results) == 1
+    assert results[0]["severity"] == "medium"
+    assert results[0]["direction"] == "closing"
+    assert "blocks traffic" in results[0]["summary"]
 
 
 def test_reachability_findings_number_sequentially_and_report_the_next():
