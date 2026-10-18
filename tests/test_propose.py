@@ -298,6 +298,19 @@ def _stub_change_impact(monkeypatch, results):
     )
 
 
+def _stub_change_impact_recording(monkeypatch, results, calls):
+    """Like _stub_change_impact(), but appends every call's kwargs to
+    `calls` -- a fake that accepts an argument is not proof it was passed
+    the real value, only that the signature matches (#402's own lesson:
+    checked by mutation-testing this file after the first version of the
+    fix shipped with no test that would have caught dropping `policy`
+    silently)."""
+    def fake(before_dir, after_dir, host="localhost", policy=None):
+        calls.append({"before_dir": before_dir, "after_dir": after_dir, "host": host, "policy": policy})
+        return results
+    monkeypatch.setattr(propose.change_impact, "analyse_change", fake)
+
+
 GOOD_REQUEST = "block 10.10.10.5 to 10.20.0.5 on tcp/443 on rtr-us5"
 
 
@@ -459,6 +472,36 @@ def test_a_mix_of_opening_and_closing_does_not_claim_simple_opening(monkeypatch,
 
     assert result["warning"] is True
     assert "opens access" not in result["answer"]
+
+
+def test_the_caller_supplied_policy_actually_reaches_analyse_change(monkeypatch, tmp_path):
+    """#402's own bug, pinned directly: a stub that merely ACCEPTS a
+    `policy` keyword is not proof propose_change() passes its real value
+    through -- confirmed by mutation-testing this exact line and finding
+    every other test in this file still passed with the argument dropped."""
+    before_dir = _write_snapshot(tmp_path)
+    _stub_batfish(monkeypatch)
+    calls = []
+    sentinel_policy = object()
+    _stub_change_impact_recording(monkeypatch, [_found(severity="high")], calls)
+
+    propose.propose_change(GOOD_REQUEST, before_dir, policy=sentinel_policy)
+
+    assert len(calls) == 1
+    assert calls[0]["policy"] is sentinel_policy
+
+
+def test_omitting_policy_passes_none_through_unchanged(monkeypatch, tmp_path):
+    """Regression guard: a caller that does not pass policy must behave
+    exactly as before this feature existed."""
+    before_dir = _write_snapshot(tmp_path)
+    _stub_batfish(monkeypatch)
+    calls = []
+    _stub_change_impact_recording(monkeypatch, [_found(severity="high")], calls)
+
+    propose.propose_change(GOOD_REQUEST, before_dir)
+
+    assert calls[0]["policy"] is None
 
 
 def test_a_request_with_an_any_endpoint_still_generates_the_right_protocol(monkeypatch, tmp_path):
