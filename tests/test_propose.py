@@ -294,8 +294,21 @@ def _stub_batfish(monkeypatch, *, devices=frozenset({"rtr-us5"}), parse_problems
 def _stub_change_impact(monkeypatch, results):
     monkeypatch.setattr(
         propose.change_impact, "analyse_change",
-        lambda before_dir, after_dir, host="localhost": results,
+        lambda before_dir, after_dir, host="localhost", policy=None: results,
     )
+
+
+def _stub_change_impact_recording(monkeypatch, results, calls):
+    """Like _stub_change_impact(), but appends every call's kwargs to
+    `calls` -- a fake that accepts an argument is not proof it was passed
+    the real value, only that the signature matches (#402's own lesson:
+    checked by mutation-testing this file after the first version of the
+    fix shipped with no test that would have caught dropping `policy`
+    silently)."""
+    def fake(before_dir, after_dir, host="localhost", policy=None):
+        calls.append({"before_dir": before_dir, "after_dir": after_dir, "host": host, "policy": policy})
+        return results
+    monkeypatch.setattr(propose.change_impact, "analyse_change", fake)
 
 
 GOOD_REQUEST = "block 10.10.10.5 to 10.20.0.5 on tcp/443 on rtr-us5"
@@ -382,12 +395,21 @@ def test_a_device_with_multiple_distinct_acls_is_refused(monkeypatch, tmp_path):
     assert "acl_lan" in result["answer"] and "acl_wan" in result["answer"]
 
 
-def _found(check="change_impact", severity="high", number=1):
+def _found(check="change_impact", severity="high", number=1, direction="opening"):
+    """`direction` defaults to "opening" because every existing caller of
+    this helper is modelling a proven high-severity OPENING (see each
+    test's own name/docstring) -- #402 added the real field change_impact
+    now attaches to every finding it makes, and a caller that wants the
+    other case (a high-severity policy requirement CLOSING access) passes
+    direction="closing" explicitly, same as test_propose_rendering.py's
+    WARNING fixture models an opening by its own hand-written `answer`."""
     from analysis import findings
-    return findings.make_finding(
+    f = findings.make_finding(
         check=check, severity=severity, device="rtr-us5",
         summary="s", detail="d", source="s", status="found", number=number,
     )
+    f["direction"] = direction
+    return f
 
 
 def _none_finding():
@@ -414,6 +436,72 @@ def test_a_well_formed_request_that_opens_something_is_a_warning(monkeypatch, tm
         "line": "deny tcp host 10.10.10.5 host 10.20.0.5 eq 443",
     }
     assert "Warning" in result["answer"]
+    assert "newly opens access" in result["answer"]
+
+
+def test_a_high_severity_closing_warns_without_claiming_it_opens_access(monkeypatch, tmp_path):
+    """#402: a high-severity POLICY finding can be a requirement breached,
+    which CLOSES access that should stay open -- the opposite of what the
+    old wording claimed unconditionally. The warning must still fire (an
+    under-warning here is the dangerous direction), but it must not say
+    "opens access" about a change that did the reverse."""
+    before_dir = _write_snapshot(tmp_path)
+    _stub_batfish(monkeypatch)
+    _stub_change_impact(monkeypatch, [_found(severity="high", direction="closing")])
+
+    result = propose.propose_change(GOOD_REQUEST, before_dir)
+
+    assert result["verified"] is True
+    assert result["warning"] is True, "under-warning a serious change is the dangerous direction"
+    assert "Warning" in result["answer"]
+    assert "opens access" not in result["answer"]
+
+
+def test_a_mix_of_opening_and_closing_does_not_claim_simple_opening(monkeypatch, tmp_path):
+    """A mixed impact list (one finding opens, another closes, both high
+    severity) must not collapse to the single-direction wording -- that
+    would be true of one finding and asserted about the whole change."""
+    before_dir = _write_snapshot(tmp_path)
+    _stub_batfish(monkeypatch)
+    _stub_change_impact(monkeypatch, [
+        _found(severity="high", direction="opening", number=1),
+        _found(severity="high", direction="closing", number=2),
+    ])
+
+    result = propose.propose_change(GOOD_REQUEST, before_dir)
+
+    assert result["warning"] is True
+    assert "opens access" not in result["answer"]
+
+
+def test_the_caller_supplied_policy_actually_reaches_analyse_change(monkeypatch, tmp_path):
+    """#402's own bug, pinned directly: a stub that merely ACCEPTS a
+    `policy` keyword is not proof propose_change() passes its real value
+    through -- confirmed by mutation-testing this exact line and finding
+    every other test in this file still passed with the argument dropped."""
+    before_dir = _write_snapshot(tmp_path)
+    _stub_batfish(monkeypatch)
+    calls = []
+    sentinel_policy = object()
+    _stub_change_impact_recording(monkeypatch, [_found(severity="high")], calls)
+
+    propose.propose_change(GOOD_REQUEST, before_dir, policy=sentinel_policy)
+
+    assert len(calls) == 1
+    assert calls[0]["policy"] is sentinel_policy
+
+
+def test_omitting_policy_passes_none_through_unchanged(monkeypatch, tmp_path):
+    """Regression guard: a caller that does not pass policy must behave
+    exactly as before this feature existed."""
+    before_dir = _write_snapshot(tmp_path)
+    _stub_batfish(monkeypatch)
+    calls = []
+    _stub_change_impact_recording(monkeypatch, [_found(severity="high")], calls)
+
+    propose.propose_change(GOOD_REQUEST, before_dir)
+
+    assert calls[0]["policy"] is None
 
 
 def test_a_request_with_an_any_endpoint_still_generates_the_right_protocol(monkeypatch, tmp_path):
