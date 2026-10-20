@@ -1,0 +1,187 @@
+{
+  "notes": "A held-out question set for ai/query.py (#393, US-60), covering the four outcomes docs/evaluation.md Part 2 reports by hand (answered-correct, refused-correctly, refused-but-should-answer, answered-wrong). Unlike the explanation-quality held-out set (#346/#385), ai/query.py calls no model, so every entry is a real question plus a real FakeSession configuration -- see tools/query_quality.py's docstring for why this is executed fresh every run rather than replaying frozen output. Entry Q05 pins the #70 regression (a network destination resolved to a real host, not the network address) by name, the same case docs/evaluation.md records as a bug this kind of measurement found and fixed.",
+  "entries": [
+    {
+      "id": "Q01",
+      "question": "Can rtr-us5 reach 218.8.104.58?",
+      "category": "reachability",
+      "fake_session": {
+        "devices": ["rtr-us5"],
+        "traceroute_frame_rows": [{"traces": [{"disposition": "ACCEPTED"}]}]
+      },
+      "outcome_expected": "answered_correct",
+      "answer_starts_with": "Yes."
+    },
+    {
+      "id": "Q02",
+      "question": "Can rtr-us5 reach 218.8.104.58?",
+      "category": "reachability",
+      "fake_session": {
+        "devices": ["rtr-us5"],
+        "traceroute_frame_rows": [{"traces": [{"disposition": "DENIED_IN", "hops": ["rtr-us5"]}]}]
+      },
+      "outcome_expected": "answered_correct",
+      "answer_starts_with": "No."
+    },
+    {
+      "id": "Q03",
+      "question": "Can rtr-us5 reach 218.8.104.58?",
+      "category": "reachability",
+      "fake_session": {
+        "devices": ["rtr-us5"],
+        "traceroute_frame_rows": [{"traces": [{"disposition": "EXITS_NETWORK"}]}]
+      },
+      "outcome_expected": "answered_correct",
+      "answer_starts_with": "No.",
+      "note": "EXITS_NETWORK must read as failure, not pybatfish's own idea of success."
+    },
+    {
+      "id": "Q04",
+      "question": "Can rtr-us5 reach 218.8.104.58?",
+      "category": "reachability",
+      "fake_session": {
+        "devices": ["rtr-us5"],
+        "traceroute_frame_rows": [{"traces": [{"disposition": "ACCEPTED"}, {"disposition": "DENIED_IN"}]}]
+      },
+      "outcome_expected": "answered_correct",
+      "answer_contains": "Mixed result"
+    },
+    {
+      "id": "Q05",
+      "question": "Can rtr-hq reach 10.20.20.0/24?",
+      "category": "reachability",
+      "fake_session": {
+        "devices": ["rtr-hq"],
+        "traceroute_frame_rows": [{"traces": [{"disposition": "ACCEPTED"}]}]
+      },
+      "outcome_expected": "answered_correct",
+      "answer_starts_with": "Yes.",
+      "note": "#70 regression pin: a network where every host is reachable must not answer No for the network as a whole (Batfish resolves a bare CIDR to the network address, never a live host)."
+    },
+    {
+      "id": "Q06",
+      "question": "Can rtr-us5 reach 10.20.20.5/32?",
+      "category": "reachability",
+      "fake_session": {
+        "devices": ["rtr-us5"],
+        "traceroute_frame_rows": [{"traces": [{"disposition": "ACCEPTED"}]}]
+      },
+      "outcome_expected": "answered_correct",
+      "understood_expected": "Can rtr-us5 reach 10.20.20.5?",
+      "note": "A /32 names exactly one address -- no \"checked\" phrasing is needed."
+    },
+    {
+      "id": "Q07",
+      "question": "Are there any dead ACL rules?",
+      "category": "dead_rule",
+      "fake_session": {"devices": ["rtr-us5"], "whole_snapshot_frame_rows": []},
+      "outcome_expected": "answered_correct",
+      "answer_starts_with": "No"
+    },
+    {
+      "id": "Q08",
+      "question": "Are there any dead rules?",
+      "category": "dead_rule",
+      "fake_session": {"devices": ["rtr-us5"], "whole_snapshot_frame_rows": [{"x": 1}, {"x": 2}]},
+      "outcome_expected": "answered_correct",
+      "answer_starts_with": "Yes, found 2"
+    },
+    {
+      "id": "Q09",
+      "question": "Is anything referenced but not defined?",
+      "category": "undefined_reference",
+      "fake_session": {"devices": ["rtr-us5"], "whole_snapshot_frame_rows": []},
+      "outcome_expected": "answered_correct",
+      "answer_starts_with": "No"
+    },
+    {
+      "id": "Q10",
+      "question": "Anything undefined in the config?",
+      "category": "undefined_reference",
+      "fake_session": {"devices": ["rtr-us5"], "whole_snapshot_frame_rows": [{"x": 1}]},
+      "outcome_expected": "answered_correct",
+      "answer_starts_with": "Yes, found 1"
+    },
+    {
+      "id": "Q11",
+      "question": "",
+      "category": "unrecognised",
+      "fake_session": {},
+      "outcome_expected": "refused_correctly"
+    },
+    {
+      "id": "Q12",
+      "question": "What's the weather like on the guest network?",
+      "category": "unrecognised",
+      "fake_session": {},
+      "outcome_expected": "refused_correctly",
+      "answer_contains": "does not match"
+    },
+    {
+      "id": "Q13",
+      "question": "Can the guest network reach 10.20.0.5?",
+      "category": "reachability",
+      "fake_session": {"devices": ["rtr-us5"]},
+      "outcome_expected": "refused_correctly",
+      "answer_contains": "known device name",
+      "note": "A plain-English name is not a literal device, deliberately -- CLAUDE.md 7c's own must-refuse example."
+    },
+    {
+      "id": "Q14",
+      "question": "Can rtr-us5 reach 10.20.0.5?",
+      "category": "reachability",
+      "fake_session": {"devices": null},
+      "outcome_expected": "refused_correctly",
+      "answer_contains": "could not be determined"
+    },
+    {
+      "id": "Q15",
+      "question": "Can rtr-us50 reach 10.20.0.5?",
+      "category": "reachability",
+      "fake_session": {"devices": ["rtr-us5"]},
+      "outcome_expected": "refused_correctly",
+      "answer_contains": "known device name",
+      "note": "rtr-us5 must not spuriously match inside rtr-us50 -- whole-word matching."
+    },
+    {
+      "id": "Q16",
+      "question": "Can rtr-us5 reach the finance server?",
+      "category": "reachability",
+      "fake_session": {"devices": ["rtr-us5"]},
+      "outcome_expected": "refused_correctly",
+      "answer_contains": "IP address or network"
+    },
+    {
+      "id": "Q17",
+      "question": "Can rtr-us5 reach 999.1.1.1?",
+      "category": "reachability",
+      "fake_session": {"devices": ["rtr-us5"]},
+      "outcome_expected": "refused_correctly",
+      "note": "Digit-dot-digit shaped but not a real IPv4 address -- must be validated, not pattern-matched."
+    },
+    {
+      "id": "Q18",
+      "question": "Can rtr-us5 reach 218.8.104.58?",
+      "category": "reachability",
+      "fake_session": {"devices": ["rtr-us5"], "traceroute_frame_rows": []},
+      "outcome_expected": "refused_correctly",
+      "answer_contains": "no result"
+    },
+    {
+      "id": "Q19",
+      "question": "Can rtr-us5 reach 218.8.104.58?",
+      "category": "reachability",
+      "fake_session": {"devices": ["rtr-us5"], "raises": true},
+      "outcome_expected": "refused_correctly",
+      "answer_contains": "could not run this check"
+    },
+    {
+      "id": "Q20",
+      "question": "Are there any dead rules?",
+      "category": "dead_rule",
+      "fake_session": {"devices": ["rtr-us5"], "raises": true},
+      "outcome_expected": "refused_correctly",
+      "answer_contains": "could not run this check"
+    }
+  ]
+}
