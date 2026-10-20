@@ -386,6 +386,18 @@ That is the sequence worth keeping: an evaluation found a defect in shipped
 code, the defect was fixed the same day, and the evaluation was re-run rather
 than edited to match.
 
+> **UPDATE, #393 (US-60).** The measurement above was done once, by hand, on
+> 10 August. `tools/query_quality.py` now runs an equivalent held-out
+> question set in CI, every time -- 20 entries across all three intents,
+> scored against the same four outcomes this section already uses, with the
+> same clean record: 0 answered-wrong. Unlike `ai/explain.py`'s held-out set
+> (#346), `ai/query.py` calls no model, so the tool executes the real
+> `answer_question()` fresh on every run rather than replaying a frozen
+> capture -- there is nothing here that can go stale the way captured model
+> text can. The exact 20 questions measured on 10 August were never
+> preserved verbatim, so this is a rebuilt, equivalent set rather than a
+> literal replay; see `tests/fixtures/query_quality/holdout.json`.
+
 ---
 
 ## Part 3, is the explanation text any good? (#90)
