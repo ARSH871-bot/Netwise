@@ -327,6 +327,20 @@ _uploaded: bool = False
 #: to -- see #242's own scope.
 _uploaded_sessions: "set[str]" = set()
 
+#: The chat's remembered follow-up context (#318, US-25), one entry per
+#: session, in the same shape `ai/query.py`'s `answer_question()` returns
+#: as its own `context` key: {"source_device", "destination_ip",
+#: "destination_display"}. Not a file on disk like the staged policy or
+#: business context -- those are read elsewhere by `analysis.pipeline`,
+#: this is purely web-layer chat UI state with exactly one reader
+#: (`ask_question()` below), so it follows `_uploaded_sessions`'s
+#: simpler in-memory pattern rather than the staged-artifact one.
+#:
+#: UNBOUNDED, DELIBERATELY, AND SMALL, same reasoning as
+#: `_uploaded_sessions` above -- a handful of people on one machine, each
+#: contributing at most one small dict.
+_chat_context: "Dict[str, Dict[str, str]]" = {}
+
 
 def _is_uploaded() -> bool:
     """Has THIS session staged a config?
@@ -1522,6 +1536,12 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
         tmp.write_text(json.dumps(skipped), encoding="utf-8")
         tmp.replace(target)
 
+    # A NEW NETWORK MUST NOT INHERIT THE OLD NETWORK'S CHAT CONTEXT (#318).
+    #     Same #82 discipline as the policy, business context and pfSense
+    #     skips just above -- a remembered source device or destination
+    #     names something specific to the PREVIOUS upload.
+    _discard_chat_context()
+
     # Records THIS session, rather than putting the whole process into an
     # uploaded state. Before #242 this was `global _uploaded; _uploaded =
     # True`, which meant one person's upload made every other browser's
@@ -1647,6 +1667,20 @@ def _discard_staged_pfsense_skips() -> None:
     was never even converted.
     """
     pfsense_skips_path().unlink(missing_ok=True)
+
+
+def _discard_chat_context() -> None:
+    """Forget this session's remembered follow-up context, if any (#318).
+
+    A NEW NETWORK MUST NOT INHERIT THE OLD NETWORK'S DEVICE NAMES -- same
+    discipline as `_discard_staged_policy()`, and the same reason #82
+    exists at all. `ai/query.py` already re-validates a carried-over
+    device against the CURRENT snapshot before trusting it (belt and
+    braces), but a question about a device that used to exist is still a
+    worse experience than one that was never offered, so the session's
+    slate is wiped clean on every real upload regardless.
+    """
+    _chat_context.pop(current_session_id(), None)
 @app.get("/api/sample")
 def sample_status() -> Dict[str, Any]:
     """Is the config currently staged in this session the bundled sample?
@@ -2294,26 +2328,39 @@ class AskRequest(BaseModel):
 
 @app.post("/api/ask")
 def ask_question(request: AskRequest) -> Dict[str, Any]:
-    """Answer one plain-English question about the uploaded config (US-11).
+    """Answer one plain-English question about the uploaded config (US-11),
+    remembering the previous question's resolved entities for a follow-up
+    within the same session (#318, US-25).
 
-    Always returns ai.query.answer_question()'s three keys
-    (question_understood, answer, grounded), whether the question was
-    answerable or refused. Never a 500 for an operational failure -- an
-    empty question, no upload yet, an unreachable Batfish, or a config
-    that will not load are all refusals in the same shape, the same
-    convention analysis.pipeline.analyse() already holds for
+    Always returns ai.query.answer_question()'s four keys
+    (question_understood, answer, grounded, context), whether the
+    question was answerable or refused. Never a 500 for an operational
+    failure -- an empty question, no upload yet, an unreachable Batfish,
+    or a config that will not load are all refusals in the same shape,
+    the same convention analysis.pipeline.analyse() already holds for
     /api/findings and explain() now holds for an unreachable Ollama.
+
+    `_chat_context` is read before calling answer_question() and
+    overwritten with whatever it returns afterwards -- including on a
+    refusal, where answer_question() always echoes the given context
+    back unchanged, so this write is a no-op in that case rather than a
+    special case here. ai/query.py itself never touches any session
+    store; this is the one place that does, the same way
+    `_uploaded_sessions` already is for uploads.
 
     Connects and loads the snapshot fresh on every call rather than
     reusing a cached session, the same choice /api/findings already
     makes for analyse() -- consistency over a caching optimisation
     nothing here has needed yet.
     """
+    session_id = current_session_id()
+
     if not _is_uploaded():
         return {
             "question_understood": None,
             "answer": "Upload a config first, there is nothing to ask about yet.",
             "grounded": False,
+            "context": _chat_context.get(session_id),
         }
 
     try:
@@ -2327,9 +2374,17 @@ def ask_question(request: AskRequest) -> Dict[str, Any]:
                 "underlying reason: " + findings.describe_error(error)
             ),
             "grounded": False,
+            "context": _chat_context.get(session_id),
         }
 
-    return answer_question(request.question, bf)
+    result = answer_question(request.question, bf, _chat_context.get(session_id))
+
+    if result["context"] is None:
+        _chat_context.pop(session_id, None)
+    else:
+        _chat_context[session_id] = result["context"]
+
+    return result
 
 
 class ProposeRequest(BaseModel):
