@@ -436,3 +436,151 @@ def test_a_dead_rule_question_does_not_trip_reachability(monkeypatch):
     )
     assert result["grounded"] is True
     assert "never take effect" in result["question_understood"]
+
+
+# --- #318 (US-25): a follow-up question may carry context forward ---------------
+
+
+def test_a_grounded_reachability_answer_returns_context_to_remember():
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    result = answer_question("Can rtr-us5 reach 10.20.0.5?", session)
+    assert result["context"] == {
+        "source_device": "rtr-us5",
+        "destination_ip": "10.20.0.5",
+        "destination_display": "10.20.0.5",
+    }
+
+
+def test_a_missing_source_is_filled_from_context():
+    """"what about 10.20.0.6 instead" has no device name on the source
+    side at all -- it must still resolve, using the previous turn's
+    source device, not be refused."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    context = {
+        "source_device": "rtr-us5",
+        "destination_ip": "10.20.0.5",
+        "destination_display": "10.20.0.5",
+    }
+    result = answer_question(
+        "Can it reach 10.20.0.6 instead?", session, context
+    )
+    assert result["grounded"] is True
+    [call] = session.q.traceroute_calls
+    assert call["startLocation"] == "@enter(rtr-us5)"
+
+
+def test_a_missing_destination_is_filled_from_context():
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5", "rtr-dev002"}, traceroute_frame=frame)
+    context = {
+        "source_device": "rtr-us5",
+        "destination_ip": "10.20.0.5",
+        "destination_display": "10.20.0.5",
+    }
+    result = answer_question(
+        "What about rtr-dev002, can it also reach it?", session, context
+    )
+    assert result["grounded"] is True
+    [call] = session.q.traceroute_calls
+    assert call["headers"].dstIps == "10.20.0.5"
+
+
+def test_question_understood_names_a_carried_over_source():
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    context = {
+        "source_device": "rtr-us5",
+        "destination_ip": "10.20.0.5",
+        "destination_display": "10.20.0.5",
+    }
+    result = answer_question("Can it reach 10.20.0.9 instead?", session, context)
+    assert "same device as your last question" in result["question_understood"]
+
+
+def test_question_understood_names_a_carried_over_destination():
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5", "rtr-dev002"}, traceroute_frame=frame)
+    context = {
+        "source_device": "rtr-us5",
+        "destination_ip": "10.20.0.5",
+        "destination_display": "10.20.0.5",
+    }
+    result = answer_question(
+        "Can rtr-dev002 reach it too?", session, context
+    )
+    assert "same destination as your last question" in result["question_understood"]
+
+
+def test_an_explicit_new_value_overrides_stale_context_not_the_other_way_round():
+    """Both sides are present in the new question's own text, so neither
+    comes from context, and question_understood must not claim a
+    carry-over that did not happen."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5", "rtr-dev002"}, traceroute_frame=frame)
+    context = {
+        "source_device": "rtr-us5",
+        "destination_ip": "10.20.0.5",
+        "destination_display": "10.20.0.5",
+    }
+    result = answer_question(
+        "Can rtr-dev002 reach 10.30.0.1?", session, context
+    )
+    assert "same device as your last question" not in result["question_understood"]
+    assert "same destination as your last question" not in result["question_understood"]
+    assert result["context"]["source_device"] == "rtr-dev002"
+
+
+def test_a_refusal_leaves_prior_context_untouched():
+    """Neither side resolves, from text or from context (the context
+    itself names a device no longer in this snapshot) -- the refusal
+    must not silently erase whatever the caller already had stored."""
+    session = _session_with_devices({"rtr-us5"})
+    context = {
+        "source_device": "a-device-not-in-this-snapshot",
+        "destination_ip": "10.20.0.5",
+        "destination_display": "10.20.0.5",
+    }
+    result = answer_question("Can the guest network reach it?", session, context)
+    assert result["grounded"] is False
+    assert result["context"] == context
+
+
+def test_a_question_with_no_context_supplied_behaves_exactly_as_before():
+    """context defaults to None -- every existing caller that never
+    passes it must see unchanged behaviour."""
+    session = _session_with_devices({"rtr-us5"})
+    result = answer_question("Can the guest network reach 10.20.0.5?", session)
+    assert result["grounded"] is False
+    assert result["context"] is None
+
+
+def test_a_dead_rule_question_leaves_reachability_context_untouched():
+    """A different intent in between two reachability turns must not
+    wipe valid memory -- there is no reason a dead-rule question should
+    know or care about reachability context."""
+    frame = _FakeFrame([])
+    session = FakeSession(_FakeQuestions(whole_snapshot_frame=frame))
+    context = {
+        "source_device": "rtr-us5",
+        "destination_ip": "10.20.0.5",
+        "destination_display": "10.20.0.5",
+    }
+    result = answer_question("Are there any dead rules?", session, context)
+    assert result["context"] == context
+
+
+def test_an_errored_reachability_call_still_updates_context():
+    """"Resolved entities" is about naming resolution, not whether the
+    trace itself succeeds -- a Batfish failure after both sides were
+    genuinely identified still updates context, per #318 design
+    decision 5."""
+    session = _session_with_devices({"rtr-us5"}, raises=True)
+    result = answer_question("Can rtr-us5 reach 10.20.0.5?", session)
+    assert result["grounded"] is False
+    assert result["context"] == {
+        "source_device": "rtr-us5",
+        "destination_ip": "10.20.0.5",
+        "destination_display": "10.20.0.5",
+    }

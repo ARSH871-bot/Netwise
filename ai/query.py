@@ -3,17 +3,37 @@ Netwise -- Layer 2, turning a plain-English question into a grounded answer
 (US-11).
 
 WHAT THIS DOES
-    answer_question(question: str, bf: Session) -> dict
-    Takes ONE plain-English question and returns:
+    answer_question(question: str, bf: Session, context: dict | None = None) -> dict
+    Takes ONE plain-English question, optionally together with the
+    resolved entities from the PREVIOUS question in the same session, and
+    returns:
 
         {"question_understood": str | None,
          "answer": str,
-         "grounded": bool}
+         "grounded": bool,
+         "context": dict | None}
 
     `ai/explain.py` already does the other direction, finding -> English.
     This module does English -> finding: before anything can be explained,
     something has to decide which Batfish question to run and with what
     parameters. That decision is this module's whole job.
+
+    FOUR KEYS NOW, NOT THREE (#318, US-25)
+        `context` is new. It is always exactly what the caller should
+        remember for the NEXT question in this session -- either the
+        current turn's freshly resolved source device and destination (a
+        reachability question that resolved both sides), or the same
+        value that was passed IN, echoed back unchanged (every other
+        case: a non-reachability intent, an outright refusal, no context
+        supplied at all). A caller that always stores whatever comes back
+        here needs no special "unchanged" sentinel to handle -- see
+        `_carry_forward_context()`. This module stays session-agnostic
+        itself: it is handed whatever context the caller has for THIS
+        session and hands back what to remember, the same shape `bf` and
+        the question text already have as plain arguments. Session
+        bookkeeping (whose context is whose, when it is forgotten) is
+        `web/main.py`'s job, the same way staged-upload bookkeeping
+        already is -- see `_chat_context` there.
 
 THE SHAPE: A (constrained selection) + C (show the question back)
     Per docs/design/query-grounding-problem.md (issue #64): every safety
@@ -108,6 +128,18 @@ the live verification behind it, not committed to this repo)
     does not have yet (checked directly: the real Cisco fixtures carry no
     interface description text to match a name against). A real,
     incremental step, not the whole client ask.
+
+    A FOLLOW-UP MUST STILL MATCH A REACH-STYLE KEYWORD (#318, US-25)
+        "What about 10.20.0.5 instead?" -- no reach-style word at all -- is
+        still refused, on purpose. Only a question that already matches
+        `_REACH_KEYWORDS` may have ONE side filled from context when that
+        side does not resolve from its own text; the module never guesses
+        that a bare sentence is a continuation of the previous one just
+        because it happens to contain a number. A regex classifier has no
+        safe way to bound an open-ended elliptical match, and this
+        project's own rule everywhere else it has faced this choice is to
+        refuse rather than guess the moment confidence drops. Widening
+        this later is the safe direction; narrower is where it starts.
 """
 
 from __future__ import annotations
@@ -228,19 +260,32 @@ def _split_on_reach_keyword(question: str) -> Optional[tuple]:
 # ------------------------------------------------------------------------------
 
 
-def answer_question(question: str, bf: Session) -> Dict[str, Any]:
+def answer_question(
+    question: str, bf: Session, context: Optional[Dict[str, str]] = None
+) -> Dict[str, Any]:
     """Answer ONE plain-English question, grounded strictly in a real
     Batfish result -- see the module docstring for the shape and why
     neither step here calls a model.
 
-    ALWAYS returns the same three keys:
+    `context` is whatever this session's PREVIOUS turn returned as its own
+    `context` key, or None for a fresh session. This function never reads
+    or writes any session store itself -- the caller owns that, the same
+    way it owns which `bf` to pass in.
+
+    ALWAYS returns the same four keys (#318 widened this from three):
         question_understood -- what was actually run, in plain English, or
                                 None if nothing was understood well enough
-                                to run anything (shape C)
+                                to run anything (shape C). Names a
+                                carried-over slot explicitly when one was
+                                used, so a wrong carry-over is as visible
+                                as a wrong fresh translation already is.
         answer               -- the plain-English answer, or a refusal
         grounded              -- False on any refusal; lets a caller style
                                 a refusal the way a status="error" card
                                 already is, not as a normal answer
+        context               -- what the caller should remember for the
+                                NEXT question in this session. See the
+                                module docstring's "FOUR KEYS NOW" section.
 
     Never raises. A malformed question, an unresolvable name, or a Batfish
     failure are all refusals, not exceptions -- the same convention
@@ -249,13 +294,14 @@ def answer_question(question: str, bf: Session) -> Dict[str, Any]:
     """
     question = (question or "").strip()
     if not question:
-        return _refuse("The question was empty.")
+        return _refuse("The question was empty.", context)
 
     if _DEAD_RULE_KEYWORDS.search(question):
         return _answer_whole_snapshot_question(
             bf,
             batfish_question="filterLineReachability",
             question_understood="Are there any ACL lines that can never take effect?",
+            context=context,
         )
 
     if _UNDEFINED_REF_KEYWORDS.search(question):
@@ -263,21 +309,31 @@ def answer_question(question: str, bf: Session) -> Dict[str, Any]:
             bf,
             batfish_question="undefinedReferences",
             question_understood="Does anything reference a structure that is never defined?",
+            context=context,
         )
 
     split = _split_on_reach_keyword(question)
     if split is not None:
-        return _answer_reachability_question(split, bf)
+        return _answer_reachability_question(split, bf, context)
 
     return _refuse(
         "This does not match a question I can answer yet: whether one "
         "device can reach an address, whether any ACL rule never takes "
-        "effect, or whether anything references something undefined."
+        "effect, or whether anything references something undefined.",
+        context,
     )
 
 
-def _refuse(reason: str) -> Dict[str, Any]:
-    return {"question_understood": None, "answer": reason, "grounded": False}
+def _refuse(reason: str, context: Optional[Dict[str, str]]) -> Dict[str, Any]:
+    """A refusal never changes what the caller should remember -- a failed
+    attempt must not erase a genuine prior success (#318 design decision
+    5), so `context` is always echoed back exactly as it was given."""
+    return {
+        "question_understood": None,
+        "answer": reason,
+        "grounded": False,
+        "context": context,
+    }
 
 
 # ------------------------------------------------------------------------------
@@ -285,38 +341,94 @@ def _refuse(reason: str) -> Dict[str, Any]:
 # ------------------------------------------------------------------------------
 
 
-def _answer_reachability_question(split: tuple, bf: Session) -> Dict[str, Any]:
+def _build_question_understood(
+    source_device: str,
+    source_from_context: bool,
+    destination_display: str,
+    destination_from_context: bool,
+) -> str:
+    """Names a carried-over slot explicitly (#318 design decision 6) --
+    `question_understood` must show a carry-over, not just render a
+    resolved question that happens to look identical to a fresh one. This
+    is the actual safety mechanism: a wrong carry-over has to be as
+    visible as a wrong fresh translation already is."""
+    source_phrase = source_device
+    if source_from_context:
+        source_phrase = f"{source_device} (same device as your last question)"
+
+    destination_phrase = destination_display
+    if destination_from_context:
+        destination_phrase = (
+            f"{destination_display} (same destination as your last question)"
+        )
+
+    return f"Can {source_phrase} reach {destination_phrase}?"
+
+
+def _answer_reachability_question(
+    split: tuple, bf: Session, context: Optional[Dict[str, str]]
+) -> Dict[str, Any]:
     source_text, destination_text = split
 
     present = snapshot.device_names(bf)
     if present is None:
         return _refuse(
             "The devices in this snapshot could not be determined, so I "
-            "cannot tell whether the device you named is even in it."
+            "cannot tell whether the device you named is even in it.",
+            context,
         )
 
     source_device = _find_device(source_text, present)
+    source_from_context = False
+    if source_device is None and context is not None:
+        # Only trust a carried-over device if it still exists in THIS
+        # snapshot -- belt and braces on top of #318's own upload-clears-
+        # context discipline, in case context ever reaches here stale.
+        candidate = context.get("source_device")
+        if candidate is not None and candidate in present:
+            source_device = candidate
+            source_from_context = True
     if source_device is None:
         return _refuse(
             "I could not find a known device name on the source side of "
             f"the question ({source_text.strip()!r}). I can only start a "
             "reachability check from a device that is actually in this "
-            "snapshot, not a description of one."
+            "snapshot, not a description of one.",
+            context,
         )
 
     resolved = _resolve_destination(destination_text)
+    destination_from_context = False
+    if resolved is None and context is not None:
+        candidate_ip = context.get("destination_ip")
+        candidate_display = context.get("destination_display")
+        if candidate_ip is not None and candidate_display is not None:
+            resolved = (candidate_ip, candidate_display)
+            destination_from_context = True
     if resolved is None:
         return _refuse(
             "I could not find a valid IP address or network on the "
             f"destination side of the question ({destination_text.strip()!r}). "
             "For now I can only check reachability to a literal address, "
-            "not a name like \"the finance server\"."
+            "not a name like \"the finance server\".",
+            context,
         )
     destination_ip, destination_display = resolved
 
-    question_understood = (
-        f"Can {source_device} reach {destination_display}?"
+    question_understood = _build_question_understood(
+        source_device, source_from_context, destination_display, destination_from_context
     )
+
+    # Both sides are genuinely identified from here on, regardless of what
+    # the Batfish call itself returns below -- "resolved entities" is
+    # about naming resolution, not whether the trace succeeds (#318
+    # design decision 5), so this is what the caller should remember for
+    # the next question in this session.
+    new_context = {
+        "source_device": source_device,
+        "destination_ip": destination_ip,
+        "destination_display": destination_display,
+    }
 
     try:
         frame = (
@@ -342,6 +454,7 @@ def _answer_reachability_question(split: tuple, bf: Session) -> Dict[str, Any]:
                 + findings.describe_error(error)
             ),
             "grounded": False,
+            "context": new_context,
         }
 
     if frame.empty:
@@ -352,6 +465,7 @@ def _answer_reachability_question(split: tuple, bf: Session) -> Dict[str, Any]:
                 "Does it exist in this snapshot the way I expect?"
             ),
             "grounded": False,
+            "context": new_context,
         }
 
     traces = frame.iloc[0]["Traces"]
@@ -359,6 +473,7 @@ def _answer_reachability_question(split: tuple, bf: Session) -> Dict[str, Any]:
         "question_understood": question_understood,
         "answer": _describe_traces(source_device, destination_display, traces),
         "grounded": True,
+        "context": new_context,
     }
 
 
@@ -414,8 +529,17 @@ def _describe_traces(source_device: str, destination_display: str, traces: Any) 
 
 
 def _answer_whole_snapshot_question(
-    bf: Session, *, batfish_question: str, question_understood: str
+    bf: Session,
+    *,
+    batfish_question: str,
+    question_understood: str,
+    context: Optional[Dict[str, str]],
 ) -> Dict[str, Any]:
+    """A dead-rule or undefined-reference question has no parameters to
+    resolve, so it neither reads nor changes any reachability context --
+    `context` is only ever echoed back, exactly as `_refuse()` does, so a
+    different kind of question asked in between two reachability turns
+    does not erase the earlier one (#318 design decision 5)."""
     try:
         frame = getattr(bf.q, batfish_question)().answer().frame()
     except Exception as error:
@@ -426,6 +550,7 @@ def _answer_whole_snapshot_question(
                 + findings.describe_error(error)
             ),
             "grounded": False,
+            "context": context,
         }
 
     if frame.empty:
@@ -433,6 +558,7 @@ def _answer_whole_snapshot_question(
             "question_understood": question_understood,
             "answer": "No, checked the whole snapshot and found none.",
             "grounded": True,
+            "context": context,
         }
 
     return {
@@ -442,4 +568,5 @@ def _answer_whole_snapshot_question(
             "the specific lines, this question only confirms whether any exist."
         ),
         "grounded": True,
+        "context": context,
     }
