@@ -892,41 +892,58 @@ async function runScan() {
   button.disabled = true;
   document.getElementById("summary").replaceChildren();
 
-  // NO DURATION, AND THAT IS THE POINT (#331).
-  //     This said "this can take up to 15 seconds". Measured cold through
-  //     the real endpoint on a CPU-only machine:
+  // THIS MESSAGE CLAIMS NOTHING BUT THAT WORK IS HAPPENING (#331, #388).
+  //     It used to say "this can take up to 15 seconds", then "the checks
+  //     usually finish quickly; writing the explanations takes longer, and
+  //     longest the first time you scan". @ARSH871-bot's review on #388
+  //     showed every part of the second version is conditional:
   //
-  //         rtr-us5-insecure, Ollama running   median 68.0s   5 found
-  //         rtr-us5-messy, model not resident         163.9s  6 found
-  //         rtr-us5-insecure, Ollama unreachable        7.4s
-  //         multi-device-10, the largest fixture        7.6s  0 found
+  //       - only `found` findings are explained (web/main.py:918), and
+  //         Ollama is optional and off by default (docs/user-guide.md:38).
+  //         With it unreachable he measured the checks at 5.88s and the
+  //         explanations at 0.41s -- the opposite order.
+  //       - nothing passes `keep_alive` (ai/explain.py:683), and Ollama's
+  //         FAQ says "By default models are kept in memory for 5 minutes
+  //         before being unloaded" (https://docs.ollama.com/faq). So the
+  //         cold model cost recurs after an idle gap rather than only on a
+  //         session's first scan. NOT MEASURED by us: we have not timed an
+  //         unload followed by a rescan.
   //
-  //     True only when the AI layer does no work. False by 4.5x to 11x in
-  //     the configuration we ship and demo.
+  //         What IS in the code: the AI layer has no session concept at all
+  //         (no `session` anywhere in ai/explain.py) and _explanation_cache
+  //         is one module-level OrderedDict (web/main.py:540), not per
+  //         session. So nothing about the model's residency is keyed on the
+  //         session cookie.
+  //       - on a cold Batfish container the checks may dominate instead:
+  //         US-39's text says ~22s of warm-up and the docs say "a few
+  //         minutes" (CONTRIBUTING.md:187). NOT MEASURED by us -- every run
+  //         behind the figures above used a long-running container.
   //
-  //     A bigger number would not fix it. The wait scales with the count of
-  //     `found` findings and with whether the 2.6 GB model is resident, so
-  //     "up to 90 seconds" is wrong on a machine with a GPU (about 1s per
-  //     finding) and wrong again at twelve findings. There is no honest
-  //     fixed number, so this gives none.
+  //     So the message states only the thing that is true in every setup:
+  //     an analysis is running. The numbers live on #331, where they can
+  //     carry the conditions they need.
   //
-  //     What it gives instead is the ORDER things happen in and which part
-  //     is slow, because that is what distinguishes work from a hang --
-  //     which is #331's actual story. The checks are a steady 6-8s; the
-  //     explanations are 89-96% of the wait whenever the model runs; the
-  //     first run of a session also loads the model, measured at 163.9s
-  //     against 73.4s warm on the same config. A user whose first scan
-  //     takes three times as long as their second should be told that is
-  //     expected rather than left to conclude it broke and recovered.
+  //     tests/test_scan_wait_claim.py pins this sentence EXACTLY, with a
+  //     digit check as the only backstop. Rule-based guards were tried and
+  //     abandoned: the first pushed version (a0fba41) was beaten by three
+  //     mutants reported on #388 -- "up to ninety seconds" (@patelankeet2),
+  //     "a couple of minutes" and `"up to " + 15 + " seconds"`
+  //     (@ARSH871-bot) -- and by an inverted sentence that passed every one
+  //     of its checks. A wider rule-based version tried locally, never
+  //     pushed, then missed "Hang tight, nearly there" and "Give it a bit".
+  //     So changing the wording now means editing that test, which is the
+  //     point: the claim shows up in the diff. The test pins the WORDS and
+  //     cannot verify the claim is true.
   //
-  //     tests/test_scan_wait_claim.py pins each of those three claims.
+  //     "the staged config", not "your upload": this same message is shown
+  //     when the bundled sample is scanned (its loader enables Scan Now at
+  //     app.js:2042), and nothing was uploaded on that path.
   document.getElementById("findings").replaceChildren(
     el(
       "div",
       "notice loading",
-      "Analysing your upload. The checks usually finish quickly; writing " +
-        "the plain-English explanations takes longer, and longest the " +
-        "first time you scan."
+      "Analysing the staged config. " +
+        "The results will appear here when the scan has finished."
     )
   );
 

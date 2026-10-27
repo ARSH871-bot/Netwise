@@ -1,38 +1,41 @@
-"""The scan-wait message must not promise a time we have measured it missing.
+"""The scan-wait message is pinned to one agreed sentence (#331, #388).
 
-WHAT THIS PINS, AND WHY A NUMBER WAS THE PROBLEM
-    `runScan()` told every user "this can take up to 15 seconds". Measured on
-    #331, cold, through the real `GET /api/findings` on a CPU-only machine:
+WHAT THE PIN DOES
+    The message is compared to one constant. Changing MESSAGE is a deliberate
+    edit to this test, and the new wording is a claim to be justified in
+    review -- which puts the claim in the diff instead of letting it drift.
 
-        rtr-us5-insecure, Ollama running   median 68.0s   (5 found findings)
-        rtr-us5-messy, model not resident         163.9s  (6 found findings)
-        rtr-us5-insecure, Ollama unreachable        7.4s
-        multi-device-10 (largest fixture)           7.6s  (0 found findings)
+    The pushed version of this file (`a0fba41`) described what the message
+    may not say, and was beaten three times on #388: "up to ninety seconds"
+    (@patelankeet2), "a couple of minutes" and `"up to " + 15 + " seconds"`
+    (@ARSH871-bot, where the number was in the source and the fixture joined
+    only the quoted literals). An inverted sentence passed every one of its
+    checks as well.
 
-    So the sentence was true only when the AI layer did no work, and false by
-    4.5x to 11x in the configuration this project ships and demos. That is a
-    false claim about our own behaviour, on the surface a user stares at while
-    waiting, in a product whose whole premise is not overstating what it knows.
+    A wider rule-based version was then tried locally and never pushed. It
+    caught all four of those and still missed "Hang tight, nearly there" and
+    "Give it a bit" -- ordinary phrasings with no digit, no time unit and no
+    listed word. Rules of that kind cannot enumerate English, which is why
+    the guard below is an exact comparison and a digit check, and nothing
+    else.
 
-WHY THE TEST FORBIDS A NUMBER RATHER THAN CHECKING A BIGGER ONE
-    The obvious fix is "up to 90 seconds". That would be false in the other
-    direction on Arsh's machine, which has a dedicated GPU and measures about
-    1s per finding -- and it would be false again the moment a config has
-    twelve findings instead of five. The wait scales with the number of
-    `found` findings and with whether the model is resident, and the server
-    cannot know either before it starts.
+WHAT IT CANNOT PROVE
+    That the sentence is TRUE. Truth depends on the machine, on whether
+    Ollama is running, on whether Batfish is warm, and on how many problems
+    the config has -- measured on #331 at 7.4s to 163.9s on one machine. No
+    assertion over a string reaches any of that. This file stops a claim
+    drifting in unnoticed; it cannot verify one.
 
-    There is no honest fixed number, so the test asserts there is no number.
-    A duration here would have to be re-measured on every machine and every
-    config to stay true, which is the property that made the old one rot.
+    NOT MEASURED BY US: the cold-container case. US-39's text says ~22s of
+    warm-up (`tools/make_phase3_backlog.py:286`) and the docs say "a few
+    minutes" (`CONTRIBUTING.md:187`), and every run behind the #331 figures
+    used a container that had been up for days.
 
-    `_attach_remediation` is deliberately not mentioned: 0.00s in all eleven
-    measured runs. It is deterministic text with no model call.
-
-Reads the source rather than driving the DOM, which is what the other
-`app.js` assertions in this suite do. Nothing drives `runScan()` through a
-harness today -- it issues a real fetch -- so a source assertion is the
-honest level to pin a CLAIM at, as opposed to a rendering.
+"STAGED CONFIG", NOT "UPLOAD"
+    `runScan()` is the only place that renders this (`app.js:925`), and it is
+    reached after the bundled sample is loaded too -- that loader enables
+    Scan Now (`app.js:2042`) and the user clicks the same button. Nothing was
+    uploaded on that path.
 """
 
 import re
@@ -42,95 +45,74 @@ import pytest
 
 APP = Path(__file__).parent.parent / "web" / "static" / "app.js"
 
+#: The agreed wording. See the docstring: editing this is editing the test.
+MESSAGE = (
+    "Analysing the staged config. "
+    "The results will appear here when the scan has finished."
+)
+
 
 @pytest.fixture(scope="module")
-def scan_message() -> str:
-    """The string `runScan()` shows while the analysis is running."""
-    source = APP.read_text(encoding="utf-8")
+def scan_call() -> str:
+    """The RAW source of the notice call, not just its string literals.
 
+    Raw on purpose. A previous fixture returned `"".join(literals)`, so
+    `"up to " + 15 + " seconds"` arrived as `up to  seconds` and passed every
+    check -- the number was in the source and invisible to the test.
+    """
+    source = APP.read_text(encoding="utf-8")
     start = source.index("async function runScan()")
-    # Up to the `await loadFindings()` that replaces the message with results.
     end = source.index("await loadFindings()", start)
     body = source[start:end]
 
-    # The notice is built by the `el("div", "notice loading", ...)` call, and
-    # its text may be SEVERAL string literals concatenated with `+`. Join all
-    # of them from that call to its closing paren.
-    #
-    # An earlier version of this fixture filtered the literals to the ones
-    # containing "analys", which silently dropped the rest of a concatenated
-    # sentence -- so a message that did mention the explanations looked as
-    # though it did not. A fixture that sees only part of the claim cannot
-    # test the claim.
     marker = body.index('"notice loading"')
     tail = body[marker + len('"notice loading"'):]
-    literals = re.findall(r'"([^"]*)"', tail[: tail.index(");")])
-    assert literals, (
-        f"no message literals found after 'notice loading' in: {tail[:200]!r}"
-    )
-    return "".join(literals)
+    call = tail[: tail.index(");")]
+    assert call.strip(), f"no notice call text found in: {tail[:200]!r}"
+    return call
 
 
-def test_the_waiting_message_promises_no_duration(scan_message):
-    """THE ASSERTION THIS FILE EXISTS FOR.
+@pytest.fixture(scope="module")
+def scan_message(scan_call) -> str:
+    """Just the words a user reads."""
+    return "".join(re.findall(r'"([^"]*)"', scan_call))
 
-    No digits, and no spelled-out number followed by a unit. "up to 15
-    seconds" and "up to fifteen seconds" are the same promise and both are
-    unkeepable, so neither spelling gets a free pass.
+
+def test_the_message_is_exactly_the_agreed_sentence(scan_message):
+    """THE GUARD. The other two are a backstop.
+
+    A failure is not necessarily a bug -- it means the wording changed. If
+    that was deliberate, update MESSAGE in the same commit and say in the PR
+    what the new sentence claims and on what evidence.
     """
-    assert not re.search(r"\d", scan_message), (
-        f"the scan-wait message contains a number: {scan_message!r}. The wait "
-        f"scales with the count of `found` findings and with whether the model "
-        f"is resident -- measured 7.4s to 163.9s on one machine (#331) -- so no "
-        f"fixed duration is true. Say what is slow and in what order, not how long."
-    )
-
-    spelled = r"\b(one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|sixty)\b"
-    numberish = re.search(spelled + r"\s*\W*\s*(second|seconds|minute|minutes)\b",
-                          scan_message, re.IGNORECASE)
-    assert numberish is None, (
-        f"the message spells out a duration: {numberish.group(0)!r}. Writing "
-        f"the number as a word does not make it measurable."
+    assert scan_message == MESSAGE, (
+        f"the scan-wait message changed.\n"
+        f"  expected: {MESSAGE!r}\n"
+        f"  found:    {scan_message!r}\n"
+        f"Any wording here is a claim about our own behaviour. Measured on "
+        f"#331: 7.4s to 163.9s on one machine depending on Ollama and the "
+        f"config. If this change is deliberate, edit MESSAGE and justify the "
+        f"new sentence in review."
     )
 
 
-def test_it_still_says_something_is_happening(scan_message):
-    """The message's actual job, kept while the promise goes.
+def test_the_message_contains_no_digit(scan_call):
+    """Backstop, read from the RAW call so concatenation cannot hide one.
 
-    #331's story is "I want to tell work from a hang". Removing the duration
-    must not leave a sentence that fails to say work is underway.
+    Structural rather than a word list: this is the one check that sees
+    `"up to " + SCAN_SECONDS + " seconds"`, where the number never appears
+    in a string literal at all.
     """
+    found = re.findall(r"\d", scan_call)
+    assert not found, (
+        f"the message's source contains digits {found}. No fixed number is "
+        f"true: the wait depends on the machine, on Ollama, on whether "
+        f"Batfish is warm, and on how many problems the config has (#331)."
+    )
+
+
+def test_it_still_says_an_analysis_is_running(scan_message):
+    """The message's only job: #331's story is telling work from a hang."""
     assert "analys" in scan_message.lower(), (
         f"the message no longer says an analysis is running: {scan_message!r}"
-    )
-
-
-def test_it_names_the_explanations_as_the_slow_part(scan_message):
-    """WHERE THE TIME ACTUALLY GOES, SINCE THE USER CANNOT SEE IT.
-
-    89-96% of the wait is the explanation loop whenever the model runs, and
-    `analyse()` is a steady 6-8s. A message that mentioned only "the checks"
-    would be accurate about the fast 8% and silent about the slow 92%, which
-    is how the old sentence came to be believed.
-    """
-    lowered = scan_message.lower()
-    assert "explanation" in lowered or "explanations" in lowered, (
-        f"the message does not mention the explanations: {scan_message!r}. They "
-        f"are 89-96% of the wait when the model runs (#331); naming only the "
-        f"checks would describe the fast part and omit the slow one."
-    )
-
-
-def test_it_says_the_first_time_is_slowest(scan_message):
-    """The 2.6 GB model load, which is the worst single case a user meets.
-
-    Measured: 163.9s with the model not resident against 73.4s warm, same
-    config. A user whose first scan of the day takes three times as long as
-    their second should be told that is expected, not left to conclude it
-    broke and then recovered.
-    """
-    lowered = scan_message.lower()
-    assert "first" in lowered, (
-        f"the message does not say the first run is slowest: {scan_message!r}. "
-        f"Cold 163.9s against warm 73.4s on the same config (#331)."
     )
