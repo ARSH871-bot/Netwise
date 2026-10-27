@@ -78,6 +78,20 @@ TWO DIFFERENT KINDS OF MISTAKE, TWO DIFFERENT FIXES
        testing. _compute_expected_actual_outcome() computes it the same way
        the other two do, and costs nothing when it does not match.
 
+       A fourth shape (#395) was added on the identical reasoning, in a
+       check this module had not touched before: routing.py's route
+       assertions use the same two-sided "Expected X ... but Y" phrasing,
+       asking whether a flow meant to be reachable actually is, or a flow
+       meant to be blocked actually got through. Live-tested six times
+       against a real finding (routing-missing-route's RT-001, an
+       Expected-REACHABLE assertion resolving to NO_ROUTE) before adding
+       the guard -- every run correctly stated the flow was blocked, no
+       inversion reproduced. Recorded the same way as the third shape: a
+       clean result on the one real finding tested, not proof the model
+       can never get this backwards. _compute_route_assertion_outcome()
+       computes it the same way the other three do, and costs nothing
+       when it does not match.
+
 WHY status="error" ALSO GETS ITS OWN CHECK
     For "found"/"none", a wording slip is undesirable but not dangerous --
     the underlying fact was still real, the phrasing was just off. For
@@ -325,10 +339,79 @@ def _compute_expected_actual_outcome(detail: str) -> Optional[str]:
 
 
 # ------------------------------------------------------------------------------
-# 1d. Deterministic remediation text (#221)
+# 1d. Deterministic route-assertion outcome computation (#395, US-62)
+# ------------------------------------------------------------------------------
+
+# Matches evidence.detail EXACTLY as produced by
+# analysis.checks.routing._evaluate() (via run()'s route-statement loop):
+#   "Expected REACHABLE for a flow from <src> to <dst>, but traceroute ended
+#    in <disposition>. Path: <hops>"
+#   "Expected UNREACHABLE for a flow from <src> to <dst>, but traceroute
+#    unexpectedly succeeded: <disposition>. Path: <hops>"
+# Deliberately narrow, same discipline as the three patterns above -- this
+# must only match the two shapes it is confident about, never a loose
+# approximation of them.
+_ROUTE_ASSERTION_DETAIL_PATTERN = re.compile(
+    r"Expected (?P<expected>REACHABLE|UNREACHABLE) for a flow from "
+    r"(?P<src>\S+) to (?P<dst>\S+), but "
+    r"(?:traceroute ended in (?P<failed_disposition>\w+)"
+    r"|traceroute unexpectedly succeeded: (?P<succeeded_disposition>\w+))"
+)
+
+
+def _compute_route_assertion_outcome(detail: str) -> Optional[str]:
+    """For a routing route-assertion finding, state -- in unambiguous
+    words -- what actually happened versus what was expected, rather than
+    asking the model to keep the two straight itself.
+
+    WHY THIS EXISTS (#395)
+        The identical "which of two opposite states is which" attribution
+        task #52 (dead rules) and #145 (policy_compliance) already got
+        backwards on real findings, and access_control's own
+        `_compute_expected_actual_outcome()` was added on the same
+        structural risk before a third accident. `routing.py`'s route
+        assertions use the same two-sided phrasing ("Expected X ... but
+        Y") the other guarded shapes needed a fix for -- a route meant to
+        be reachable that is not, or a route meant to be blocked that
+        gets through -- so a model restating it could plausibly invert
+        which one is true. Live-tested against the local model before
+        adding this; see the PR this shipped in for the result, recorded
+        honestly whether or not an inversion reproduced on that occasion,
+        the same bar `_compute_expected_actual_outcome()` was added at.
+
+    Returns a plain-English statement naming both sides explicitly, or
+    None if `detail` is not in one of the two exact shapes
+    `routing._evaluate()` produces -- nothing to compute from, so the
+    model gets no extra help and reasons from the raw finding alone, same
+    as any other finding shape.
+    """
+    match = _ROUTE_ASSERTION_DETAIL_PATTERN.search(detail)
+    if not match:
+        return None
+
+    expected = match.group("expected")
+    if expected == "REACHABLE":
+        disposition = match.group("failed_disposition")
+        return (
+            f"this flow was expected to be REACHABLE, but it is not -- "
+            f"the actual result is {disposition}. The route or filter "
+            f"configuration is what is blocking it, not a requirement "
+            f"that says it should be."
+        )
+    disposition = match.group("succeeded_disposition")
+    return (
+        f"this flow was expected to be UNREACHABLE, but it got through -- "
+        f"the actual result is {disposition}. The route or filter "
+        f"configuration is what is letting it through, despite the "
+        f"requirement that it should not."
+    )
+
+
+# ------------------------------------------------------------------------------
+# 1e. Deterministic remediation text (#221)
 #
-# A DIFFERENT QUESTION FROM SECTIONS 1a-1c ABOVE
-#     Those three compute what a finding MEANS, to correct the model's
+# A DIFFERENT QUESTION FROM SECTIONS 1a-1d ABOVE
+#     Those four compute what a finding MEANS, to correct the model's
 #     wording before it speaks. This computes what would FIX it, and never
 #     goes near the model at all -- ai/Modelfile rule 6 explicitly forbids
 #     recommending a fix "unless the evidence itself states what would
@@ -624,17 +707,18 @@ def _build_prompt(finding: Dict[str, Any]) -> str:
        example's answer almost verbatim for an unrelated finding, rather
        than reasoning about the finding it was actually given.
 
-    2. If one of the three deterministic outcome functions can compute the
+    2. If one of the four deterministic outcome functions can compute the
        real answer from evidence.detail -- _compute_dead_rule_outcome() for
        a dead-ACL-rule finding, _compute_policy_outcome() for a
-       policy_compliance finding (#145), or _compute_expected_actual_outcome()
-       for an access_control policy-statement finding -- that computed fact,
-       labelled as already-verified. See each function's docstring for why
-       it exists and how confident it has to be before it says anything at
-       all. The three never more than one matches at once: each check
-       produces its own exact evidence.detail shape, so trying the next one
-       only when an earlier one returns None does not risk masking one with
-       another.
+       policy_compliance finding (#145), _compute_expected_actual_outcome()
+       for an access_control policy-statement finding, or
+       _compute_route_assertion_outcome() for a routing route-assertion
+       finding (#395) -- that computed fact, labelled as already-verified.
+       See each function's docstring for why it exists and how confident it
+       has to be before it says anything at all. The four never more than
+       one matches at once: each check produces its own exact
+       evidence.detail shape, so trying the next one only when an earlier
+       one returns None does not risk masking one with another.
     """
     parts = [
         "Explain ONLY the finding below. Do not reuse any wording from the "
@@ -648,6 +732,7 @@ def _build_prompt(finding: Dict[str, Any]) -> str:
         _compute_dead_rule_outcome(detail)
         or _compute_policy_outcome(detail)
         or _compute_expected_actual_outcome(detail)
+        or _compute_route_assertion_outcome(detail)
     )
     if computed_outcome is not None:
         # Deliberately NOT a distinctive, quotable label like "IMPORTANT

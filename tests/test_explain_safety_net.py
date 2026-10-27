@@ -28,6 +28,7 @@ from ai.explain import (
     _compute_dead_rule_outcome,
     _compute_expected_actual_outcome,
     _compute_policy_outcome,
+    _compute_route_assertion_outcome,
     _evidence_detail,
     _fallback_error_explanation,
     _fallback_plain_restatement,
@@ -324,6 +325,98 @@ def test_expected_actual_outcome_returns_none_for_a_policy_compliance_finding():
     detail = _real_detail("prohibition")
     assert _compute_expected_actual_outcome(detail) is None
     assert _compute_policy_outcome(detail) is not None  # the OTHER guard still matches
+
+
+# --- _compute_route_assertion_outcome (routing) -----------------------------
+# Same structural reasoning as the three guards above, a fourth producer of
+# the identical "which of two opposite states is which" shape: a route
+# assertion names what was expected and what actually happened, on real
+# routing.py route-assertion findings. Live-tested six times against a real
+# finding (routing-missing-route, RT-001) before adding the guard -- see the
+# PR this shipped in for the recorded result.
+
+
+def _real_route_detail(expected: str, trace):
+    """The genuine evidence string, from the genuine function -- same
+    discipline _real_detail() already uses for policy_compliance, so a
+    future rewording of routing._evaluate()'s text fails this test loudly
+    instead of leaving it green while it tests nothing (#145/#169)."""
+    from analysis.checks.routing import _evaluate
+
+    class FakeHop:
+        def __init__(self, node):
+            self.node = node
+
+    class FakeTrace:
+        def __init__(self, disposition, hops=None):
+            self.disposition = disposition
+            self.hops = hops or [FakeHop("some-node")]
+
+    violation = _evaluate(expected, [FakeTrace(trace)])
+    assert violation is not None, "test setup error: this trace should violate"
+    return f"Expected {expected} for a flow from 10.10.10.5 to 10.20.20.5, but {violation}"
+
+
+def test_a_required_reachable_route_that_is_actually_blocked():
+    """Real evidence.detail shape from routing._evaluate()'s REACHABLE
+    branch -- a flow that was supposed to get through did not."""
+    detail = _real_route_detail("REACHABLE", "NO_ROUTE")
+    outcome = _compute_route_assertion_outcome(detail)
+    assert outcome is not None
+    assert "REACHABLE" in outcome
+    assert "NO_ROUTE" in outcome
+
+
+def test_a_required_unreachable_route_that_actually_got_through():
+    """The other direction -- a flow that was supposed to be blocked
+    succeeded instead."""
+    detail = _real_route_detail("UNREACHABLE", "ACCEPTED")
+    outcome = _compute_route_assertion_outcome(detail)
+    assert outcome is not None
+    assert "UNREACHABLE" in outcome
+    assert "ACCEPTED" in outcome
+
+
+def test_route_assertion_outcome_returns_none_for_an_unrelated_finding():
+    detail = "BatfishException: Work terminated abnormally"
+    assert _compute_route_assertion_outcome(detail) is None
+
+
+def test_route_assertion_outcome_returns_none_for_a_dead_rule_finding():
+    """The four computations must not cross-match each other's shape."""
+    detail = (
+        "Unreachable line: permit icmp any any (action PERMIT). "
+        "Blocked by: deny   ip any any. Reason: BLOCKING_LINES"
+    )
+    assert _compute_route_assertion_outcome(detail) is None
+
+
+def test_route_assertion_outcome_returns_none_for_an_expected_actual_finding():
+    """Against the real producer, not a copy of its wording -- same
+    #145/#169 discipline as the cross-match test above it."""
+    detail = "Expected PERMIT but got DENY, decided by: deny ip any any"
+    assert _compute_route_assertion_outcome(detail) is None
+    assert _compute_expected_actual_outcome(detail) is not None  # the OTHER guard still matches
+
+
+def test_route_assertion_outcome_reaches_the_generated_prompt():
+    """The wiring, not just the function -- a computed fact that exists but
+    is never passed to _build_prompt() protects nothing. Matches the
+    "wiring, not just the function" discipline this project's other
+    computed-fact and discard-function tests already use."""
+    detail = _real_route_detail("REACHABLE", "NO_ROUTE")
+    finding = {
+        "id": "RT-001",
+        "check": "routing",
+        "severity": "high",
+        "device": "rtr-hq",
+        "summary": "A route assertion does not hold",
+        "evidence": {"detail": detail, "source": "traceroute"},
+        "status": "found",
+    }
+    prompt = _build_prompt(finding)
+    assert "NO_ROUTE" in prompt
+    assert "already verified by code and certain" in prompt
 
 
 # --- _fallback_plain_restatement -----------------------------------------------
