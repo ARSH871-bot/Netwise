@@ -891,11 +891,59 @@ async function runScan() {
   // would race to render into the same container.
   button.disabled = true;
   document.getElementById("summary").replaceChildren();
+
+  // THIS MESSAGE CLAIMS NOTHING BUT THAT WORK IS HAPPENING (#331, #388).
+  //     It used to say "this can take up to 15 seconds", then "the checks
+  //     usually finish quickly; writing the explanations takes longer, and
+  //     longest the first time you scan". @ARSH871-bot's review on #388
+  //     showed every part of the second version is conditional:
+  //
+  //       - only `found` findings are explained (web/main.py:918), and
+  //         Ollama is optional and off by default (docs/user-guide.md:38).
+  //         With it unreachable he measured the checks at 5.88s and the
+  //         explanations at 0.41s -- the opposite order.
+  //       - nothing passes `keep_alive` (ai/explain.py:683), and Ollama's
+  //         FAQ says "By default models are kept in memory for 5 minutes
+  //         before being unloaded" (https://docs.ollama.com/faq). So the
+  //         cold model cost recurs after an idle gap rather than only on a
+  //         session's first scan. NOT MEASURED by us: we have not timed an
+  //         unload followed by a rescan.
+  //
+  //         What IS in the code: the AI layer has no session concept at all
+  //         (no `session` anywhere in ai/explain.py) and _explanation_cache
+  //         is one module-level OrderedDict (web/main.py:540), not per
+  //         session. So nothing about the model's residency is keyed on the
+  //         session cookie.
+  //       - on a cold Batfish container the checks may dominate instead:
+  //         US-39's text says ~22s of warm-up and the docs say "a few
+  //         minutes" (CONTRIBUTING.md:187). NOT MEASURED by us -- every run
+  //         behind the figures above used a long-running container.
+  //
+  //     So the message states only the thing that is true in every setup:
+  //     an analysis is running. The numbers live on #331, where they can
+  //     carry the conditions they need.
+  //
+  //     tests/test_scan_wait_claim.py pins this sentence EXACTLY, with a
+  //     digit check as the only backstop. Rule-based guards were tried and
+  //     abandoned: the first pushed version (a0fba41) was beaten by three
+  //     mutants reported on #388 -- "up to ninety seconds" (@patelankeet2),
+  //     "a couple of minutes" and `"up to " + 15 + " seconds"`
+  //     (@ARSH871-bot) -- and by an inverted sentence that passed every one
+  //     of its checks. A wider rule-based version tried locally, never
+  //     pushed, then missed "Hang tight, nearly there" and "Give it a bit".
+  //     So changing the wording now means editing that test, which is the
+  //     point: the claim shows up in the diff. The test pins the WORDS and
+  //     cannot verify the claim is true.
+  //
+  //     "the staged config", not "your upload": this same message is shown
+  //     when the bundled sample is scanned (its loader enables Scan Now at
+  //     app.js:2042), and nothing was uploaded on that path.
   document.getElementById("findings").replaceChildren(
     el(
       "div",
       "notice loading",
-      "Analysing your upload, this can take up to 15 seconds..."
+      "Analysing the staged config. " +
+        "The results will appear here when the scan has finished."
     )
   );
 
