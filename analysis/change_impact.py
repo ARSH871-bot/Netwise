@@ -811,6 +811,54 @@ def analyse_change(
     return results
 
 
+# --- How big is this change? (#420) -------------------------------------------
+#
+# One number beside the findings, so a reviewer gets the size of a change
+# before reading every card. Three rules, each from #420's criteria:
+#
+#   COMPUTED, AND SHOWN. The score is a weighted count of the findings above,
+#   and the breakdown is returned with it, so it can always be explained. It
+#   reads only `status` and `severity` -- structured fields -- never a
+#   summary's wording, which this project has been burnt by twice (#145,
+#   #205).
+#
+#   OPENING COUNTS MORE THAN CLOSING. Not a second model: the severities
+#   above already encode it (_OPENING_SEVERITY high, _CLOSING_SEVERITY
+#   medium; a broken policy rule carries the rule's own severity), so
+#   weighting by severity carries it through.
+#
+#   INCOMPLETE NEVER SCORES SMALL. A change that could not be fully compared
+#   has an unknown size, and a low number would read as reassurance. Any
+#   `error` finding makes the band "incomplete", whatever the number.
+#
+# Returned beside the findings, never inside them: it is not an F-1 field
+# (see the open question on #405 about adding keys to findings).
+
+SCORE_WEIGHTS = {"high": 3, "medium": 2, "low": 1}
+
+#: (lowest score, band). A score of 0 is "none" only when nothing was blind.
+SCORE_BANDS = ((10, "large"), (4, "moderate"), (1, "small"), (0, "none"))
+
+
+def score(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The size of a change, from analyse_change()'s findings."""
+    found = [f for f in results if f.get("status") == "found"]
+    blind = [f for f in results if f.get("status") == "error"]
+    breakdown = {sev: sum(1 for f in found if f.get("severity") == sev) for sev in SCORE_WEIGHTS}
+    total = sum(SCORE_WEIGHTS[sev] * n for sev, n in breakdown.items())
+    band = next(name for floor, name in SCORE_BANDS if total >= floor)
+    if blind:
+        band = "incomplete"
+    parts = [f"{n} {sev} x{SCORE_WEIGHTS[sev]}" for sev, n in breakdown.items() if n]
+    explanation = (" + ".join(parts) + f" = {total}") if parts else "no changes found = 0"
+    if blind:
+        explanation += (f"; {len(blind)} part(s) could not be compared, so the real size is "
+                        "unknown and may be larger")
+    return {"score": total, "band": band, "complete": not blind,
+            "breakdown": dict(breakdown, could_not_compare=len(blind)),
+            "explanation": explanation}
+
+
 def main() -> None:
     if len(sys.argv) not in (3, 4):
         sys.exit(
@@ -826,6 +874,9 @@ def main() -> None:
             print(f"note: {note}")
     results = analyse_change(sys.argv[1], sys.argv[2], policy=policy)
     print(json.dumps(results, indent=2))
+    size = score(results)
+    print()
+    print(f"  size   {size['band']} ({size['explanation']})")
     print()
     for status in ("found", "none", "error"):
         print(f"  {status:<6} {sum(1 for f in results if f['status'] == status)}")
