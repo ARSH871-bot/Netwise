@@ -367,6 +367,29 @@ leaves the user diffing two header specifiers by eye.
 This needs no Batfish, no Docker and no config. It is a property of the policy
 file alone.
 
+### Two policies that contradict each other (Studio 6)
+
+`load_policy()` refuses a policy that contradicts **itself**, but it reads one
+file at a time. Two teams can each write a consistent policy for the same
+firewall — security's and the application owners' — that contradict each
+other once applied together. `policy_conflicts.between()` compares two
+policies in both directions, using the same comparison loop as the
+single-policy check, so the two can never disagree about what a contradiction
+is:
+
+```
+$ python -m analysis.policy_conflicts security.json app-owners.json
+CONFLICT: security.json rule 1 ('Guests must not reach the finance server')
+forbids what app-owners.json rule 1 ('The kiosk subnet must reach the finance
+API over HTTPS') requires on rtr-us5 filter acl_in: both describe
+src 10.10.10.64/26, dst 10.20.0.5/32, dst ports 443, protocol tcp
+```
+
+Every rule is named with its file, because both files may have a "rule 1".
+A pair that cannot be compared is printed as a `warning:`, the same three
+answers as within one policy. The exit status is 1 for a conflict, so it can
+gate a script.
+
 #### What is not a contradiction
 
 Two prohibitions over the same traffic are consistent — denying twice is

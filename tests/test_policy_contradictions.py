@@ -300,6 +300,14 @@ def test_overlapping_port_ranges_are_described_once():
     assert detail == "dst ports 60-70"
 
 
+def test_overlapping_address_blocks_are_described_once():
+    # 10.20.0.5 sits inside BOTH blocks on the other side, so without the
+    # de-duplication it would be listed twice.
+    _, detail = policy_conflicts.overlap({"dstIps": "10.20.0.5"},
+                                         {"dstIps": "10.20.0.0/24,10.0.0.0/8"})
+    assert detail == "dst 10.20.0.5/32"
+
+
 def test_a_boolean_is_not_a_port():
     verdict, _ = policy_conflicts.overlap({"dstPorts": True}, {"dstPorts": "1"})
     assert verdict is None
