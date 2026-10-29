@@ -367,6 +367,42 @@ leaves the user diffing two header specifiers by eye.
 This needs no Batfish, no Docker and no config. It is a property of the policy
 file alone.
 
+### Has an edit made the policy weaker? (#418)
+
+A policy is edited many times, and each edit looks reasonable on its own. A
+prohibition narrowed from `10.10.10.0/24` to `10.10.10.0/25` has stopped
+protecting half a subnet, and the diff is one character. `analysis/policy_drift.py`
+compares two versions of one policy and reports every place the new one
+protects **less**:
+
+| change | weaker? |
+|---|---|
+| rule removed | yes |
+| prohibition narrowed (forbids less) | yes |
+| requirement widened (requires more to be allowed) | yes |
+| kind changed, or moved to another device or filter | yes |
+| rule added, prohibition widened, requirement narrowed | no — stricter |
+
+```
+$ python -m analysis.policy_drift old.json new.json
+WEAKER: rule 1 ('...') now forbids less: srcIps 10.10.10.0/24 is no longer fully forbidden
+(exit status 1)
+```
+
+This needs **containment**, which is stricter than the overlap test above: is
+all of the old rule's traffic inside the new rule's? For one query against
+another it is exact, field by field; addresses are collapsed first, so two
+/25s do contain their /24. For a rule with several queries it is exact when
+one new query holds the old one, when none of them touch it, or when only one
+touches it. When several new queries might cover it *together*, it reports
+**undecidable** rather than "unchanged" — the same third answer as the
+contradiction check, and the safe direction: it never calls a policy
+unchanged without proof.
+
+Rules are paired by `number`, and the command line warns when a file relies
+on numbers the loader assigned, because inserting one rule shifts every
+number after it.
+
 #### What is not a contradiction
 
 Two prohibitions over the same traffic are consistent — denying twice is
