@@ -290,6 +290,8 @@ def overlap(query_a: Any, query_b: Any) -> Tuple[Optional[bool], str]:
 #: Characters that make a `filter` a Batfish SPECIFIER rather than a name --
 #: `/acl_in/` is a regex, `@in(Gi0/0)` an interface's filter, `a,b` a list.
 #: Such a filter can name the same ACL as another rule's plain name.
+#: Not `_COMPLEX`: in an address list `/` is a CIDR and `,` separates entries,
+#: both parsed above, while in a filter name they mean regex and list.
 _FILTER_SPECIFIER = re.compile(r"[/@(,]")
 
 
