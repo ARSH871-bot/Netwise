@@ -321,17 +321,15 @@ def _ref(entry: Any) -> str:
     return f"{label} ({description!r})" if description else label
 
 
-def contradictions(entries: Sequence[Any]) -> Tuple[List[str], List[str]]:
-    """Find prohibition/requirement pairs that cannot both hold.
+def _compare(prohibitions: Sequence[Any], requirements: Sequence[Any],
+             name_p: Any = _ref, name_r: Any = _ref) -> Tuple[List[str], List[str]]:
+    """Every prohibition against every requirement. The one comparison loop.
 
-    Returns `(contradictions, undecidable)`, both lists of human-readable
-    sentences naming each pair. A caller that refuses the policy should use
-    the first; it must not treat the second as nothing -- see the module
-    docstring.
+    Shared by contradictions() (one policy) and between() (two policies), so
+    the two can never disagree about what a contradiction is. `name_p` and
+    `name_r` say how to name a rule from each side -- the only difference
+    between the two callers.
     """
-    prohibitions = [e for e in entries if isinstance(e, dict) and e.get("kind") == "prohibition"]
-    requirements = [e for e in entries if isinstance(e, dict) and e.get("kind") == "requirement"]
-
     conflicts: List[str] = []
     undecided: List[str] = []
     for forbid in prohibitions:
@@ -343,7 +341,7 @@ def contradictions(entries: Sequence[Any]) -> Tuple[List[str], List[str]]:
             where = f"on {node} filter {filter_name}" if node and filter_name else ""
             if scope is None:
                 undecided.append(
-                    f"{_ref(forbid)} and {_ref(require)} name filters "
+                    f"{name_p(forbid)} and {name_r(require)} name filters "
                     f"{forbid.get('filter')!r} and {require.get('filter')!r} on {node}, "
                     "which Batfish may resolve to the same ACL; could not be compared"
                 )
@@ -355,7 +353,7 @@ def contradictions(entries: Sequence[Any]) -> Tuple[List[str], List[str]]:
                     verdict, detail = overlap(qa, qb)
                     if verdict is True:
                         conflicts.append(
-                            f"{_ref(forbid)} forbids what {_ref(require)} requires {where}"
+                            f"{name_p(forbid)} forbids what {name_r(require)} requires {where}"
                             f": both describe {detail}".replace("  ", " ")
                         )
                         found = True
@@ -366,7 +364,87 @@ def contradictions(entries: Sequence[Any]) -> Tuple[List[str], List[str]]:
                     break
             if not found and unknown_here:
                 undecided.append(
-                    f"{_ref(forbid)} and {_ref(require)} {where} could not be compared"
+                    f"{name_p(forbid)} and {name_r(require)} {where} could not be compared"
                     f": {unknown_here[0]}".replace("  ", " ")
                 )
     return conflicts, undecided
+
+
+def _kind(entries: Sequence[Any], kind: str) -> List[Any]:
+    return [e for e in entries if isinstance(e, dict) and e.get("kind") == kind]
+
+
+def contradictions(entries: Sequence[Any]) -> Tuple[List[str], List[str]]:
+    """Find prohibition/requirement pairs that cannot both hold.
+
+    Returns `(contradictions, undecidable)`, both lists of human-readable
+    sentences naming each pair. A caller that refuses the policy should use
+    the first; it must not treat the second as nothing -- see the module
+    docstring.
+    """
+    return _compare(_kind(entries, "prohibition"), _kind(entries, "requirement"))
+
+
+def between(entries_a: Sequence[Any], entries_b: Sequence[Any],
+            name_a: str = "policy A", name_b: str = "policy B") -> Tuple[List[str], List[str]]:
+    """Find rules in one policy that forbid what the OTHER policy requires.
+
+    WHY THIS EXISTS (Studio 6, multi-policy conflict check)
+        Two teams can each write a policy for the same firewall -- security's
+        and the application owners' -- and each can be consistent on its own.
+        Applied together, a prohibition in one and a requirement in the other
+        can describe the same traffic, and then no configuration satisfies
+        both. load_policy() cannot see that, because it only ever reads one
+        file at a time.
+
+    Both directions are checked: A's prohibitions against B's requirements,
+    and B's prohibitions against A's. Same three answers as within one policy
+    -- a pair that cannot be decided is returned in the second list, never
+    dropped. Rules are named with their policy, so the user knows which file
+    to change.
+    """
+    ref_a = lambda e: f"{name_a} {_ref(e)}"   # noqa: E731
+    ref_b = lambda e: f"{name_b} {_ref(e)}"   # noqa: E731
+    c1, u1 = _compare(_kind(entries_a, "prohibition"), _kind(entries_b, "requirement"), ref_a, ref_b)
+    c2, u2 = _compare(_kind(entries_b, "prohibition"), _kind(entries_a, "requirement"), ref_b, ref_a)
+    return c1 + c2, u1 + u2
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    """`python -m analysis.policy_conflicts first.json second.json`
+
+    Loads each file the normal way -- so a file that contradicts ITSELF is
+    refused with the loader's own message, naming that file -- then compares
+    the two. Exit status 1 when they contradict each other, 0 otherwise.
+    """
+    import sys
+    from pathlib import Path
+
+    from analysis.policy import PolicyError, load_policy_file
+
+    args = list(sys.argv[1:] if argv is None else argv)
+    if len(args) != 2:
+        print("usage: python -m analysis.policy_conflicts <first-policy.json> <second-policy.json>")
+        return 2
+    loaded = []
+    for path in args:
+        try:
+            loaded.append(load_policy_file(path))
+        except PolicyError as error:
+            print(f"{path}: not loaded -- {error}")
+            return 2
+    a, b = (Path(x).name for x in args)
+    conflicts, undecided = between(
+        loaded[0].entries_for("policy_compliance"), loaded[1].entries_for("policy_compliance"), a, b)
+    for line in conflicts:
+        print(f"CONFLICT: {line}")
+    for line in undecided:
+        print(f"warning: {line}")
+    if not conflicts:
+        print(f"No rule in {a} forbids what {b} requires, or the other way round"
+              + (f" ({len(undecided)} pair(s) could not be compared, above)." if undecided else "."))
+    return 1 if conflicts else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
