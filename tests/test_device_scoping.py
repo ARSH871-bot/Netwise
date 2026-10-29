@@ -201,6 +201,9 @@ def test_a_missing_device_never_becomes_a_clean_result(monkeypatch):
 def _run_policy_with_devices(monkeypatch, present):
     """Run policy_compliance with a known device set and Batfish stubbed out."""
     monkeypatch.setattr(policy_compliance.snapshot, "device_names", lambda bf: present)
+    # The filter is in the path (#430); that guard has its own tests.
+    monkeypatch.setattr(policy_compliance, "_not_in_path", lambda *args: False)
+    monkeypatch.setattr(policy_compliance, "_applied_filters", lambda bf: {})
     # No rule may actually reach Batfish: every one that runs returns "holds".
     monkeypatch.setattr(policy_compliance, "_search", lambda *a, **k: [])
     return policy_compliance.run(_FakeSession())

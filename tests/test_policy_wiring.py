@@ -255,6 +255,9 @@ def test_a_complete_entry_loads_and_runs(monkeypatch):
     everything."""
     monkeypatch.setattr(policy_compliance.snapshot, "device_names",
                         lambda bf: {"rtr-us5"})
+    # The filter is in the path (#430); that guard has its own tests.
+    monkeypatch.setattr(policy_compliance, "_not_in_path", lambda *args: False)
+    monkeypatch.setattr(policy_compliance, "_applied_filters", lambda bf: {})
     monkeypatch.setattr(
         policy_compliance, "_search",
         lambda *a, **k: [{"Flow": "f", "Line_Content": "deny ip any any"}])
@@ -512,6 +515,9 @@ def test_the_users_rules_are_the_ones_queried(monkeypatch):
     """
     monkeypatch.setattr(policy_compliance.snapshot, "device_names",
                         lambda bf: {"rtr-acme"})
+    # The filter is in the path (#430); that guard has its own tests.
+    monkeypatch.setattr(policy_compliance, "_not_in_path", lambda *args: False)
+    monkeypatch.setattr(policy_compliance, "_applied_filters", lambda bf: {})
 
     asked: List[str] = []
 
@@ -534,6 +540,9 @@ def test_without_a_policy_our_own_device_is_queried(monkeypatch):
     """The other direction, so the test above cannot pass by accident."""
     monkeypatch.setattr(policy_compliance.snapshot, "device_names",
                         lambda bf: {"rtr-us5"})
+    # The filter is in the path (#430); that guard has its own tests.
+    monkeypatch.setattr(policy_compliance, "_not_in_path", lambda *args: False)
+    monkeypatch.setattr(policy_compliance, "_applied_filters", lambda bf: {})
     asked: List[str] = []
     monkeypatch.setattr(
         policy_compliance, "_search",
@@ -555,6 +564,9 @@ def test_every_finding_says_which_policy_it_came_from(monkeypatch, supplied):
     node = "rtr-acme" if supplied else "rtr-us5"
     monkeypatch.setattr(policy_compliance.snapshot, "device_names",
                         lambda bf: {node})
+    # The filter is in the path (#430); that guard has its own tests.
+    monkeypatch.setattr(policy_compliance, "_not_in_path", lambda *args: False)
+    monkeypatch.setattr(policy_compliance, "_applied_filters", lambda bf: {})
     monkeypatch.setattr(
         policy_compliance, "_search",
         lambda bf, n, f, a, h: [{"Flow": "a flow", "Line_Content": "permit ip any any"}])
@@ -587,6 +599,9 @@ def test_the_provenance_does_not_break_the_145_inversion_guard(monkeypatch):
 
     monkeypatch.setattr(policy_compliance.snapshot, "device_names",
                         lambda bf: {"rtr-us5"})
+    # The filter is in the path (#430); that guard has its own tests.
+    monkeypatch.setattr(policy_compliance, "_not_in_path", lambda *args: False)
+    monkeypatch.setattr(policy_compliance, "_applied_filters", lambda bf: {})
     monkeypatch.setattr(
         policy_compliance, "_search",
         lambda bf, n, f, a, h: [{"Flow": "10.10.10.1 -> 8.8.8.8",
@@ -796,6 +811,9 @@ def _run_against(monkeypatch, devices, pol):
     """Run the real check with a known device set and no Batfish."""
     monkeypatch.setattr(policy_compliance.snapshot, "device_names",
                         lambda bf: set(devices))
+    # The filter is in the path (#430); that guard has its own tests.
+    monkeypatch.setattr(policy_compliance, "_not_in_path", lambda *args: False)
+    monkeypatch.setattr(policy_compliance, "_applied_filters", lambda bf: {})
     monkeypatch.setattr(policy_compliance, "_search", lambda *a, **k: [])
     policy.set_active_policy(pol)
     try:

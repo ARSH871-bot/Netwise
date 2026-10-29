@@ -104,8 +104,17 @@ can surface as `success`. **Neither bucket means what a policy check needs it
 to mean.**
 
 `searchFilters` reasons at the filter level and needs no routing, so it is
-correct on these fixtures and on any config where policy intent lives in ACLs
-— and it cannot be fooled in either direction.
+correct on these fixtures and on any config where policy intent lives in ACLs.
+
+**It can be fooled in one way: a filter that is in no traffic's path (#430).**
+With `ip access-group acl_in in` removed from `rtr-us5-secure`, every rule held
+and `PC-000` gave a green tick, while `traceroute` delivered telnet from the LAN
+to the server. The proof was right about the filter and wrong about the device.
+So before a rule can pass, the check confirms its filter is some interface's
+incoming or outgoing filter on that node (`interfaceProperties`). If it is not,
+or that cannot be found out, the rule reports **could not check** (`PC-05n`).
+A `filter` written as a specifier (`/regex/`, `@in(...)`, a list) names no
+single filter to look for, and is checked as before.
 
 > Found by @ARSH871-bot re-running this section rather than reading it, after
 > it was quoted in a team message. The measurement here was right and the
@@ -122,7 +131,8 @@ name **raises `BatfishException`** rather than returning an empty frame.
 
 So the check must let that exception surface as a `status="error"` finding and
 must never wrap these calls in a bare `except: pass`. Empty then means exactly
-one thing: the policy holds.
+one thing: the policy holds **for that filter**, and the applied-filter check
+above is what makes the filter's answer the device's answer.
 
 ### Do not use `invertSearch` to express "everything except X"
 
