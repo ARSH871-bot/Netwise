@@ -28,6 +28,7 @@ from ai.explain import (
     _compute_dead_rule_outcome,
     _compute_expected_actual_outcome,
     _compute_policy_outcome,
+    _compute_routing_outcome,
     _evidence_detail,
     _fallback_error_explanation,
     _fallback_plain_restatement,
@@ -324,6 +325,107 @@ def test_expected_actual_outcome_returns_none_for_a_policy_compliance_finding():
     detail = _real_detail("prohibition")
     assert _compute_expected_actual_outcome(detail) is None
     assert _compute_policy_outcome(detail) is not None  # the OTHER guard still matches
+
+
+# --- _compute_routing_outcome (routing assertions, US-62, #395) --------------
+# Found live, not assumed: six runs of a real routing-violation finding with
+# no computed fact. The reachability direction itself (reachable vs not) was
+# never inverted -- but 3 of 6 runs inverted the flow's SOURCE and
+# DESTINATION ("the HQ network cannot be reached FROM the branch network"
+# instead of the real "HQ cannot reach branch"). Both IPs were real in every
+# run, so _names_an_invented_fact() would not have caught it -- the addresses
+# were just attributed to the wrong role in the relationship. That is why the
+# computed fact below states the direction explicitly, not only the
+# disposition.
+
+
+def _real_routing_detail(expected: str, disposition: str, src="10.10.10.5",
+                         dst="10.20.20.5"):
+    """The genuine violation text, from the genuine function -- same
+    reasoning as _real_detail() above, so a future rewording of
+    routing._evaluate() fails this test loudly rather than leaving it green
+    while testing a string that no longer exists."""
+    from analysis.checks.routing import _evaluate
+
+    class _FakeHop:
+        def __init__(self, node):
+            self.node = node
+
+    class _FakeTrace:
+        def __init__(self, disposition):
+            self.disposition = disposition
+            self.hops = [_FakeHop("rtr-a")]
+
+    violation = _evaluate(expected, [_FakeTrace(disposition)])
+    assert violation is not None, "fixture disposition did not violate the assertion"
+    return f"Expected {expected} for a flow from {src} to {dst}, but {violation}"
+
+
+def test_a_required_reachable_flow_that_is_actually_blocked():
+    """Real evidence.detail shape from routing.py's assertion loop -- a flow
+    required to reach its destination currently does not."""
+    detail = _real_routing_detail("REACHABLE", "NO_ROUTE")
+    outcome = _compute_routing_outcome(detail)
+    assert outcome is not None
+    assert "REACHABLE" in outcome
+    assert "NO_ROUTE" in outcome
+    assert "NOT reach" in outcome
+
+
+def test_a_required_unreachable_flow_that_is_actually_reaching():
+    """The other direction -- a flow required to be blocked currently gets
+    through."""
+    detail = _real_routing_detail("UNREACHABLE", "ACCEPTED")
+    outcome = _compute_routing_outcome(detail)
+    assert outcome is not None
+    assert "UNREACHABLE" in outcome
+    assert "ACCEPTED" in outcome
+    assert "DOES reach" in outcome
+
+
+def test_the_flow_direction_is_stated_explicitly_not_only_the_disposition():
+    """THE REASON THIS FUNCTION EXISTS. Both IPs must appear, in the real
+    source-then-destination order, so the model has the direction already
+    settled rather than free to invert it the way 3 of 6 live runs did
+    before this guard existed."""
+    detail = _real_routing_detail("REACHABLE", "NO_ROUTE", src="10.10.10.5", dst="10.20.20.5")
+    outcome = _compute_routing_outcome(detail)
+    assert outcome is not None
+    assert "10.10.10.5" in outcome
+    assert "10.20.20.5" in outcome
+    assert outcome.index("10.10.10.5") < outcome.index("10.20.20.5"), (
+        "source must be stated before destination, matching the real flow "
+        "direction, not left for the model to order"
+    )
+    assert "not the reverse" in outcome
+
+
+def test_routing_outcome_returns_none_for_an_unrelated_finding():
+    detail = "BatfishException: Work terminated abnormally"
+    assert _compute_routing_outcome(detail) is None
+
+
+def test_routing_outcome_returns_none_for_an_expected_actual_finding():
+    """The four computations must not cross-match each other's shape."""
+    detail = "Expected PERMIT but got DENY, decided by: deny ip any any"
+    assert _compute_routing_outcome(detail) is None
+    assert _compute_expected_actual_outcome(detail) is not None  # the OTHER guard still matches
+
+
+@pytest.mark.parametrize("expected,disposition", [
+    ("REACHABLE", "NO_ROUTE"),
+    ("UNREACHABLE", "ACCEPTED"),
+])
+def test_the_safeguard_can_read_what_routing_actually_writes(expected, disposition):
+    """Against the real producer, not a copy of its wording -- same
+    discipline test_the_safeguard_can_read_what_policy_compliance_actually_
+    writes already uses."""
+    detail = _real_routing_detail(expected, disposition)
+    outcome = _compute_routing_outcome(detail)
+    assert outcome is not None, (
+        f"_compute_routing_outcome() did not match routing._evaluate()'s "
+        f"real output for {expected}/{disposition}: {detail!r}"
+    )
 
 
 # --- _fallback_plain_restatement -----------------------------------------------
@@ -701,6 +803,28 @@ def test_prompt_includes_the_computed_outcome_for_a_testfilters_finding():
     assert "already verified" in prompt.lower()
     assert "DENY" in prompt
     assert "PERMIT" in prompt
+
+
+def test_prompt_includes_the_computed_outcome_for_a_routing_finding():
+    """US-62/#395 -- a routing assertion gets the same deterministic help as
+    the other three shapes. Caught by mutation testing: removing
+    _compute_routing_outcome() from _build_prompt()'s chain broke nothing
+    in the direct unit tests above, because those call the function
+    directly rather than through the chain it is supposed to be wired
+    into -- this is the test that actually exercises the wiring."""
+    finding = {
+        "id": "RT-001",
+        "evidence": {
+            "detail": (
+                "Expected REACHABLE for a flow from 10.10.10.5 to "
+                "10.20.20.5, but traceroute ended in NO_ROUTE. Path: rtr-hq"
+            )
+        },
+    }
+    prompt = _build_prompt(finding)
+    assert "already verified" in prompt.lower()
+    assert "10.10.10.5" in prompt
+    assert "10.20.20.5" in prompt
 
 
 def test_prompt_tells_the_model_not_to_echo_the_computed_fact_as_a_label():
