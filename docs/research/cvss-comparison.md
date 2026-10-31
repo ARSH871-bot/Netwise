@@ -86,15 +86,13 @@ way to make.
 R-1 rates every dead line `low`, because "a line that can never match cannot
 expose anything", and says the exposure "is reported separately, on its own
 finding, by R-2". That holds when the line shadowing the dead one is a
-blanket permit. I measured a case where it isn't:
+blanket permit. I measured a case where it isn't: a one-router config whose
+ACL `lan_in`, applied inbound on the LAN interface, reads
 
 ```
-interface GigabitEthernet0/0
- ip access-group lan_in in
-ip access-list extended lan_in
- permit tcp 10.10.10.0 0.0.0.255 host 10.20.0.5
- deny   tcp host 10.10.10.66 host 10.20.0.5 eq telnet     <- dead
- deny   ip any any
+permit tcp 10.10.10.0 0.0.0.255 host 10.20.0.5
+deny   tcp host 10.10.10.66 host 10.20.0.5 eq telnet     <- dead
+deny   ip any any
 ```
 
 ```
