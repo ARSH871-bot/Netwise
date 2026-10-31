@@ -604,7 +604,16 @@ unapproved destination, and POL-2 arm A catches DNS to `10.20.0.5`. Verified:
 ---
 
 
-### Change impact now checks every policy rule (#323, US-31)
+## 7. Sign-off
+
+| Member | Role in this decision | Agreed |
+|---|---|---|
+| Shubham | Author; owns the check | ✅ |
+| Arsh | Registry, pipeline, `findings.py` impact | ✅ rules, IDs, and the §4 `findings.py` change |
+| Samika | Severity values are his | ✅ |
+| Ankeet | Consumes findings in the AI layer | ⬜ |
+
+## 8. Change impact checks every policy rule (#323, #402, #403)
 
 `analyse_change(before, after)` used to answer one question: *what traffic
 moved*. It now also answers the one an engineer actually asks before applying
@@ -616,8 +625,9 @@ breach is), once against each snapshot:
 
 | before | after | reported as |
 |---|---|---|
-| holds | holds | unchanged |
-| breached | breached | unchanged — still broken, not caused by this edit |
+| holds | holds | unchanged — *on the rule's filter*, which is all that is claimed |
+| breached | breached, by the same traffic | **still breached** — `found`, `low`: not caused by this edit, but never a green tick (#402) |
+| breached | breached, by different traffic | **ALTERS** the rule — at the rule's own severity, from a differential `searchFilters` (#402) |
 | breached | holds | **FIXES** the rule, `low` |
 | holds | breached | **BREAKS** the rule, at the rule's own severity |
 
@@ -653,11 +663,12 @@ built-in rules, like a scan does. The CLI takes it as a third argument:
 python -m analysis.change_impact before/ after/ my-policy.json
 ```
 
-## 7. Sign-off
 
-| Member | Role in this decision | Agreed |
-|---|---|---|
-| Shubham | Author; owns the check | ✅ |
-| Arsh | Registry, pipeline, `findings.py` impact | ✅ rules, IDs, and the §4 `findings.py` change |
-| Samika | Severity values are his | ✅ |
-| Ankeet | Consumes findings in the AI layer | ⬜ |
+### What it does not look at, said out loud (#402, #403)
+
+- **Devices added or removed** are their own `found` cards. Before #403, deleting a whole router came back as "No change detected" with a green tick, because neither Batfish comparison describes a device that exists on one side only.
+- **A rule about a device in neither configuration** is *not applicable* — this change cannot affect it — and is named in the result, not reported as an error. Reporting it as an error made every proposal on a network without `rtr-us5` "could not be fully verified".
+- **A rule about a device on one side only** cannot be compared and is a single `CH-051` error.
+- **Only `policy_compliance` rules are compared.** A policy with `access_control` or `routing` rules gets a sentence beginning "NOT compared:" naming how many, and a policy with no `policy_compliance` rules says no rule of the user's was checked.
+- **"Unchanged" means the rule's filter decided its traffic the same way.** Unbinding the filter from its interface changes the network without changing that answer, so the wording claims no more than that.
+
