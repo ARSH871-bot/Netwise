@@ -73,6 +73,9 @@ def two_arm_rule(monkeypatch):
     """
     monkeypatch.setattr(policy_compliance.snapshot, "device_names",
                         lambda bf: {"rtr-us5"})
+    # The filter is in the path (#430); that guard has its own tests.
+    monkeypatch.setattr(policy_compliance, "_not_in_path", lambda *args: False)
+    monkeypatch.setattr(policy_compliance, "_applied_filters", lambda bf: {})
     rule = {
         "number": 2,
         "description": "The internal server is reachable only over HTTPS",

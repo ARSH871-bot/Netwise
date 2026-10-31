@@ -267,6 +267,9 @@ def test_policy_compliance_reports_a_violated_rule_as_found(monkeypatch):
     monkeypatch.setattr(policy_compliance, "POLICY_RULES", [rule])
     monkeypatch.setattr(policy_compliance.snapshot, "device_names",
                         lambda bf: {"rtr-us5"})
+    # The filter is in the path (#430); that guard has its own tests.
+    monkeypatch.setattr(policy_compliance, "_not_in_path", lambda *args: False)
+    monkeypatch.setattr(policy_compliance, "_applied_filters", lambda bf: {})
     # A non-empty hit list means the rule is violated. The shape is what
     # `_describe()` actually reads, so this exercises the real evidence text
     # rather than a stand-in that would break the moment it was used.
