@@ -387,16 +387,30 @@ code, the defect was fixed the same day, and the evaluation was re-run rather
 than edited to match.
 
 > **UPDATE, #393 (US-60).** The measurement above was done once, by hand, on
-> 10 August. `tools/query_quality.py` now runs an equivalent held-out
-> question set in CI, every time -- 20 entries across all three intents,
-> scored against the same four outcomes this section already uses, with the
-> same clean record: 0 answered-wrong. Unlike `ai/explain.py`'s held-out set
-> (#346), `ai/query.py` calls no model, so the tool executes the real
-> `answer_question()` fresh on every run rather than replaying a frozen
-> capture -- there is nothing here that can go stale the way captured model
-> text can. The exact 20 questions measured on 10 August were never
-> preserved verbatim, so this is a rebuilt, equivalent set rather than a
-> literal replay; see `tests/fixtures/query_quality/holdout.json`.
+> 10 August. `tools/query_quality.py` now runs a **regression set** in CI,
+> every time -- 20 entries across all three intents, scored against the
+> same four outcomes this section already uses. Call it that rather than a
+> held-out set: every entry is a scenario `tests/test_query_translation.py`
+> already makes pass, so 0 answered-wrong is guaranteed by construction, not
+> measured -- it is a real regression guard, but it cannot show what the
+> 10 August measurement showed, and should not be read as a re-measurement
+> with "the same clean record".
+>
+> Checked anyway, with eight phrasings outside the set, on the exact fixture
+> Q01 uses (`rtr-us5` to `218.8.104.58`, `ACCEPTED`): three come back
+> answered-wrong by this section's own bar -- a negation is dropped
+> ("Can rtr-us5 NOT reach..." answered as if asked without the "NOT"), a
+> port constraint is dropped, and a protocol constraint is dropped, each
+> answered confidently rather than refused. The port case is a regression
+> since 10 August specifically: the equivalent question ("is port 443 open
+> to the internal server") was refused then, and is answered with the port
+> silently gone now. None of this is `tools/query_quality.py`'s fault --
+> these are `ai/query.py` behaviours the regression set does not exercise
+> yet, tracked as #435 rather than fixed here. Unlike `ai/explain.py`'s
+> held-out set (#346), `ai/query.py` calls no model, so the tool executes
+> the real `answer_question()` fresh on every run rather than replaying a
+> frozen capture -- there is nothing here that can go stale the way
+> captured model text can. See `tests/fixtures/query_quality/holdout.json`.
 
 ---
 
