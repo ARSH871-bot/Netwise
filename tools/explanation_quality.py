@@ -248,8 +248,8 @@ def _format_report(score: Dict[str, Any]) -> str:
     if "fallback" in score:
         lines.append("")
         lines.append(
-            f"fallback-sourced (not scored against the threshold -- "
-            f"cannot be wrong by construction):"
+            "fallback-sourced (not scored against the threshold -- "
+            "cannot be wrong by construction):"
         )
         for row in score["fallback"]["per_finding"]:
             lines.append(
