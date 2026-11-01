@@ -341,6 +341,10 @@ _ROUTING_ASSERTION_DETAIL_PATTERN = re.compile(
     r"(?P<src>\S+) to (?P<dst>\S+), but "
     r"(?:traceroute ended in (?P<failed_disposition>\w+)"
     r"|traceroute unexpectedly succeeded: (?P<succeeded_disposition>\w+))"
+    # routing._evaluate() appends this when more than one path was traced
+    # (#399 review, @shubhamkataria2005) -- optional, since a single-path
+    # finding has no such suffix at all.
+    r"(?:.*\((?P<n>\d+) of (?P<m>\d+) paths (?:failed|succeeded)\))?"
 )
 
 
@@ -376,6 +380,21 @@ def _compute_routing_outcome(detail: str) -> Optional[str]:
     real disposition explicitly, or None if `detail` is not in the exact
     shape routing.py's assertion loop produces -- nothing to compute from,
     so the model gets no extra help and reasons from the raw finding alone.
+
+    A PARTIAL multi-path result is stated as a split, not flattened (#399
+    review, @shubhamkataria2005). routing._evaluate() appends "(n of m paths
+    failed/succeeded)" when more than one path was traced. If n < m, some
+    paths disagree with the rest, and a flat "does NOT reach"/"DOES reach"
+    would overclaim exactly what this function exists to prevent -- the
+    other three computed-fact functions already refuse to pick a side on
+    genuinely mixed evidence (_compute_dead_rule_outcome() on disagreeing
+    blocking lines), and ai/query.py's own traceroute answer states a mixed
+    result as a fraction rather than guessing a single yes/no. This mirrors
+    that rather than returning None, because the fraction itself IS the
+    verified fact -- withholding it would leave the model to describe the
+    split in its own words, the exact risk this function family exists to
+    remove. When n == m every path agrees, so the flat statement is still
+    exactly accurate and unchanged.
     """
     match = _ROUTING_ASSERTION_DETAIL_PATTERN.search(detail)
     if not match:
@@ -383,8 +402,21 @@ def _compute_routing_outcome(detail: str) -> Optional[str]:
 
     expected = match.group("expected")
     src, dst = match.group("src"), match.group("dst")
+    n, m = match.group("n"), match.group("m")
+    mixed = n is not None and int(n) < int(m)
+
     if match.group("failed_disposition"):
         disposition = match.group("failed_disposition")
+        if mixed:
+            return (
+                f"{n} of {m} traced paths for the flow FROM {src} TO {dst} "
+                f"-- that direction, not the reverse -- do NOT reach {dst} "
+                f"(one ended in {disposition}); the rest do. That is a "
+                f"real, mixed result, not a single yes or no -- state both "
+                f"parts, do not round it to one. The statement requires "
+                f"this flow to be {expected}; whether that holds depends on "
+                f"which path is taken."
+            )
         return (
             f"the flow FROM {src} TO {dst} -- that direction, not the "
             f"reverse -- currently does NOT reach {dst}; the trace ended in "
@@ -394,6 +426,16 @@ def _compute_routing_outcome(detail: str) -> Optional[str]:
             f"the requirement itself."
         )
     disposition = match.group("succeeded_disposition")
+    if mixed:
+        return (
+            f"{n} of {m} traced paths for the flow FROM {src} TO {dst} -- "
+            f"that direction, not the reverse -- DO reach {dst} (one "
+            f"succeeded as {disposition}); the rest do not. That is a "
+            f"real, mixed result, not a single yes or no -- state both "
+            f"parts, do not round it to one. The statement requires this "
+            f"flow to be {expected}; whether that holds depends on which "
+            f"path is taken."
+        )
     return (
         f"the flow FROM {src} TO {dst} -- that direction, not the "
         f"reverse -- currently DOES reach {dst} ({disposition}). That is "

@@ -345,6 +345,15 @@ def _real_routing_detail(expected: str, disposition: str, src="10.10.10.5",
     reasoning as _real_detail() above, so a future rewording of
     routing._evaluate() fails this test loudly rather than leaving it green
     while testing a string that no longer exists."""
+    return _real_routing_detail_multi(expected, [disposition], src=src, dst=dst)
+
+
+def _real_routing_detail_multi(expected: str, dispositions, src="10.10.10.5",
+                               dst="10.20.20.5"):
+    """Same as _real_routing_detail(), but for more than one traced path --
+    exercises routing._evaluate()'s "(n of m paths failed/succeeded)" suffix
+    against the real function, for the mixed-result case (#399 review,
+    @shubhamkataria2005)."""
     from analysis.checks.routing import _evaluate
 
     class _FakeHop:
@@ -356,8 +365,8 @@ def _real_routing_detail(expected: str, disposition: str, src="10.10.10.5",
             self.disposition = disposition
             self.hops = [_FakeHop("rtr-a")]
 
-    violation = _evaluate(expected, [_FakeTrace(disposition)])
-    assert violation is not None, "fixture disposition did not violate the assertion"
+    violation = _evaluate(expected, [_FakeTrace(d) for d in dispositions])
+    assert violation is not None, "fixture dispositions did not violate the assertion"
     return f"Expected {expected} for a flow from {src} to {dst}, but {violation}"
 
 
@@ -398,6 +407,43 @@ def test_the_flow_direction_is_stated_explicitly_not_only_the_disposition():
         "direction, not left for the model to order"
     )
     assert "not the reverse" in outcome
+
+
+def test_a_mixed_reachable_result_states_the_split_not_a_flat_claim():
+    """#399 review, @shubhamkataria2005. One of two paths fails; the flow
+    DOES reach its destination half the time, so a flat "does NOT reach"
+    would overclaim exactly what this function exists to prevent."""
+    detail = _real_routing_detail_multi("REACHABLE", ["NO_ROUTE", "ACCEPTED"])
+    outcome = _compute_routing_outcome(detail)
+    assert outcome is not None
+    assert "1 of 2" in outcome
+    assert "do NOT reach" in outcome
+    assert "mixed" in outcome
+    assert "does NOT reach" not in outcome, "must not also state the flat claim"
+
+
+def test_a_mixed_unreachable_result_states_the_split_not_a_flat_claim():
+    """The other direction: one of two paths gets through, so a flat "DOES
+    reach" would claim more than the evidence proves."""
+    detail = _real_routing_detail_multi("UNREACHABLE", ["ACCEPTED", "NO_ROUTE"])
+    outcome = _compute_routing_outcome(detail)
+    assert outcome is not None
+    assert "1 of 2" in outcome
+    assert "DO reach" in outcome
+    assert "mixed" in outcome
+    assert "DOES reach" not in outcome, "must not also state the flat claim"
+
+
+def test_a_unanimous_multi_path_result_still_states_the_flat_claim():
+    """Every path agrees (2 of 2 failed) -- not a mixed result, so the flat
+    statement is still exactly accurate and must not be watered down into
+    a "mixed" hedge it does not need."""
+    detail = _real_routing_detail_multi("REACHABLE", ["NO_ROUTE", "DENIED_IN"])
+    outcome = _compute_routing_outcome(detail)
+    assert outcome is not None
+    assert "does NOT reach" in outcome
+    assert "mixed" not in outcome
+    assert "of 2" not in outcome
 
 
 def test_routing_outcome_returns_none_for_an_unrelated_finding():
