@@ -603,6 +603,56 @@ unapproved destination, and POL-2 arm A catches DNS to `10.20.0.5`. Verified:
 
 ---
 
+
+### Change impact now checks every policy rule (#323, US-31)
+
+`analyse_change(before, after)` used to answer one question: *what traffic
+moved*. It now also answers the one an engineer actually asks before applying
+an edit — **which of my rules does this break, and which does it fix?**
+
+Each `policy_compliance` rule is asked the same Batfish question the check
+asks (`policy_compliance._search`, so the two can never disagree about what a
+breach is), once against each snapshot:
+
+| before | after | reported as |
+|---|---|---|
+| holds | holds | unchanged |
+| breached | breached | unchanged — still broken, not caused by this edit |
+| breached | holds | **FIXES** the rule, `low` |
+| holds | breached | **BREAKS** the rule, at the rule's own severity |
+
+Direction uses change impact's existing terms: a prohibition breach created is
+*opening*, a requirement breach created is *tightening*, and the reverse for
+fixes.
+
+**A change that fixes one breach and creates another reports both.** Measured
+against real Batfish, moving `rtr-us5-insecure` to the secure ACL *minus its
+DNS line*:
+
+```
+CH-001 found medium  A rule change blocks traffic that acl_in used to allow
+CH-002 found medium  A rule change blocks traffic that acl_in used to allow
+CH-003 found medium  Traffic no longer reaches a destination it used to reach
+CH-004 found low     This change FIXES policy rule 1
+CH-005 found low     This change FIXES policy rule 2
+CH-006 found low     This change FIXES policy rule 3
+CH-007 found medium  This change BREAKS policy rule 4 (DNS to the approved resolver must work)
+```
+
+The first three — the stages that existed before — describe the edit purely as
+blocking traffic, which reads as a safe hardening. Only CH-007 says DNS broke.
+
+A rule that could not be asked on either side is reported as an `error`,
+never as unchanged. Unchanged rules are named inside the single all-clear when
+nothing moved, so the module still emits exactly one `CH-000`.
+
+`analyse_change()` takes an optional `policy=`; without one it uses the
+built-in rules, like a scan does. The CLI takes it as a third argument:
+
+```bash
+python -m analysis.change_impact before/ after/ my-policy.json
+```
+
 ## 7. Sign-off
 
 | Member | Role in this decision | Agreed |

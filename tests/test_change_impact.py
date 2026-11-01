@@ -117,6 +117,11 @@ def _stub(monkeypatch, *, filters=None, flows=None, filters_raises=False, flows_
 
     monkeypatch.setattr(change_impact, "_filter_change_findings", fake_filters)
     monkeypatch.setattr(change_impact, "_reachability_change_findings", fake_flows)
+    # The policy stage (#323) is stubbed to "no rules" by default, so these
+    # tests keep meaning what they meant before it existed. Its own tests are
+    # in tests/test_change_against_policy.py.
+    monkeypatch.setattr(change_impact, "_policy_change_findings",
+                        lambda bf, number: ([], [], number))
 
 
 def _a_change(number=1):
