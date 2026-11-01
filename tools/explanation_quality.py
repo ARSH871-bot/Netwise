@@ -32,8 +32,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
+
+# RUN AS A SCRIPT, NOT ONLY AS A MODULE (same fix as tools/preflight.py, #172).
+#     `python -m tools.explanation_quality` puts the repository root on
+#     sys.path; `python tools/explanation_quality.py` puts tools/ there
+#     instead, so `from ai.explain import ...` below (current_prompt_sha256,
+#     #385 review) would fail with ModuleNotFoundError. This file had no
+#     cross-package import before that function existed, so it never needed
+#     this -- tests/test_tools_invocation.py enforces it the moment one is
+#     added, which is why it caught this immediately rather than later.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 #: Resolved relative to this file, not the caller's working directory --
 #: so this runs correctly from the repository root regardless of which of
@@ -110,6 +122,32 @@ def current_modelfile_sha256(path: Path = MODELFILE_PATH) -> str:
     that still matches.
     """
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def current_prompt_sha256(finding: Dict[str, Any]) -> str:
+    """The sha256 of what `ai/explain.py` would actually send the model for
+    `finding` right now (#385 review, @shubhamkataria2005).
+
+    WHY THIS EXISTS, SEPARATELY FROM current_modelfile_sha256()
+        What the model sees is `ai/Modelfile` PLUS `_build_prompt(finding)`
+        in `ai/explain.py`, which includes the computed-fact functions
+        (#395/#399/#401). The Modelfile hash above cannot see a change to
+        those -- measured: with #401 merged on top of this held-out set,
+        all tests still passed, because #401 rewrites the computed fact for
+        AC-002 (this set's own #384 capture, rated 2/2) without touching
+        `ai/Modelfile` at all. So the set would stay "fresh" by the
+        Modelfile check while describing a prompt the product no longer
+        sends.
+
+    One hash per finding, not one hash for the whole set, because a change
+    to one computed-fact function (say, the routing one) must not mark
+    EVERY finding stale -- only the ones whose own prompt actually moved.
+    That keeps this from becoming #267's always-red case, where any new
+    test turns the whole document stale regardless of what it covers.
+    """
+    from ai.explain import _build_prompt
+
+    return hashlib.sha256(_build_prompt(finding).encode("utf-8")).hexdigest()
 
 
 def _load_raw(path: Path) -> Dict[str, Any]:

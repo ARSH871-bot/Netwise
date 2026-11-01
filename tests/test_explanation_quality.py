@@ -24,6 +24,7 @@ import pytest
 from tools.explanation_quality import (
     EXPLANATION_QUALITY_THRESHOLD,
     current_modelfile_sha256,
+    current_prompt_sha256,
     load_holdout,
     load_holdout_metadata,
     score_holdout,
@@ -224,4 +225,47 @@ def test_the_holdout_set_is_captured_against_the_current_modelfile():
         "longer reflects what the model currently produces -- re-capture "
         "and re-rate the held-out set (see docs/evaluation.md Part 4's "
         "method), do not just update the recorded hash to silence this."
+    )
+
+
+def test_current_modelfile_sha256_actually_hashes_the_file_not_a_constant(tmp_path):
+    """#385 review nit, @shubhamkataria2005: nothing proved this function
+    reads the file rather than returning a hard-coded value, since every
+    other test only compares it against the one real Modelfile it was
+    already going to match."""
+    import hashlib
+
+    probe = tmp_path / "Modelfile"
+    probe.write_text("a probe Modelfile that is not the real one\n", encoding="utf-8")
+    expected = hashlib.sha256(probe.read_bytes()).hexdigest()
+    assert current_modelfile_sha256(probe) == expected
+
+    probe.write_text("a DIFFERENT probe Modelfile\n", encoding="utf-8")
+    assert current_modelfile_sha256(probe) != expected, (
+        "changing the file's content must change the hash -- a constant "
+        "would pass the first assertion and fail to change here"
+    )
+
+
+def test_each_model_written_entry_is_captured_against_the_current_prompt():
+    """#385 review, @shubhamkataria2005: the Modelfile hash above cannot
+    see a change to _build_prompt() itself -- measured, with #401 merged
+    on top of this set, all tests still passed even though #401 rewrites
+    the computed fact for AC-002, this set's own #384 capture. One prompt
+    hash per finding, so a change to one computed-fact function marks only
+    the findings whose own prompt actually moved, not the whole set."""
+    stale = []
+    for finding in load_holdout():
+        if finding["captured_explanation_source"] != "model":
+            continue
+        live = current_prompt_sha256(finding["finding"])
+        if live != finding["captured_prompt_sha256"]:
+            stale.append(finding["id"])
+    assert not stale, (
+        f"these held-out entries were captured against a prompt "
+        f"_build_prompt() no longer builds: {stale}. The published rating "
+        f"for each one now describes text the product would not actually "
+        f"send -- re-capture and re-rate those entries (see "
+        f"docs/evaluation.md Part 4's method), do not just update the "
+        f"recorded hash to silence this."
     )
