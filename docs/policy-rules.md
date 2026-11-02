@@ -508,6 +508,28 @@ Rules are paired by `number`, and the command line warns when a file relies
 on numbers the loader assigned, because inserting one rule shifts every
 number after it.
 
+### Which subnets does no rule talk about? (#421)
+
+PC-049 reports devices no rule covers. `analysis/policy_coverage.py` goes one
+level down: for every interface Batfish reports, is there a rule whose source
+or destination overlaps its subnet?
+
+```
+$ python -m analysis.policy_coverage tests/fixtures/routing-secure my-policy.json
+  rtr-branch   GigabitEthernet0/0     10.1.1.0/30        UNCOVERED
+  rtr-branch   GigabitEthernet0/1     10.20.20.0/24      covered    rule(s) 1
+  rtr-hq       GigabitEthernet0/0     10.10.10.0/24      covered    rule(s) 1
+  rtr-hq       GigabitEthernet0/1     10.1.1.0/30        UNCOVERED
+2 of 4 interface subnet(s) are covered by a policy rule
+```
+
+Only rules about a device that is in the snapshot count — a rule about a
+missing device never runs (PC-050), so it covers nothing. Address syntax this
+code cannot parse makes a subnet **unknown**, not uncovered, and a device
+whose interfaces cannot be listed is unknown, never covered. An uncovered
+subnet is coverage information, not a violation. Drawing it is the
+dashboard's job; `coverage_map()` returns the rows.
+
 
 ## 4. Finding IDs
 
