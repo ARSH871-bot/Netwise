@@ -104,8 +104,17 @@ can surface as `success`. **Neither bucket means what a policy check needs it
 to mean.**
 
 `searchFilters` reasons at the filter level and needs no routing, so it is
-correct on these fixtures and on any config where policy intent lives in ACLs
-— and it cannot be fooled in either direction.
+correct on these fixtures and on any config where policy intent lives in ACLs.
+
+**It can be fooled in one way: a filter that is in no traffic's path (#430).**
+With `ip access-group acl_in in` removed from `rtr-us5-secure`, every rule held
+and `PC-000` gave a green tick, while `traceroute` delivered telnet from the LAN
+to the server. The proof was right about the filter and wrong about the device.
+So before a rule can pass, the check confirms its filter is some interface's
+incoming or outgoing filter on that node (`interfaceProperties`). If it is not,
+or that cannot be found out, the rule reports **could not check** (`PC-05n`).
+A `filter` written as a specifier (`/regex/`, `@in(...)`, a list) names no
+single filter to look for, and is checked as before.
 
 > Found by @ARSH871-bot re-running this section rather than reading it, after
 > it was quoted in a team message. The measurement here was right and the
@@ -122,7 +131,8 @@ name **raises `BatfishException`** rather than returning an empty frame.
 
 So the check must let that exception surface as a `status="error"` finding and
 must never wrap these calls in a bare `except: pass`. Empty then means exactly
-one thing: the policy holds.
+one thing: the policy holds **for that filter**, and the applied-filter check
+above is what makes the filter's answer the device's answer.
 
 ### Do not use `invertSearch` to express "everything except X"
 
@@ -367,41 +377,28 @@ leaves the user diffing two header specifiers by eye.
 This needs no Batfish, no Docker and no config. It is a property of the policy
 file alone.
 
-### Has an edit made the policy weaker? (#418)
+### Two policies that contradict each other (Studio 6)
 
-A policy is edited many times, and each edit looks reasonable on its own. A
-prohibition narrowed from `10.10.10.0/24` to `10.10.10.0/25` has stopped
-protecting half a subnet, and the diff is one character. `analysis/policy_drift.py`
-compares two versions of one policy and reports every place the new one
-protects **less**:
-
-| change | weaker? |
-|---|---|
-| rule removed | yes |
-| prohibition narrowed (forbids less) | yes |
-| requirement widened (requires more to be allowed) | yes |
-| kind changed, or moved to another device or filter | yes |
-| rule added, prohibition widened, requirement narrowed | no — stricter |
+`load_policy()` refuses a policy that contradicts **itself**, but it reads one
+file at a time. Two teams can each write a consistent policy for the same
+firewall — security's and the application owners' — that contradict each
+other once applied together. `policy_conflicts.between()` compares two
+policies in both directions, using the same comparison loop as the
+single-policy check, so the two can never disagree about what a contradiction
+is:
 
 ```
-$ python -m analysis.policy_drift old.json new.json
-WEAKER: rule 1 ('...') now forbids less: srcIps 10.10.10.0/24 is no longer fully forbidden
-(exit status 1)
+$ python -m analysis.policy_conflicts security.json app-owners.json
+CONFLICT: security.json rule 1 ('Guests must not reach the finance server')
+forbids what app-owners.json rule 1 ('The kiosk subnet must reach the finance
+API over HTTPS') requires on rtr-us5 filter acl_in: both describe
+src 10.10.10.64/26, dst 10.20.0.5/32, dst ports 443, protocol tcp
 ```
 
-This needs **containment**, which is stricter than the overlap test above: is
-all of the old rule's traffic inside the new rule's? For one query against
-another it is exact, field by field; addresses are collapsed first, so two
-/25s do contain their /24. For a rule with several queries it is exact when
-one new query holds the old one, when none of them touch it, or when only one
-touches it. When several new queries might cover it *together*, it reports
-**undecidable** rather than "unchanged" — the same third answer as the
-contradiction check, and the safe direction: it never calls a policy
-unchanged without proof.
-
-Rules are paired by `number`, and the command line warns when a file relies
-on numbers the loader assigned, because inserting one rule shifts every
-number after it.
+Every rule is named with its file, because both files may have a "rule 1".
+A pair that cannot be compared is printed as a `warning:`, the same three
+answers as within one policy. The exit status is 1 for a conflict, so it can
+gate a script.
 
 #### What is not a contradiction
 
@@ -474,6 +471,42 @@ skip the real ones.
 that matter — undecidable collapsing to "no overlap", unmodelled fields being
 ignored, the scope check being dropped, two prohibitions counting as a
 conflict, and the overlap detail falling out of the message — each fail it.
+
+### Has an edit made the policy weaker? (#418)
+
+A policy is edited many times, and each edit looks reasonable on its own. A
+prohibition narrowed from `10.10.10.0/24` to `10.10.10.0/25` has stopped
+protecting half a subnet, and the diff is one character. `analysis/policy_drift.py`
+compares two versions of one policy and reports every place the new one
+protects **less**:
+
+| change | weaker? |
+|---|---|
+| rule removed | yes |
+| prohibition narrowed (forbids less) | yes |
+| requirement widened (requires more to be allowed) | yes |
+| kind changed, or moved to another device or filter | yes |
+| rule added, prohibition widened, requirement narrowed | no — stricter |
+
+```
+$ python -m analysis.policy_drift old.json new.json
+WEAKER: rule 1 ('...') now forbids less: srcIps 10.10.10.0/24 is no longer fully forbidden
+(exit status 1)
+```
+
+This needs **containment**, which is stricter than the overlap test above: is
+all of the old rule's traffic inside the new rule's? For one query against
+another it is exact, field by field; addresses are collapsed first, so two
+/25s do contain their /24. For a rule with several queries it is exact when
+one new query holds the old one, when none of them touch it, or when only one
+touches it. When several new queries might cover it *together*, it reports
+**undecidable** rather than "unchanged" — the same third answer as the
+contradiction check, and the safe direction: it never calls a policy
+unchanged without proof.
+
+Rules are paired by `number`, and the command line warns when a file relies
+on numbers the loader assigned, because inserting one rule shifts every
+number after it.
 
 
 ## 4. Finding IDs
