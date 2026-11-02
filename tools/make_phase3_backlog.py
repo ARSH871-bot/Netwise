@@ -16,13 +16,17 @@ WHERE THE STORIES COME FROM
                   week, or one a buyer's security review asks about and we
                   currently cannot answer. Nothing is here because it sounds
                   impressive.
+    US-58..US-64  Studio 6 specialist picks, agreed by all four on 13 October
+                  2026: two or three per member, each from the area they
+                  research this block. Filed straight from the team's slate.
 
 WHAT IS DELIBERATELY NOT CREATED
-    Three stories already exist as issues. Creating them again would be the
+    These stories already exist as issues. Creating them again would be the
     duplicate-fact defect committed by the script written to avoid it:
         US-28  ->  #78    the client's real pfSense export
         US-53  ->  #220   one real compliance benchmark pack (CIS Cisco IOS)
         US-57  ->  #308   coverage on every surface or none
+        US-58..US-64  ->  #391..#397   the specialist picks
     They are folded into the milestone instead, keeping their history.
 
 THE SPLIT, STATED RATHER THAN ARRANGED
@@ -487,14 +491,32 @@ STORIES = [
 EXISTING = [
     ("US-28", 78, N, "Convert my whole pfSense export, including NAT",
      "Vendors", "L"),
-    ("US-53", 220, A, "One real compliance benchmark pack (CIS Cisco IOS)",
+    # Shubham's since 13 October 2026, as one of Shubham's specialist picks.
+    ("US-53", 220, S, "One real compliance benchmark pack (CIS Cisco IOS)",
      "Content", "L"),
     ("US-57", 308, A, "Coverage on every surface that shows findings, or none",
      "Honesty", "M"),
+    # Specialist picks, filed from the team's slate with their size left to
+    # sprint planning, so "TBC" here rather than a guess.
+    ("US-58", 391, A, "ACL anomaly taxonomy: correlation, generalisation and "
+     "both directions of redundancy as their own findings", "Specialist", "TBC"),
+    ("US-59", 392, A, "Migration equivalence for a filter that is renamed or "
+     "moved to another device", "Specialist", "TBC"),
+    ("US-60", 393, N, "A repeatable score for ai/query.py, run in CI",
+     "Specialist", "TBC"),
+    ("US-61", 394, N, "Measured confidence and cited justification for "
+     "explanations", "Specialist", "TBC"),
+    ("US-62", 395, N, "Computed facts for every finding type",
+     "Specialist", "TBC"),
+    ("US-63", 396, K, "FAIR loss-exposure estimates from inputs the user "
+     "supplies", "Specialist", "TBC"),
+    ("US-64", 397, K, "Upload hardening, each protection pinned by a test, "
+     "XML bombs first", "Specialist", "TBC"),
 ]
 
 EPIC_ORDER = ["Honesty", "Distribution", "Scale", "Multi-tenant", "Automation",
-              "Content", "Remediation", "Vendors", "AI", "Policy", "UX", "Trust"]
+              "Content", "Remediation", "Vendors", "AI", "Policy", "UX", "Trust",
+              "Specialist"]
 
 EPIC_WHY = {
  "Honesty": "The product's central claim is that it never says “clean” when it "
@@ -524,6 +546,9 @@ EPIC_WHY = {
        "demo and a thing someone uses on a Tuesday.",
  "Trust": "The questions a buyer's security and procurement teams ask before "
           "they ask anything about features.",
+ "Specialist": "Studio 6 asks each of us to research one area we have not "
+               "studied before and build from it. These are those builds, two "
+               "or three per member, agreed by all four on 13 October 2026.",
 }
 
 
@@ -598,8 +623,11 @@ def document():
     w("| `US-40` – `US-56` | **New.** Each one closes a gap a paying customer "
       "hits in the first week, or one a buyer's security review asks about and "
       "we currently cannot answer. |")
+    w("| `US-58` – `US-64` | **Specialist picks**, agreed by all four on 13 "
+      "October 2026: two or three per member, each from the area they "
+      "research this block. Filed straight from the team's slate. |")
     w("")
-    w("Three stories already existed as issues and are folded in rather than "
+    w("These stories already existed as issues and are folded in rather than "
       "created again — creating them twice would be this project's own "
       "recurring defect, committed by the backlog written to avoid it:")
     w("")
@@ -705,6 +733,10 @@ def document():
     w("throughout                  US-25  US-29  US-30  US-32  US-36")
     w("                            US-38  US-39  US-55")
     w("     independent of the chain; can start any time")
+    w("")
+    w("specialist picks            US-58  US-59  US-60  US-61  US-62  US-63")
+    w("                            US-64")
+    w("     agreed 13 October; US-60 and US-61 wait on US-55 (#385)")
     w("```")
     w("")
     w("---")

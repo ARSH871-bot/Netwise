@@ -17,14 +17,22 @@ Phase 0 was consolidation. Phase 1 was the four capabilities. Phase 2 was direct
 |---|---|
 | `US-20` – `US-39` | **Discussion #296**, unchanged. Twenty stories designed and argued in early September and never turned into work. Their acceptance criteria are copied rather than rewritten. |
 | `US-40` – `US-56` | **New.** Each one closes a gap a paying customer hits in the first week, or one a buyer's security review asks about and we currently cannot answer. |
+| `US-58` – `US-64` | **Specialist picks**, agreed by all four on 13 October 2026: two or three per member, each from the area they research this block. Filed straight from the team's slate. |
 
-Three stories already existed as issues and are folded in rather than created again — creating them twice would be this project's own recurring defect, committed by the backlog written to avoid it:
+These stories already existed as issues and are folded in rather than created again — creating them twice would be this project's own recurring defect, committed by the backlog written to avoid it:
 
 | Story | Existing issue |
 |---|---|
 | `US-28` | [#78](https://github.com/ARSH871-bot/Netwise/issues/78) — Convert my whole pfSense export, including NAT |
 | `US-53` | [#220](https://github.com/ARSH871-bot/Netwise/issues/220) — One real compliance benchmark pack (CIS Cisco IOS) |
 | `US-57` | [#308](https://github.com/ARSH871-bot/Netwise/issues/308) — Coverage on every surface that shows findings, or none |
+| `US-58` | [#391](https://github.com/ARSH871-bot/Netwise/issues/391) — ACL anomaly taxonomy: correlation, generalisation and both directions of redundancy as their own findings |
+| `US-59` | [#392](https://github.com/ARSH871-bot/Netwise/issues/392) — Migration equivalence for a filter that is renamed or moved to another device |
+| `US-60` | [#393](https://github.com/ARSH871-bot/Netwise/issues/393) — A repeatable score for ai/query.py, run in CI |
+| `US-61` | [#394](https://github.com/ARSH871-bot/Netwise/issues/394) — Measured confidence and cited justification for explanations |
+| `US-62` | [#395](https://github.com/ARSH871-bot/Netwise/issues/395) — Computed facts for every finding type |
+| `US-63` | [#396](https://github.com/ARSH871-bot/Netwise/issues/396) — FAIR loss-exposure estimates from inputs the user supplies |
+| `US-64` | [#397](https://github.com/ARSH871-bot/Netwise/issues/397) — Upload hardening, each protection pinned by a test, XML bombs first |
 
 Nothing here is a feature because it sounds impressive. Every story names the thing that is currently untrue, unmeasured or unreachable.
 
@@ -32,7 +40,7 @@ Nothing here is a feature because it sounds impressive. Every story names the th
 
 ## The distribution, stated rather than arranged
 
-**38 stories. Arsh has 28. Ankeet has 4, Shubham has 3, Samika has 3.**
+**45 stories. Arsh has 29. Ankeet has 7, Shubham has 4, Samika has 5.**
 
 That is deliberate, and it is a decision rather than an accident, so it is written down where the people affected by it can read it.
 
@@ -110,7 +118,7 @@ The honest summary: **three people are being asked to write less and read more.*
 | | Story | Issue | Size | Owner |
 |---|---|---|---|---|
 | `US-34` | Draft a policy from a config I already have | [#326](https://github.com/ARSH871-bot/Netwise/issues/326) | M | Arsh |
-| `US-53` | One real compliance benchmark pack (CIS Cisco IOS) *(already open)* | [#220](https://github.com/ARSH871-bot/Netwise/issues/220) | L | Arsh |
+| `US-53` | One real compliance benchmark pack (CIS Cisco IOS) *(already open)* | [#220](https://github.com/ARSH871-bot/Netwise/issues/220) | L | Shubham |
 
 ### Remediation
 
@@ -172,6 +180,20 @@ The honest summary: **three people are being asked to write less and read more.*
 | `US-50` | Give me an SBOM and a stated dependency policy | [#342](https://github.com/ARSH871-bot/Netwise/issues/342) | S | Arsh |
 | `US-51` | Point Netwise at its own deployment | [#343](https://github.com/ARSH871-bot/Netwise/issues/343) | S | Arsh |
 
+### Specialist
+
+*Studio 6 asks each of us to research one area we have not studied before and build from it. These are those builds, two or three per member, agreed by all four on 13 October 2026.*
+
+| | Story | Issue | Size | Owner |
+|---|---|---|---|---|
+| `US-58` | ACL anomaly taxonomy: correlation, generalisation and both directions of redundancy as their own findings *(already open)* | [#391](https://github.com/ARSH871-bot/Netwise/issues/391) | TBC | Arsh |
+| `US-59` | Migration equivalence for a filter that is renamed or moved to another device *(already open)* | [#392](https://github.com/ARSH871-bot/Netwise/issues/392) | TBC | Arsh |
+| `US-60` | A repeatable score for ai/query.py, run in CI *(already open)* | [#393](https://github.com/ARSH871-bot/Netwise/issues/393) | TBC | Ankeet |
+| `US-61` | Measured confidence and cited justification for explanations *(already open)* | [#394](https://github.com/ARSH871-bot/Netwise/issues/394) | TBC | Ankeet |
+| `US-62` | Computed facts for every finding type *(already open)* | [#395](https://github.com/ARSH871-bot/Netwise/issues/395) | TBC | Ankeet |
+| `US-63` | FAIR loss-exposure estimates from inputs the user supplies *(already open)* | [#396](https://github.com/ARSH871-bot/Netwise/issues/396) | TBC | Samika |
+| `US-64` | Upload hardening, each protection pinned by a test, XML bombs first *(already open)* | [#397](https://github.com/ARSH871-bot/Netwise/issues/397) | TBC | Samika |
+
 ---
 
 ## Order of work
@@ -199,6 +221,10 @@ Not a schedule. A dependency order, so nothing is started before the thing it ne
 throughout                  US-25  US-29  US-30  US-32  US-36
                             US-38  US-39  US-55
      independent of the chain; can start any time
+
+specialist picks            US-58  US-59  US-60  US-61  US-62  US-63
+                            US-64
+     agreed 13 October; US-60 and US-61 wait on US-55 (#385)
 ```
 
 ---

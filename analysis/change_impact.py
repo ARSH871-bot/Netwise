@@ -824,6 +824,12 @@ def main() -> None:
         # Every channel, like `python -m analysis.pipeline --policy` (#402 item 6).
         for note in list(policy.renamed) + list(policy.assigned):
             print(f"note: {note}")
+        # Same contract as `python -m analysis.pipeline --policy` (#387
+        # review): a pair the contradiction check could not compare is said,
+        # not dropped. Notes before warnings, matching pipeline.py's own
+        # established order.
+        for note in policy.undecidable:
+            print(f"warning: {note}")
     results = analyse_change(sys.argv[1], sys.argv[2], policy=policy)
     print(json.dumps(results, indent=2))
     print()

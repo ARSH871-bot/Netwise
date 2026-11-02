@@ -425,6 +425,89 @@ def test_a_device_name_containing_markup_is_rendered_as_text(rendered):
 
 
 # ---------------------------------------------------------------------------
+# 5a. The before/after diff and the download form (strengthening propose)
+# ---------------------------------------------------------------------------
+
+
+def test_the_diff_shows_every_line_with_the_new_one_marked(rendered):
+    result = rendered["cleanWithDownload"]
+
+    assert result["aclDiffPresent"] == 1
+    assert result["aclDiffAddedLines"] == [
+        "deny tcp host 10.10.10.5 host 10.20.0.5 eq 443"
+    ]
+    # Both original lines still shown -- a diff that only shows the new line
+    # is the single-line view this feature exists to replace.
+    assert "permit udp any any eq domain" in result["aclDiffAllLines"]
+    assert "permit tcp any host 10.20.0.5 eq 443" in result["aclDiffAllLines"]
+
+
+def test_the_diff_appears_even_with_no_request_text_to_resubmit(rendered):
+    """before_lines/after_lines and the download form are two independent
+    pieces of data -- a caller that has one is not guaranteed the other, and
+    the diff must not silently depend on the download form's presence."""
+    result = rendered["cleanNoRequestText"]
+    assert result["aclDiffPresent"] == 1
+
+
+def test_a_refusal_shows_no_diff_at_all(rendered):
+    """proposed_change is null on a refusal, so there is nothing to diff --
+    confirmed rather than assumed, the same discipline the rest of this file
+    applies to every other element."""
+    for case in ("refused", "noUpload"):
+        assert rendered[case]["aclDiffPresent"] == 0
+
+
+def test_the_download_form_appears_only_when_a_request_was_given(rendered):
+    assert rendered["cleanWithDownload"]["downloadFormPresent"] == 1
+    assert rendered["cleanNoRequestText"]["downloadFormPresent"] == 0
+
+
+def test_the_download_form_carries_the_exact_request_that_was_asked(rendered):
+    result = rendered["cleanWithDownload"]
+    assert (
+        result["downloadFormRequestValue"]
+        == "block 10.10.10.5 to 10.20.0.5 on tcp/443 on rtr-us5"
+    )
+
+
+def test_a_refusal_never_grows_a_download_form_even_with_request_text(rendered):
+    """The caller could pass requestText on every response, refusal or not
+    -- this pins that the renderer itself is the guard, not caller
+    discipline. proposed_change is null on a refusal regardless of what
+    requestText holds."""
+    result = rendered["refusedWithRequestText"]
+    assert result["downloadFormPresent"] == 0
+
+
+def test_the_full_scan_button_appears_alongside_the_download_form(rendered):
+    """Tied to the same requestText guard as the download form -- there is
+    nothing to resubmit to either endpoint without it."""
+    assert rendered["cleanWithDownload"]["fullScanButtonPresent"] == 1
+    assert rendered["cleanNoRequestText"]["fullScanButtonPresent"] == 0
+    assert (
+        rendered["cleanWithDownload"]["fullScanButtonText"]
+        == "Run a full scan against this proposed config"
+    )
+
+
+def test_a_refusal_never_grows_a_full_scan_button(rendered):
+    assert rendered["refusedWithRequestText"]["fullScanButtonPresent"] == 0
+
+
+def test_hostile_request_text_reaches_the_hidden_field_as_literal_text(rendered):
+    """The hidden input's `.value` is a DOM property assignment, not markup
+    built by string concatenation -- so it cannot inject, and this proves it
+    by checking the hostile string comes back byte-for-byte rather than
+    executed or stripped."""
+    result = rendered["scriptedDownload"]
+    assert (
+        result["downloadFormRequestValue"]
+        == "<img src=x onerror=alert(1)> to 10.20.0.5 on tcp/443"
+    )
+
+
+# ---------------------------------------------------------------------------
 # 6. The stub is gone, and the styles the renderer needs exist
 # ---------------------------------------------------------------------------
 
@@ -451,6 +534,15 @@ def test_the_dead_404_stub_is_gone():
         ".proposed-line",
         ".proposed-not-applied",
         ".impact-heading",
+        ".acl-diff",
+        ".acl-diff-label",
+        ".acl-diff-line",
+        ".propose-download-form",
+        ".propose-download-button",
+        ".full-scan-button",
+        ".full-scan-results",
+        ".full-scan-refusal",
+        ".full-scan-clean",
     ],
 )
 def test_every_class_the_renderer_emits_is_a_real_css_rule(selector):

@@ -104,8 +104,17 @@ can surface as `success`. **Neither bucket means what a policy check needs it
 to mean.**
 
 `searchFilters` reasons at the filter level and needs no routing, so it is
-correct on these fixtures and on any config where policy intent lives in ACLs
-— and it cannot be fooled in either direction.
+correct on these fixtures and on any config where policy intent lives in ACLs.
+
+**It can be fooled in one way: a filter that is in no traffic's path (#430).**
+With `ip access-group acl_in in` removed from `rtr-us5-secure`, every rule held
+and `PC-000` gave a green tick, while `traceroute` delivered telnet from the LAN
+to the server. The proof was right about the filter and wrong about the device.
+So before a rule can pass, the check confirms its filter is some interface's
+incoming or outgoing filter on that node (`interfaceProperties`). If it is not,
+or that cannot be found out, the rule reports **could not check** (`PC-05n`).
+A `filter` written as a specifier (`/regex/`, `@in(...)`, a list) names no
+single filter to look for, and is checked as before.
 
 > Found by @ARSH871-bot re-running this section rather than reading it, after
 > it was quoted in a team message. The measurement here was right and the
@@ -122,7 +131,8 @@ name **raises `BatfishException`** rather than returning an empty frame.
 
 So the check must let that exception surface as a `status="error"` finding and
 must never wrap these calls in a bare `except: pass`. Empty then means exactly
-one thing: the policy holds.
+one thing: the policy holds **for that filter**, and the applied-filter check
+above is what makes the filter's answer the device's answer.
 
 ### Do not use `invertSearch` to express "everything except X"
 
@@ -335,6 +345,191 @@ Severity **medium** — a loud, recoverable availability failure, graded
 consistently with POL-4.
 
 ---
+
+### A policy that forbids what it requires is refused (#322, US-30)
+
+A `prohibition` says traffic must be DENIED. A `requirement` says traffic must
+be PERMITTED. If two such rules describe overlapping traffic **on the same
+device and the same filter**, no configuration can satisfy both: whichever way
+the network is set up, one of them reports a violation, and fixing that one
+creates the other.
+
+Before #322 such a policy loaded cleanly and the scan ran. The user got a real
+finding, fixed it, and got the opposite finding. Nothing said the rules were at
+fault.
+
+`analysis/policy_conflicts.py` now compares every prohibition against every
+requirement in the same scope, and `load_policy()` **refuses** the policy when
+it can prove an overlap:
+
+```
+PolicyError: this policy contradicts itself, so no configuration could
+satisfy it: rule 3 ('The LAN must not reach the finance server') forbids
+what rule 7 ('Accounts must reach the finance server') requires on rtr-us5
+filter acl_in: both describe src 10.10.10.64/26, dst 10.20.0.5/32,
+dst ports 443
+```
+
+The message names both rules and **the intersection**, not either rule
+restated. US-30 asks for the overlap because a message naming only the pair
+leaves the user diffing two header specifiers by eye.
+
+This needs no Batfish, no Docker and no config. It is a property of the policy
+file alone.
+
+### Two policies that contradict each other (Studio 6)
+
+`load_policy()` refuses a policy that contradicts **itself**, but it reads one
+file at a time. Two teams can each write a consistent policy for the same
+firewall — security's and the application owners' — that contradict each
+other once applied together. `policy_conflicts.between()` compares two
+policies in both directions, using the same comparison loop as the
+single-policy check, so the two can never disagree about what a contradiction
+is:
+
+```
+$ python -m analysis.policy_conflicts security.json app-owners.json
+CONFLICT: security.json rule 1 ('Guests must not reach the finance server')
+forbids what app-owners.json rule 1 ('The kiosk subnet must reach the finance
+API over HTTPS') requires on rtr-us5 filter acl_in: both describe
+src 10.10.10.64/26, dst 10.20.0.5/32, dst ports 443, protocol tcp
+```
+
+Every rule is named with its file, because both files may have a "rule 1".
+A pair that cannot be compared is printed as a `warning:`, the same three
+answers as within one policy. The exit status is 1 for a conflict, so it can
+gate a script.
+
+#### What is not a contradiction
+
+Two prohibitions over the same traffic are consistent — denying twice is
+denying — and so are two requirements. Only permit-against-deny is
+unsatisfiable. Rules on different devices never collide, and nor do rules on
+filters that are plainly different names.
+
+Filter names are the exception that needs care. Batfish resolves `ACL_IN`,
+`acl_in ` and the regex `/acl_in/` all to `acl_in`, so two rules can name the
+same ACL in different spellings. When two filters match only after trimming
+and ignoring case, or either is a specifier rather than a plain name (`/`,
+`@`, `(`, `,`), the pair is reported as **undecidable**, not skipped. Found in
+review on #387: the first version compared the raw strings and called
+`ACL_IN` versus `acl_in` "cannot collide".
+
+A rule's `queries` are a union, because `policy_compliance` fails the rule if
+any one of them fails, so a contradiction is any query of the prohibition
+meeting any query of the requirement.
+
+#### Proven, not presumed — and the third answer
+
+Batfish header specifiers are a language, not a list. `dstIps` can read
+`0.0.0.0/0 \ (218.8.104.58, 10.20.0.5)`; `ipProtocols` can read `!tcp`. This
+module parses a deliberate subset — plain addresses, CIDRs, port ranges, and
+the protocols `tcp`, `udp` and `icmp` by name or number (`6`, `17`, `1`), with
+comma-separated lists split the way pybatfish splits them — and **refuses to
+guess at the rest**. An unrecognised protocol token is undecidable, not a new
+protocol: the first version took `"6"` as a name, so it never met `"tcp"`, and
+a real contradiction loaded as consistent.
+
+So every comparison has three answers, not two:
+
+| answer | meaning | effect |
+|---|---|---|
+| overlap | proven to share traffic | the policy is **refused** |
+| no overlap | proven disjoint | loads normally |
+| **undecidable** | a specifier outside the parsed subset | loads, and is **reported** |
+
+The third is the one that matters. An undecidable pair is carried out on
+`Policy.undecidable`. Both command lines print each pair as a `warning:` —
+`python -m analysis.pipeline … --policy` and `python -m analysis.change_impact
+… policy.json`. **The dashboard does not show them yet**: `/api/policy` returns
+renamed keys only, so an upload through the browser drops the pairs silently.
+That gap is #404, and until it closes "never dropped" holds on the command
+line only. Treating "we could not compare these" as "these are fine" is F-4
+arriving through the policy file: *we checked and found nothing* standing in
+for *we could not check*.
+
+Comparison is **field by field**. A query is a conjunction, so one field that
+is provably disjoint makes the pair disjoint whatever the other fields say —
+including fields this module could not parse. That can never invent an
+overlap, because a conjunct only shrinks a space. Only when nothing proves the
+pair disjoint does an unparsed field make it undecidable.
+
+An unmodelled query field makes the pair undecidable rather than being
+skipped, and that direction is deliberate. Skipping a field would widen both
+header spaces and could invent an overlap that is not there — refusing a
+policy that is perfectly consistent.
+
+The shipped `docs/examples/policy.example.json` demonstrates this: it uses
+set difference, so it loads and reports **one** pair it could not compare:
+rule 1 against rule 4. It used to report two. The second, rule 2 against
+rule 4, was a false warning — rule 2 negates a protocol, but it is about
+10.20.0.5 and rule 4 about 218.8.104.58, which is provably disjoint on a field
+that *is* parsed. A false warning in our own example would teach people to
+skip the real ones.
+
+`tests/test_policy_contradictions.py` pins all of it, and the five mutations
+that matter — undecidable collapsing to "no overlap", unmodelled fields being
+ignored, the scope check being dropped, two prohibitions counting as a
+conflict, and the overlap detail falling out of the message — each fail it.
+
+### Has an edit made the policy weaker? (#418)
+
+A policy is edited many times, and each edit looks reasonable on its own. A
+prohibition narrowed from `10.10.10.0/24` to `10.10.10.0/25` has stopped
+protecting half a subnet, and the diff is one character. `analysis/policy_drift.py`
+compares two versions of one policy and reports every place the new one
+protects **less**:
+
+| change | weaker? |
+|---|---|
+| rule removed | yes |
+| prohibition narrowed (forbids less) | yes |
+| requirement widened (requires more to be allowed) | yes |
+| kind changed, or moved to another device or filter | yes |
+| rule added, prohibition widened, requirement narrowed | no — stricter |
+
+```
+$ python -m analysis.policy_drift old.json new.json
+WEAKER: rule 1 ('...') now forbids less: srcIps 10.10.10.0/24 is no longer fully forbidden
+(exit status 1)
+```
+
+This needs **containment**, which is stricter than the overlap test above: is
+all of the old rule's traffic inside the new rule's? For one query against
+another it is exact, field by field; addresses are collapsed first, so two
+/25s do contain their /24. For a rule with several queries it is exact when
+one new query holds the old one, when none of them touch it, or when only one
+touches it. When several new queries might cover it *together*, it reports
+**undecidable** rather than "unchanged" — the same third answer as the
+contradiction check, and the safe direction: it never calls a policy
+unchanged without proof.
+
+Rules are paired by `number`, and the command line warns when a file relies
+on numbers the loader assigned, because inserting one rule shifts every
+number after it.
+
+### Which subnets does no rule talk about? (#421)
+
+PC-049 reports devices no rule covers. `analysis/policy_coverage.py` goes one
+level down: for every interface Batfish reports, is there a rule whose source
+or destination overlaps its subnet?
+
+```
+$ python -m analysis.policy_coverage tests/fixtures/routing-secure my-policy.json
+  rtr-branch   GigabitEthernet0/0     10.1.1.0/30        UNCOVERED
+  rtr-branch   GigabitEthernet0/1     10.20.20.0/24      covered    rule(s) 1
+  rtr-hq       GigabitEthernet0/0     10.10.10.0/24      covered    rule(s) 1
+  rtr-hq       GigabitEthernet0/1     10.1.1.0/30        UNCOVERED
+2 of 4 interface subnet(s) are covered by a policy rule
+```
+
+Only rules about a device that is in the snapshot count — a rule about a
+missing device never runs (PC-050), so it covers nothing. Address syntax this
+code cannot parse makes a subnet **unknown**, not uncovered, and a device
+whose interfaces cannot be listed is unknown, never covered. An uncovered
+subnet is coverage information, not a violation. Drawing it is the
+dashboard's job; `coverage_map()` returns the rows.
+
 
 ## 4. Finding IDs
 
