@@ -595,10 +595,19 @@ def test_a_bare_follow_up_with_no_reach_keyword_still_refuses():
     # the source side was fixed for above; "Can rtr-us5 reach IT?" matched
     # _DESTINATION_BACK_REFERENCES the same way "...reach it?" does.
     "Can rtr-us5 reach IT?",
+    # "iT" -- capital T, lowercase i -- found in a further adversarial
+    # review pass, round four. The original guard only excluded the exact
+    # casing "IT", so this fell through, lowercased to "it", and matched
+    # the pronoun set on both sides. Nobody naturally capitalises only the
+    # second letter of a two-letter pronoun, so a capital T is always the
+    # department, whatever the first letter is.
+    "Can iT reach 10.10.10.5?",
+    "Can rtr-us5 reach iT?",
 ])
 def test_a_named_but_unresolvable_segment_still_refuses_even_with_previous(
         question):
-    """THE ONES ARSH'S REVIEW FOUND, across three rounds. Each of these names
+    """THE ONES ARSH'S REVIEW FOUND, across three rounds, plus one found in
+    a further adversarial review pass, round four. Each of these names
     something -- a plain-English name, a typo'd device, a malformed
     address, or a real word that happens to case-collide with a
     back-reference, on either side -- and none of them is a genuine
@@ -617,6 +626,30 @@ def test_a_named_but_unresolvable_segment_still_refuses_even_with_previous(
     assert result["question_understood"] is None
     assert result["resolved_entities"] is None
     assert session.q.traceroute_calls == []
+
+
+@pytest.mark.parametrize("question", [
+    "Does It also reach 10.10.10.5?",
+    "Can rtr-us5 reach It?",
+])
+def test_a_capital_i_only_still_resolves_as_the_pronoun(question):
+    """Pins a deliberate call, not an oversight. @ARSH871-bot tried "Can it
+    reach It?" and left capital-I-only casing unflagged -- sentence-initial
+    casing genuinely capitalises exactly that letter, so "It" is
+    ambiguous rather than a reliable department-name signal the way a
+    capital T is. The round-four fix (see _is_literally_the_word_IT()'s
+    own docstring) checks the SECOND letter's case specifically so it
+    catches "IT" and "iT" without reopening this already-settled call --
+    this test is what stops a future, less careful fix from doing that by
+    accident."""
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=_FakeFrame(
+        [{"Traces": [FakeTrace("ACCEPTED")]}]))
+    previous = _resolved_entities("rtr-us5", "10.10.10.5")
+
+    result = answer_question(question, session, previous)
+
+    assert result["grounded"] is True
+    assert result["question_understood"] == "Can rtr-us5 reach 10.10.10.5?"
 
 
 def test_mutating_the_back_reference_gate_is_caught(monkeypatch):

@@ -355,8 +355,30 @@ def _strip_back_reference_filler(text: str) -> str:
 
 
 def _is_literally_the_word_IT(text: str) -> bool:
-    """True if `text` contains the literal, all-caps word "IT" -- the
-    department, never the pronoun "it" (found by review, @ARSH871-bot).
+    """True if `text` reads as the department "IT", never the pronoun "it"
+    (found by review, @ARSH871-bot).
+
+    THE REAL RULE IS THE SECOND LETTER, NOT "ALL CAPS" (found in a further
+    adversarial review pass, round four, done specifically to look for a
+    fourth instance before asking for a merge). The original check only
+    excluded
+    the exact casing "IT". "iT" -- capital T, lowercase i -- fell straight
+    through: it is not "IT", so the department guard let it pass, and it
+    then lowercased to "it" and matched the pronoun set, answering with the
+    previous turn's entity instead of refusing. Live-reproduced on both
+    sides: "Can iT reach 8.8.8.8?" and "Can rtr-us5 reach iT?" both came
+    back grounded=True with the previous turn's address.
+
+    Nobody naturally capitalises only the second letter of a two-letter
+    pronoun -- there is no sentence position or autocapitalisation rule
+    that does that -- so a capital T is always the department, whatever
+    the first letter is. A capital I alone ("It") is different: sentence-
+    initial casing capitalises exactly that letter, so "It" is genuinely
+    ambiguous. @ARSH871-bot tried "Can it reach It?" and deliberately left
+    it unflagged, "a pronoun as often as not" -- the fix below checks the
+    SECOND letter's case, not whether every letter is capitalised, so it
+    catches "IT" and "iT" without reopening that already-settled call on
+    "It".
 
     SHARED BY BOTH SIDES ON PURPOSE (round three, same reviewer). The
     source side carried this exact check alone first; the destination side
@@ -371,10 +393,12 @@ def _is_literally_the_word_IT(text: str) -> bool:
     rather than merely unlikely.
 
     Checked on the RAW text, case-sensitively, before any lowercasing
-    happens in either caller, so the literal pronoun "it" is always
-    untouched and only the all-caps department name is excluded.
+    happens in either caller, so the pronoun "it" (and the ambiguous,
+    deliberately-left-alone "It") are always untouched -- only a segment
+    whose second letter is capitalised is excluded.
     """
-    return bool(re.search(r"\bIT\b", text))
+    match = re.search(r"\b[Ii][Tt]\b", text)
+    return bool(match) and match.group()[1].isupper()
 
 
 def _is_source_back_reference(source_text: str) -> bool:
