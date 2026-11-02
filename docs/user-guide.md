@@ -211,6 +211,16 @@ anything else in the product:
 The third is the one to read carefully. *"We could not check"* is never
 reported as *"you are fine"*.
 
+**A file Batfish could only partly read** gets its own amber warning,
+*"Results may be incomplete"*. It says how many of the file's configuration
+lines Batfish did not recognise, which kinds of line they were, and their line
+numbers (#317). On our ASA example that is 5 of 16 lines, one of them the
+`access-group` line that applies the firewall's filter. The findings are about
+the part that was read; nothing is claimed about the rest. Comment and blank
+lines are left out of the count for Cisco-style files (`!` comments); for a
+format whose comment marker Netwise does not know, the warning counts every
+non-blank line and says so.
+
 ---
 
 ## 5. Asking questions
