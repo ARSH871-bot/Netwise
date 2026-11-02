@@ -1366,7 +1366,6 @@ def get_findings(http_response: Response = None) -> List[Dict[str, Any]]:
     return response
 
 
-
 class _EntityDeclarationFound(Exception):
     """Raised by the screen below, out of an expat handler. Never escapes."""
 
