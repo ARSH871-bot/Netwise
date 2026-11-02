@@ -519,9 +519,19 @@ So `answer_question(question, bf) -> dict` is built to refuse:
   than merely limited. **If the UI ever hides or shrinks it, the safety argument
   goes with it.**
 
-The return shape is three keys — `question_understood`, `answer`, `grounded` —
-and it keeps F-4's distinction: a query that could not run comes back with
-`grounded=False` and an answer saying so, never a confident sentence.
+The return shape is `question_understood`, `answer`, `grounded` -- and it keeps
+F-4's distinction: a query that could not run comes back with `grounded=False`
+and an answer saying so, never a confident sentence.
+
+**A fourth key, `resolved_entities`, was added on #318** (a reachability
+follow-up reusing the last answer's resolved device/address) and this
+paragraph said three for six days before being corrected in review
+(@SamikaPerera) -- the same one-fact-in-two-places shape this file's own
+history keeps finding. The fourth key never reaches `/api/ask`'s HTTP
+response; `web/main.py` reads and pops it there, so the *public* shape stays
+the three keys above. It is internal to how `answer_question()` talks to its
+caller, not new API surface -- see `ai/query.py`'s own module docstring,
+section "FOLLOW-UPS", for what it carries and when it is populated.
 
 **Known and deliberate:** this is narrower than CLAUDE.md §4's own example. "Can
 the guest network reach the finance server" is **refused**, because resolving a
