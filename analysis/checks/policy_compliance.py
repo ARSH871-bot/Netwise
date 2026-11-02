@@ -116,7 +116,8 @@ PARTIAL CHECKS -- why a rule reports a violation AND an error (issue #22)
     is reported as proved, and what could not be reached is reported separately.
 """
 
-from typing import Any, Dict, List, Tuple
+import re
+from typing import Any, Dict, List, Set, Tuple
 
 from pybatfish.client.session import Session
 from pybatfish.datamodel.flow import HeaderConstraints
@@ -300,6 +301,47 @@ def _search(
         .frame()
     )
     return [frame.iloc[i] for i in range(len(frame))]
+
+
+# A `filter` containing any of these is a Batfish specifier (a regex, an
+# interface's filter, a list), not one name, so there is no single name to look
+# for. Such rules are checked exactly as before #430.
+_FILTER_SPECIFIER = re.compile(r"[/@(,]")
+
+
+def _applied_filters(bf: Session) -> Dict[str, Set[str]]:
+    """{node: filter names applied to any of its interfaces, either direction}.
+
+    WHY (#430). searchFilters proves what a filter WOULD do to traffic passing
+    through it, not that any traffic passes through it. Measured on
+    rtr-us5-secure with `ip access-group acl_in in` removed: every rule held,
+    PC-000 gave a green tick, and traceroute delivered telnet from the LAN to
+    the server. So a rule may only pass if its filter is in the path.
+
+    Names are casefolded and stripped, because Batfish resolves `ACL_IN` and
+    `acl_in ` to `acl_in` (#387 review). Exceptions are NOT caught: run()
+    turns them into "could not check", because not knowing whether the filter
+    is applied is not knowing whether the rule holds.
+    """
+    frame = (
+        bf.q.interfaceProperties(properties="Incoming_Filter_Name,Outgoing_Filter_Name")
+        .answer()
+        .frame()
+    )
+    applied: Dict[str, Set[str]] = {}
+    for _, row in frame.iterrows():
+        names = applied.setdefault(row["Interface"].hostname, set())
+        for column in ("Incoming_Filter_Name", "Outgoing_Filter_Name"):
+            if row[column]:
+                names.add(str(row[column]).strip().casefold())
+    return applied
+
+
+def _not_in_path(node: str, filter_name: str, applied: Dict[str, Set[str]]) -> bool:
+    """True when Batfish's model applies `filter_name` to no interface of `node`."""
+    if _FILTER_SPECIFIER.search(filter_name):
+        return False
+    return filter_name.strip().casefold() not in applied.get(node, set())
 
 
 def _describe(rule: Dict[str, Any], hits: List[Any]) -> str:
@@ -601,10 +643,50 @@ def run(bf: Session) -> List[Dict[str, Any]]:
             )
         )
 
+    # Is each rule's filter in the path at all? (#430). Asked once, not per rule.
+    applied: Dict[str, Set[str]] = {}
+    lookup_error = None
+    if applicable:
+        try:
+            applied = _applied_filters(bf)
+        except Exception as error:
+            lookup_error = error
+
     for rule in applicable:
         node = rule["node"]
         filter_name = rule["filter"]
         action = ACTION_BY_KIND[rule["kind"]]
+
+        # A filter in no interface's path decides nothing, so whatever
+        # searchFilters says about it, the rule is unchecked rather than
+        # held or broken. The wording says "Batfish's model", not "your
+        # config": on vendor-asa the config does apply its ACL, in a line
+        # Batfish did not parse, and claiming otherwise would be false.
+        # A failed lookup leaves `applied` empty, so every plainly named filter
+        # lands here too; a specifier filter is checked as before either way.
+        if _not_in_path(node, filter_name, applied):
+            if lookup_error is not None:
+                why = ("We could not find out which filters are applied to "
+                       f"{node}'s interfaces, so we cannot tell whether "
+                       f"{filter_name!r} is in the path of any traffic. "
+                       + findings.describe_error(lookup_error))
+            else:
+                why = (f"In Batfish's model of {node}, filter {filter_name!r} "
+                       "is not applied to any interface, so no traffic passes "
+                       "through it and what it permits or denies is not what "
+                       "the device does. If your config does apply it, Batfish "
+                       "did not understand that line; check the parse warnings.")
+            results.append(
+                findings.error_finding(
+                    check=CHECK_NAME,
+                    device=node,
+                    summary=f"Could not check policy rule: {rule['description'].lower()}",
+                    detail=_with_provenance(why, policy_label),
+                    source=f"{node}:{filter_name}",
+                    number=rule["number"] + ERROR_NUMBER_OFFSET,
+                )
+            )
+            continue
 
         # Each arm is isolated. The arms describe ONE space between them, so a
         # hit in any of them violates the rule -- but a failure in one must not
