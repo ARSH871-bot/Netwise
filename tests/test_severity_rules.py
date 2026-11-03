@@ -53,6 +53,85 @@ def test_dead_rule_beats_the_blanket_permit_it_quotes():
     assert risk.severity_for(f) == "low"
 
 
+# The evidence exactly as access_control._check_dead_rules() writes it, so these
+# tests break if that wording drifts away from what R-1 reads.
+def dead_line_detail(line, action, blocked_by):
+    return (f"Unreachable line: {line} (action {action}). "
+            f"Blocked by: {blocked_by}. Reason: BLOCKING_LINES")
+
+
+def test_dead_deny_behind_a_specific_permit_keeps_its_checks_severity():
+    """The measured case from docs/research/cvss-comparison.md section 4 (#434).
+
+    The telnet deny never fires because the permit above it already lets the
+    whole LAN through to the server. So telnet from .66 gets through, which
+    the author meant to block. R-2 does not fire (the blocker is not a
+    blanket permit), so if R-1 lowers this, nothing in the list says it is
+    an exposure.
+    """
+    f = a_finding("access_control", "high", dead_line_detail(
+        "deny tcp host 10.10.10.66 host 10.20.0.5 eq telnet", "DENY",
+        "permit tcp 10.10.10.0 0.0.0.255 host 10.20.0.5"))
+    assert risk.severity_for(f) == "high"
+
+
+def test_dead_deny_behind_a_blanket_permit_keeps_its_checks_severity():
+    """Still an exposure in its own right, and R-2 does not promote the quoted
+    blocker, so the check's own `high` is what has to survive."""
+    f = a_finding("access_control", "high", dead_line_detail(
+        "deny tcp host 10.10.10.66 host 10.20.0.5 eq telnet", "DENY",
+        "permit ip any any"))
+    assert risk.severity_for(f) == "high"
+
+
+def test_dead_permit_is_still_rated_low():
+    """A permit that never fires blocks wanted traffic. Hygiene, not exposure."""
+    f = a_finding("access_control", "medium", dead_line_detail(
+        "permit tcp 10.10.10.0 0.0.0.255 host 10.20.0.5 eq 443", "PERMIT",
+        "deny ip 10.10.10.0 0.0.0.255 any"))
+    assert risk.severity_for(f) == "low"
+
+
+@pytest.mark.parametrize("detail", [
+    dead_line_detail("deny tcp any host 10.20.0.5 eq 23", "UNKNOWN", "an earlier line"),
+    "Unreachable line: deny tcp any host 10.20.0.5 eq 23",
+])
+def test_dead_line_not_clearly_a_deny_is_still_rated_low(detail):
+    """Only a clear `(action DENY)` marker keeps the check's severity. Anything
+    else keeps R-1's old behaviour, as docs/severity-rules.md says."""
+    assert risk.severity_for(a_finding("access_control", "high", detail)) == "low"
+
+
+def test_a_dead_deny_from_the_real_check_comes_out_high():
+    """The producer and the rule together: the finding access_control builds
+    for a dead deny is still `high` after refine(), and still `found`."""
+    import itertools
+
+    import pandas as pd
+
+    from analysis.checks import access_control
+
+    class _Session:
+        class q:
+            @staticmethod
+            def filterLineReachability():
+                frame = pd.DataFrame([{
+                    "Sources": ["rtr-us5: lan_in"],
+                    "Unreachable_Line": "deny tcp host 10.10.10.66 host 10.20.0.5 eq telnet",
+                    "Unreachable_Line_Action": "DENY",
+                    "Blocking_Lines": ["permit tcp 10.10.10.0 0.0.0.255 host 10.20.0.5"],
+                    "Reason": "BLOCKING_LINES",
+                }])
+                return type("A", (), {"answer": lambda self: self,
+                                      "frame": lambda self: frame})()
+
+    [dead] = access_control._check_dead_rules(_Session(), itertools.count(1))
+    [refined] = risk.refine([dead])
+    assert dead["severity"] == "high", "the check's own grading changed"
+    assert refined["severity"] == "high"
+    assert refined["status"] == "found"
+
+
 # --- R-2: blanket permits ---------------------------------------------------
 
 
