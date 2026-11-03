@@ -48,8 +48,9 @@ severity its check assigned.
 
 ### R-1 — A dead permit is low; a dead deny keeps its check's severity
 
-**Matches:** `status="found"` and the evidence describes an unreachable /
-shadowed ACL line that is **not** marked `(action DENY)`.
+**Matches:** `status="found"`, `evidence.detail` **starts with**
+`Unreachable line: ` (the dead ACL line `access_control` reports), and that
+line is **not** marked `(action DENY)`.
 **Sets:** `low`
 
 A dead **permit** blocks traffic someone wanted. It is a hygiene problem —
@@ -73,11 +74,20 @@ reads the fixed marker `access_control` writes into `evidence.detail` —
 config text. A dead-rule finding without a clear `(action DENY)` marker keeps
 the old answer, `low`.
 
-This rule is deliberately **first**, because a dead-rule finding usually quotes
-the line that shadows it, and that line is very often a blanket permit. Without
-the ordering, R-2 would match the quoted blocker and rate a dead permit `high`.
-A dead deny passes through R-1 and is not promoted by R-2 either: its blocker
-follows *"Blocked by:"*, so R-2 treats it as a citation.
+**Only the start of the evidence counts (#444).** R-1 used to fire on the word
+"unreachable" anywhere in the evidence. That lowered findings that have nothing
+to do with a dead line: a routing assertion that something must be
+*"Expected UNREACHABLE"*, a path Batfish ended in `NEIGHBOR_UNREACHABLE`, and
+any finding quoting an ACL line with Cisco's ICMP `unreachable`,
+`host-unreachable` or `port-unreachable` keyword. Every other check opens its
+evidence with different fixed words, so the opening is what tells a dead line
+apart.
+
+This rule is deliberately **first**, for a dead line that is itself a blanket
+permit: R-2 would match it and rate a dead permit `high`. The line shadowing a
+dead line is not the problem: it follows *"Blocked by:"*, so R-2 treats it as
+a citation. A dead deny passes through R-1 and is not promoted by R-2 for the
+same reason.
 
 ### R-2 — A blanket permit is high
 
