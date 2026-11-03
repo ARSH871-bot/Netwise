@@ -19,6 +19,7 @@ RUN
 """
 
 import ollama
+import pandas as pd
 
 from ai import explain as explain_module
 import pytest
@@ -258,6 +259,86 @@ def test_the_dead_lines_own_action_and_the_outcome_can_differ():
     assert outcome is not None
     assert "own stated action is PERMIT" in outcome
     assert "actually denied" in outcome
+
+
+def _real_dead_rule_detail(dead_action: str, blocking_action: str) -> str:
+    """The genuine evidence string, from the genuine check -- not a literal.
+
+    Same reasoning as _real_detail() below: a hand-typed literal cannot
+    catch a wording drift between access_control._check_dead_rules() and
+    this module's own pattern. `dead_action` and `blocking_action` are
+    each "PERMIT" or "DENY", independently, so the same helper builds both
+    the opposite-action and the same-action (redundant) real findings.
+    """
+    from analysis.checks import access_control
+
+    dead_line = f"{dead_action.lower()} tcp any host 10.10.10.5 eq 22"
+    blocking_line = f"{blocking_action.lower()} ip any any"
+    frame = pd.DataFrame([{
+        "Sources": ["rtr-us5: acl_in"],
+        "Unreachable_Line": dead_line,
+        "Unreachable_Line_Action": dead_action,
+        "Blocking_Lines": [blocking_line],
+        "Reason": "BLOCKING_LINES",
+    }])
+
+    class _Question:
+        def __init__(self, frame): self._frame = frame
+        def answer(self): return self
+        def frame(self): return self._frame
+
+    class _Q:
+        def filterLineReachability(self, **kwargs): return _Question(frame)
+
+    class _FakeSession:
+        q = _Q()
+
+    [finding] = access_control._check_dead_rules(_FakeSession(), iter([1]))
+    return finding["evidence"]["detail"]
+
+
+# --- the redundant case: the two facts agree, so the wording must not say
+# "different" (found in review of #401, before it merged) --------------------
+
+
+def test_a_redundant_dead_deny_states_agreement_not_difference():
+    """CLAIMS: a DENY shadowed by an earlier DENY is redundant, not a real
+    exposure, and the computed fact must say so plainly rather than
+    claiming the outcome is "different" -- which would be false here and
+    is the #52 inversion #384's own fix exists to prevent.
+
+    Through the REAL producer (access_control._check_dead_rules), not a
+    literal, per the review that asked for this."""
+    detail = _real_dead_rule_detail(dead_action="DENY", blocking_action="DENY")
+    outcome = _compute_dead_rule_outcome(detail)
+
+    assert outcome is not None
+    assert "own stated action is DENY" in outcome
+    assert "denied anyway" in outcome
+    assert "what actually happens is different" not in outcome, (
+        f"the two lines agree -- nothing is different here: {outcome!r}"
+    )
+    assert "not what happens" not in outcome, (
+        f"the real outcome IS what the dead line's own action says here, "
+        f"so this phrase is false for the redundant case: {outcome!r}"
+    )
+
+
+def test_a_redundant_dead_permit_states_agreement_not_difference():
+    """The mirror case -- a PERMIT shadowed by an earlier PERMIT."""
+    detail = _real_dead_rule_detail(dead_action="PERMIT", blocking_action="PERMIT")
+    outcome = _compute_dead_rule_outcome(detail)
+
+    assert outcome is not None
+    assert "own stated action is PERMIT" in outcome
+    assert "permitted anyway" in outcome
+    assert "what actually happens is different" not in outcome, (
+        f"the two lines agree -- nothing is different here: {outcome!r}"
+    )
+    assert "not what happens" not in outcome, (
+        f"the real outcome IS what the dead line's own action says here, "
+        f"so this phrase is false for the redundant case: {outcome!r}"
+    )
 
 
 # --- _compute_policy_outcome (#145) ---------------------------------------------
