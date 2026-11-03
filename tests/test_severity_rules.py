@@ -104,6 +104,14 @@ def test_dead_line_not_clearly_a_deny_is_still_rated_low(detail):
     assert risk.severity_for(a_finding("access_control", "high", detail)) == "low"
 
 
+def test_action_deny_not_followed_by_blocked_by_is_still_rated_low():
+    """The marker is "(action DENY). Blocked by:", both halves. Our check
+    always writes them together, so "(action DENY)" on its own is not our
+    marker and gets R-1's old answer, low."""
+    detail = "Unreachable line: deny tcp any host 10.20.0.5 eq 23 (action DENY)"
+    assert risk.severity_for(a_finding("access_control", "high", detail)) == "low"
+
+
 def test_a_dead_deny_from_the_real_check_comes_out_high():
     """The producer and the rule together: the finding access_control builds
     for a dead deny is still `high` after refine(), and still `found`."""
