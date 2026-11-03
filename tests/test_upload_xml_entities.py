@@ -167,6 +167,10 @@ def test_an_upload_declaring_xml_entities_is_refused_and_not_converted():
         f"a user could act on: {detail!r}. A refusal that does not name the "
         f"construct it rejected sends somebody to guess at their own export."
     )
+    # A plain entity, named as one. test_c's fixture is the parameter-entity
+    # case, so the two tests cannot pass on the same input.
+    assert "entity 'a' is declared" in detail, detail
+    assert "parameter entity" not in detail, detail
 
 
 # ---------------------------------------------------------------------------
@@ -174,16 +178,19 @@ def test_an_upload_declaring_xml_entities_is_refused_and_not_converted():
 # is expected to fail before the fix or to pass both before and after.
 # ---------------------------------------------------------------------------
 
-#: A nested declaration: a -> 10 characters, b -> 3a, c -> 3b. 90 characters
-#: expanded, under a kilobyte on the wire. Not an amplifying bomb, deliberately
-#: -- the rule being pinned is "we do not accept entity declarations", not "we
-#: survive large ones", and a test needing a real bomb to fail would only fail
-#: on a slow machine.
-_NESTED_ENTITY_XML = b"""<?xml version="1.0"?>
+#: A parameter entity that declares a general entity, which the body then
+#: uses. Different from _ENTITY_DECLARING_XML (plain entities) and from
+#: _PARAMETER_ENTITY_XML (a parameter entity nobody uses).
+#:
+#: Measured with expat 2.6.2: EntityDeclHandler fires once, for `p`, with
+#: is_parameter_entity true. With the screen removed the upload is STILL a 400,
+#: because ElementTree does not expand `%p;` and so fails on `&c;` as an
+#: undefined entity -- which is why test_c asserts the message, not only the
+#: status code.
+_PARAMETER_ENTITY_IN_USE_XML = b"""<?xml version="1.0"?>
 <!DOCTYPE pfsense [
-  <!ENTITY a "AAAAAAAAAA">
-  <!ENTITY b "&a;&a;&a;">
-  <!ENTITY c "&b;&b;&b;">
+  <!ENTITY % p "<!ENTITY c 'AAAAAAAAAA'>">
+  %p;
 ]>
 <pfsense>
   <system><hostname>test-device</hostname></system>
@@ -362,20 +369,26 @@ def test_b2_the_refusal_message_names_the_entity_declaration():
     )
 
 
-def test_c_a_nested_entity_declaration_is_refused_before_it_expands():
-    """CLAIMS: a nested declaration is refused, and nothing is staged.
+def test_c_a_parameter_entity_in_use_is_refused_by_name():
+    """CLAIMS: a parameter entity that declares another entity is refused as a
+    parameter entity, and nothing is staged.
 
-    EXPECTED: fails before the fix (accepted with 200), passes after.
-
-    "Before it expands" is asserted the only way a test can assert it from
-    outside the endpoint: the upload is refused and no file reaches the
-    staging directory, which is written only after conversion has succeeded.
+    EXPECTED: fails without the screen, passes with it. Without the screen
+    the status is still 400 (ElementTree reports `&c;` as undefined), so the
+    message assertion is the one that fails: it would say "not readable XML",
+    not "parameter entity".
     """
-    response = _post_config(_NESTED_ENTITY_XML, "config.xml", "application/xml")
+    response = _post_config(
+        _PARAMETER_ENTITY_IN_USE_XML, "config.xml", "application/xml"
+    )
 
     assert response.status_code == 400, (
-        f"a nested entity declaration was accepted with "
+        f"a parameter entity in use was accepted with "
         f"{response.status_code}: {response.text[:300]}"
+    )
+    detail = response.json().get("detail", "")
+    assert "parameter entity 'p' is declared" in detail, (
+        f"refused, but not named as a parameter entity: {detail!r}"
     )
     staged = list(main.CONFIGS_DIR.glob("*")) if main.CONFIGS_DIR.exists() else []
     assert staged == [], f"a refused upload staged {staged}"
@@ -498,7 +511,7 @@ def test_g_the_refusal_is_a_refusal_and_not_a_quiet_clean_result():
     assert len(before) == 1
     kept = before[0].read_bytes()
 
-    bad = _post_config(_NESTED_ENTITY_XML, "config.xml", "application/xml")
+    bad = _post_config(_ENTITY_DECLARING_XML, "config.xml", "application/xml")
 
     assert bad.status_code == 400, (
         f"the entity upload reported {bad.status_code}: {bad.text[:300]}"
