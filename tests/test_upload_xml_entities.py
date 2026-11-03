@@ -4,8 +4,8 @@ WHAT THIS PINS, AND WHY IT IS NOT ABOUT SIZE
     `analysis/pfsense_convert.py:128` parses uploads with
     `xml.etree.ElementTree`, and `:840`/`:1127` call `ET.parse()`. Nothing in
     that module mentions DOCTYPE or entities, and there is no `defusedxml`.
-    Measured directly on 23 October: a three-level declaration
-    (`10 -> 30 -> 90` characters, 550 bytes on disk) parsed, and the
+    Measured: `_ENTITY_DECLARING_XML` below, a three-level declaration
+    (`10 -> 30 -> 90` characters, 492 bytes by `len()`), parsed, and the
     expansion was present in the parsed tree -- `<descr>` came back 90
     characters long.
 

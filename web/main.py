@@ -1377,8 +1377,9 @@ def _refuse_xml_entity_declarations(data: bytes, display_name: str) -> None:
     WHY THIS EXISTS (#397)
         analysis/pfsense_convert.py parses with xml.etree.ElementTree
         (:128, :840), which expands internal entity declarations. Measured on
-        this machine, a 205-byte document declaring three nested entities
-        produced a 90-character element value -- so expansion happens, and
+        this machine, a 492-byte document declaring three nested entities
+        (_ENTITY_DECLARING_XML in tests/test_upload_xml_entities.py) produced
+        a 90-character element value -- so expansion happens, and
         whether it is harmful depends on a libexpat version this project does
         not pin (2.6.2 here; Python's own docs put the threshold at 2.7.2).
         Rather than survive expansion, refuse the construct: nothing in a
