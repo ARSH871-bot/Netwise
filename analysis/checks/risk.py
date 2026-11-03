@@ -81,8 +81,8 @@ def _rule_dead_rule_is_low(finding: Dict[str, Any]) -> Optional[str]:
 
     It used to lower both, on the grounds that the exposure "is reported
     separately by R-2". That only holds when the line shadowing the deny is
-    a blanket permit. Measured in docs/research/cvss-comparison.md section 4
-    (#434): a deny shadowed by a SPECIFIC permit went to low, R-2 did not
+    a blanket permit. Measured in section 4 of the CVSS comparison in PR
+    #434: a deny shadowed by a SPECIFIC permit went to low, R-2 did not
     fire, and the only finding about that traffic sat at the bottom.
 
     Only a clear "(action DENY)" marker is left alone. Anything else that

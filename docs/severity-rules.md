@@ -67,8 +67,8 @@ So it keeps the check's `high` here too, which over-rates it.
 
 **This used to lower every dead line**, on the grounds that the exposure is
 reported separately by R-2. That only holds when the line shadowing the deny is
-a blanket permit. Measured in `docs/research/cvss-comparison.md` section 4
-(#434): a telnet deny shadowed by a *specific* permit went to `low`, R-2 did not
+a blanket permit. Measured in section 4 of the CVSS comparison in PR
+#434: a telnet deny shadowed by a *specific* permit went to `low`, R-2 did not
 fire, and the only finding about that traffic sat at the bottom of the list.
 §6 item 2 below also records that R-2 has no observed effect on any fixture we
 have, so R-1 should not lean on it.

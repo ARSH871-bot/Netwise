@@ -61,7 +61,7 @@ def dead_line_detail(line, action, blocked_by):
 
 
 def test_dead_deny_behind_a_specific_permit_keeps_its_checks_severity():
-    """The measured case from docs/research/cvss-comparison.md section 4 (#434).
+    """The measured case from section 4 of the CVSS comparison in PR #434.
 
     The telnet deny never fires because the permit above it already lets the
     whole LAN through to the server. So telnet from .66 gets through, which
