@@ -1394,10 +1394,17 @@ def _refuse_xml_entity_declarations(data: bytes, display_name: str) -> None:
             element text or an XML comment. Neither fires EntityDeclHandler.
 
     WHAT IS REFUSED
-        Any entity declaration -- internal, external, parameter or unparsed --
-        and any external reference. A plain <!DOCTYPE pfsense> with no
-        declarations is deliberately still accepted: it carries no expansion,
-        and refusing it would reject a valid export for no gain.
+        Any entity declaration -- internal, external, parameter or unparsed.
+        A plain <!DOCTYPE pfsense> with no declarations is deliberately still
+        accepted: it carries no expansion, and refusing it would reject a
+        valid export for no gain.
+
+    WHY THERE IS NO ExternalEntityRefHandler
+        There was one, and it could not be reached. Measured with expat 2.6.2:
+        it fires only when a declared external entity is referenced, and the
+        declaration fires EntityDeclHandler first, which refuses. A DOCTYPE
+        that only names an external DTD (SYSTEM or PUBLIC, no declarations)
+        fires neither handler, and is accepted like the plain DOCTYPE above.
 
     WHAT IS NOT DECIDED HERE
         A malformed document. expat.ExpatError is swallowed on purpose, so a
@@ -1410,11 +1417,7 @@ def _refuse_xml_entity_declarations(data: bytes, display_name: str) -> None:
         kind = "parameter entity" if is_parameter_entity else "entity"
         raise _EntityDeclarationFound(f"{kind} {name!r} is declared")
 
-    def _external_reference(_context, _base, system_id, _public_id):
-        raise _EntityDeclarationFound(f"an external reference to {system_id!r}")
-
     parser.EntityDeclHandler = _entity_declared
-    parser.ExternalEntityRefHandler = _external_reference
 
     try:
         parser.Parse(data, True)
