@@ -86,8 +86,10 @@ FINDING IDS
     change_impact owns the `CH-` prefix outright since amendment A-2 (#102).
 
         CH-000   nothing changed          -- the clean sentinel
-        CH-001+  one change, numbered in the order found
+        CH-001+  one change, numbered in the order found, at most 48
+        CH-049   the rest, summarised     -- when there are more than 48
         CH-050   could not compare        -- the check-level error sentinel
+        CH-051+  one stage could not run  -- see WHAT IT REPORTS below
 
     CH-050 mirrors policy_compliance's PC-050 deliberately: SENTINEL_NUMBER +
     ERROR_NUMBER_OFFSET, so there is one pattern across both of my features
@@ -418,21 +420,30 @@ def _rule_label(rule: Dict[str, Any]) -> str:
     return f"{head} ({rule['description']})" if rule.get("description") else head
 
 
-def _breach_changed(bf: Any, rule: Dict[str, Any]) -> bool:
-    """For a rule breached before AND after: did the change alter WHICH
-    traffic breaches it? (#402 item 4)
+def _breach_changed(bf: Any, rule: Dict[str, Any]) -> Tuple[bool, bool]:
+    """For a rule breached before AND after: (did the breach grow, did it shrink)?
 
-    "Breached on both sides" is not "unchanged". Closing LAN->8.8.8.8 while
-    opening LAN->1.1.1.1 leaves a "no other destinations" rule breached
-    throughout, and the old wording called that "neither causes nor fixes".
-    Differential searchFilters answers it directly: rows are flows whose
-    verdict differs between the two snapshots.
+    "Breached on both sides" is not "unchanged" (#402 item 4). Closing
+    LAN->8.8.8.8 while opening LAN->1.1.1.1 leaves a "no other destinations"
+    rule breached throughout. Differential searchFilters answers it: its rows
+    are flows whose verdict differs between the two snapshots.
+
+    WHICH WAY, NOT ONLY WHETHER (#406 review, @ARSH871-bot). The first version
+    returned one boolean, so a pure deny -- a breach that only SHRANK -- was
+    rated at the rule's own severity and raised the "opens access" banner.
+    Each row carries both verdicts, and Batfish returns one example per
+    direction (measured: a change that both adds and removes breaching
+    traffic gives two rows, one each way). A flow now taking the breaching
+    action, which it did not take before, grows the breach; the reverse
+    shrinks it.
     """
     from pybatfish.datamodel.flow import HeaderConstraints
 
     from analysis.checks import policy_compliance as pc
 
     action = pc.ACTION_BY_KIND[rule["kind"]]
+    breaching = action.upper()
+    grew = shrank = False
     for headers in rule["queries"]:
         frame = (
             bf.q.searchFilters(
@@ -442,9 +453,11 @@ def _breach_changed(bf: Any, rule: Dict[str, Any]) -> bool:
             .answer(snapshot=AFTER_SNAPSHOT, reference_snapshot=BEFORE_SNAPSHOT)
             .frame()
         )
-        if len(frame):
-            return True
-    return False
+        for _, row in frame.iterrows():
+            now, then = str(row["Snapshot_Action"]).upper(), str(row["Reference_Action"]).upper()
+            grew = grew or (now == breaching and then != breaching)
+            shrank = shrank or (then == breaching and now != breaching)
+    return grew, shrank
 
 
 def _devices(bf: Any) -> "Tuple[set | None, set | None]":
@@ -529,29 +542,43 @@ def _policy_change_findings(bf: Any, number: int, before: "set | None" = None,
         not_compared  rules we could not ask -- never "unchanged" (F-4)
         coverage      what this stage did not compare at all
     """
-    rules, policy_label, _, coverage = _policy_coverage()
+    rules, policy_label, user_supplied, coverage = _policy_coverage()
     out: Dict[str, Any] = {"findings": [], "unchanged": [], "absent": [], "one_side": [],
                            "not_compared": [], "coverage": coverage,
                            "label": policy_label, "number": number}
+    # Casefolded on both sides (#406 review, item 2). Batfish names nodes in
+    # lower case and resolves a policy's `RTR-US5` to `rtr-us5`, so a
+    # case-sensitive test called a present device absent -- and filed a
+    # breach the change really caused under a tick.
+    before = {d.casefold() for d in before} if before is not None else None
+    after = {d.casefold() for d in after} if after is not None else None
     for rule in rules:
         node = rule["node"]
+        key = str(node).casefold()
         if before is not None and after is not None:
-            if node not in before and node not in after:
-                # Worded like PC-050 (#402 item 1). This change cannot affect a
-                # rule about a device in neither configuration: a proven
-                # "not applicable", not a blind spot, so not an error -- an
-                # error here made every proposal on a network without rtr-us5
-                # "could not be fully verified".
+            if key not in before and key not in after:
+                if user_supplied:
+                    # The user's own rule. A scan of the same files calls it
+                    # PC-050, "could not check", so a tick here would
+                    # disagree with the scan (#406 review, item 2).
+                    out["not_compared"].append(
+                        f"{_rule_label(rule)}: {node} is in neither configuration")
+                    continue
+                # Our built-in example rules, worded like PC-050 (#402 item 1).
+                # A rule we wrote about a device the user does not have is a
+                # proven "not applicable", not a blind spot: an error here
+                # made every proposal on a network without rtr-us5 "could not
+                # be fully verified".
                 out["absent"].append(f"{rule.get('number', '?')} ({node})")
                 continue
-            if (node in before) != (node in after):
-                side = "before" if node in before else "after"
+            if (key in before) != (key in after):
+                side = "before" if key in before else "after"
                 out["one_side"].append(f"{_rule_label(rule)}: {node} is in the {side} configuration only")
                 continue
         try:
             was = _rule_breached(bf, BEFORE_SNAPSHOT, rule)
             now = _rule_breached(bf, AFTER_SNAPSHOT, rule)
-            altered = _breach_changed(bf, rule) if (was and now) else False
+            grew, shrank = _breach_changed(bf, rule) if (was and now) else (False, False)
         except Exception as error:
             out["not_compared"].append(f"{_rule_label(rule)}: {findings.describe_error(error)}")
             continue
@@ -562,12 +589,27 @@ def _policy_change_findings(bf: Any, number: int, before: "set | None" = None,
 
         where = f"{rule['kind']} on {node} filter {rule['filter']}"
         if was and now:
-            if altered:
+            if grew and shrank:
                 summary = f"This change alters how {_rule_label(rule)} is breached"
                 detail = (f"{where}: breached before and after, but by different "
-                          "traffic -- the change moves which flows break the rule. "
-                          "Direction: changed.")
+                          "traffic -- the change adds some breaching flows and "
+                          "removes others. Direction: changed.")
                 severity = rule.get("violation_severity", "high")
+            elif grew:
+                summary = f"This change widens how {_rule_label(rule)} is breached"
+                detail = (f"{where}: breached before, and by more traffic after. "
+                          f"Direction: {_RULE_DIRECTION[(rule['kind'], True)]}. "
+                          f"Violation if applied: {rule.get('violation_summary')}.")
+                severity = rule.get("violation_severity", "high")
+            elif shrank:
+                # A shrinking breach is a tightening of the breach, not a new
+                # problem: the rule's own severity here raised "opens access"
+                # for a pure deny (#406 review, item 1).
+                summary = f"This change narrows how {_rule_label(rule)} is breached"
+                detail = (f"{where}: breached before, and by less traffic after, but "
+                          "still breached. Direction: "
+                          f"{_RULE_DIRECTION[(rule['kind'], False)]}.")
+                severity = "low"
             else:
                 summary = f"{_rule_label(rule)} is breached before and after this change"
                 detail = (f"{where}: breached the same way on both sides. This change "
@@ -603,11 +645,28 @@ _POLICY_FAILED_NUMBER = SKIPPED_NUMBER + 4           # CH-054
 
 
 def _cap(regular: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Keep the first 48 ordinary findings; fold the rest into CH-049."""
+    """Keep 48 ordinary findings, the most important ones; fold the rest into CH-049.
+
+    WHICH 48 (#406 review). Keeping the first 48 kept them in the order the
+    stages ran, so the policy cards -- which run last and are the ones about
+    the user's own rules -- were the first to be folded away: 60 moved lines
+    plus a removed DNS line hid "BREAKS rule 4" inside "15 further
+    change(s)". Now the worst severity is kept first, a policy card ahead of
+    a filter or flow card of the same severity, and what is kept is still
+    shown in the order found.
+    """
     if len(regular) < _OVERFLOW_NUMBER:
         return regular
-    kept, rest = regular[: _OVERFLOW_NUMBER - 1], regular[_OVERFLOW_NUMBER - 1:]
     order = {"high": 0, "medium": 1, "low": 2}
+
+    def importance(index: int) -> Tuple[int, int, int]:
+        f = regular[index]
+        about_a_rule = "; rule " in str(f["evidence"]["source"])
+        return order.get(f["severity"], 3), 0 if about_a_rule else 1, index
+
+    keep = set(sorted(range(len(regular)), key=importance)[: _OVERFLOW_NUMBER - 1])
+    kept = [f for i, f in enumerate(regular) if i in keep]
+    rest = [f for i, f in enumerate(regular) if i not in keep]
     worst = min((f["severity"] for f in rest), key=order.get)
     kept.append(findings.make_finding(
         check=CHECK_NAME, severity=worst, device="unknown",
@@ -872,6 +931,12 @@ def main() -> None:
         # Every channel, like `python -m analysis.pipeline --policy` (#402 item 6).
         for note in list(policy.renamed) + list(policy.assigned):
             print(f"note: {note}")
+        # Same contract as `python -m analysis.pipeline --policy` (#387
+        # review): a pair the contradiction check could not compare is said,
+        # not dropped. Notes before warnings, matching pipeline.py's own
+        # established order.
+        for note in policy.undecidable:
+            print(f"warning: {note}")
     results = analyse_change(sys.argv[1], sys.argv[2], policy=policy)
     print(json.dumps(results, indent=2))
     size = score(results)
