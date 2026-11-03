@@ -46,6 +46,8 @@ RUN
     pytest tests/test_explain_output_check_gap.py -v
 """
 
+import pytest
+
 from ai import explain as explain_module
 from analysis.findings import error_finding, make_finding, no_issues_finding
 
@@ -85,3 +87,29 @@ def _accepted(monkeypatch, status: str, text: str) -> bool:
     monkeypatch.setattr(explain_module, "_ollama_is_reachable", lambda: True)
     shown, source = explain_module.explain_with_source(_finding(status))
     return source == "model" and shown == text
+
+
+# --- The control: a faithful explanation still gets through -------------------
+#
+# Without this, a fix that rejected everything would make every gap test
+# below pass. Each sentence repeats only what its finding says.
+
+_FAITHFUL = {
+    "found": ("The filter on rtr-us5 lets telnet from 10.10.10.0/24 to "
+              "10.20.0.5 through, because the line permit ip any any decides "
+              "it, although the policy says that traffic should be denied."),
+    "none": ("The access-control check ran on rtr-us5 and every policy "
+             "statement it was given held."),
+    "error": ("The access-control check did not run on rtr-us5, so nothing is "
+              "confirmed either way. The underlying reason: BatfishException: "
+              "Work terminated abnormally."),
+}
+
+
+@pytest.mark.parametrize("status", ["found", "none", "error"])
+def test_a_faithful_explanation_is_still_accepted(monkeypatch, status):
+    assert _accepted(monkeypatch, status, _FAITHFUL[status]), (
+        f"a faithful explanation of a status={status!r} finding was rejected: "
+        f"{_FAITHFUL[status]!r}. The output check must still let an accurate "
+        f"answer through, or every test in this file passes for the wrong reason."
+    )
