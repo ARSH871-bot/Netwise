@@ -136,3 +136,28 @@ def test_an_error_finding_is_not_explained_as_fine(monkeypatch, text):
         f"failure: 'we could not check' shown as 'we checked and it is fine'. "
         f"The error-only result-claim list does not cover this wording."
     )
+
+
+# --- GAP 2, RED ON PURPOSE: a confirmed problem, explained as no problem -------
+#
+# status="found" means the check ran and found something wrong. The
+# result-claim check does not run for this status at all (it is gated on
+# status == "error"), so every one of these is accepted today -- including
+# the two that ARE refused for an error finding. This is the status
+# web/main.py actually sends to the model.
+
+@pytest.mark.parametrize("text", [
+    "There are no problems with this rule.",
+    "No issues found.",
+    "This is fine and nothing needs fixing.",
+    "Everything looks clean.",
+    "This check passed.",
+    "No problems were found, the rule is safe.",
+])
+def test_a_found_finding_is_not_explained_as_clean(monkeypatch, text):
+    assert not _accepted(monkeypatch, "found", text), (
+        f"a status='found' finding -- a confirmed problem -- was explained to "
+        f"the user as {text!r}, labelled as model output. The output check "
+        f"runs no result-claim test for 'found', so an all-clear contradicting "
+        f"the finding it explains gets through."
+    )
