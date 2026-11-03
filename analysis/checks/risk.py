@@ -70,8 +70,14 @@ def _rule_dead_rule_is_low(finding: Dict[str, Any]) -> Optional[str]:
 
     A permit that can never match blocks traffic someone wanted: a hygiene
     problem, worth reporting, not an exposure. A deny that can never match is
-    the opposite -- traffic someone meant to block gets through -- and
-    access_control already grades it high for that reason.
+    usually the opposite: when the line shadowing it is a permit, traffic
+    someone meant to block gets through, and access_control grades it high
+    for that reason.
+
+    NOT WHEN THE BLOCKER ALSO DENIES. Then the traffic is still blocked, by
+    the earlier line, and nothing is exposed. R-1 cannot tell the two apart:
+    the evidence names the dead line's action, not the blocker's. So it keeps
+    the check's severity for both, and over-rates a deny behind a deny (#447).
 
     It used to lower both, on the grounds that the exposure "is reported
     separately by R-2". That only holds when the line shadowing the deny is

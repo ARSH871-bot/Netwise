@@ -56,8 +56,14 @@ A dead **permit** blocks traffic someone wanted. It is a hygiene problem —
 someone believes a rule is in force when it is not — and it is worth reporting,
 but it is not an exposure and should not sit above one.
 
-A dead **deny** is the opposite: traffic someone meant to block gets through.
-`access_control` grades it `high` for that reason, and R-1 leaves it alone.
+A dead **deny** is usually the opposite: when the line shadowing it is a
+permit, traffic someone meant to block gets through. `access_control` grades
+it `high` for that reason, and R-1 leaves it alone.
+
+**Known over-rating: a dead deny behind another deny (#447).** Then the traffic
+is still blocked, by the earlier line, and nothing is exposed. R-1 cannot tell
+this case apart: the evidence names the dead line's action, not the blocker's.
+So it keeps the check's `high` here too, which over-rates it.
 
 **This used to lower every dead line**, on the grounds that the exposure is
 reported separately by R-2. That only holds when the line shadowing the deny is
