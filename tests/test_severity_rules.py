@@ -53,8 +53,10 @@ def test_dead_rule_beats_the_blanket_permit_it_quotes():
     assert risk.severity_for(f) == "low"
 
 
-# The evidence exactly as access_control._check_dead_rules() writes it, so these
-# tests break if that wording drifts away from what R-1 reads.
+# The shape access_control._check_dead_rules() writes, copied by hand. A copy
+# does not follow the real wording if it drifts: only
+# test_a_dead_deny_from_the_real_check_comes_out_high, which runs the real
+# producer, catches that.
 def dead_line_detail(line, action, blocked_by):
     return (f"Unreachable line: {line} (action {action}). "
             f"Blocked by: {blocked_by}. Reason: BLOCKING_LINES")
