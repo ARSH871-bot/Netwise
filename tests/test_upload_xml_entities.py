@@ -26,12 +26,13 @@ WHAT THIS PINS, AND WHY IT IS NOT ABOUT SIZE
     property of OUR code instead: an entity declaration is refused by us,
     whatever expat would have done with it.
 
-THE SAMPLE IS DELIBERATELY TINY
-    Three levels, 90 characters expanded, well under a kilobyte. It is not
-    an amplifying bomb and does not need to be: the rule being pinned is
+THE SAMPLES ARE SMALL, AND THE ONE REAL BOMB IS NEVER EXPANDED BY US
+    Most samples expand to a few dozen characters: the rule being pinned is
     "we do not accept entity declarations", not "we survive large ones".
-    A test that needed a real bomb to fail would be a test that only fails
-    on a slow machine.
+    test_h adds the classic billion-laughs (#397's first criterion). It is
+    refused at its first declaration, so our code never expands it, and the
+    test asserts the refusal names that declaration -- which a refusal by
+    expat's own amplification limit would not.
 
 NO BATFISH, NO OLLAMA, NO NETWORK -- the same property the rest of
 tests/test_web_config_upload.py holds. Conversion is pure XML parsing, and
@@ -522,3 +523,47 @@ def test_g_the_refusal_is_a_refusal_and_not_a_quiet_clean_result():
         "the refused upload replaced or removed the previously staged "
         f"config: {after}"
     )
+
+
+def _billion_laughs_xml() -> bytes:
+    """The classic billion-laughs: ten levels, each entity ten of the one
+    below, so `&lol9;` would expand to 10**9 copies of "lol".
+
+    Built here rather than pasted, so the test can assert its size.
+    """
+    levels = ['  <!ENTITY lol "lol">']
+    for n in range(1, 10):
+        below = "lol" if n == 1 else f"lol{n - 1}"
+        levels.append(f'  <!ENTITY lol{n} "' + f"&{below};" * 10 + '">')
+    return (
+        '<?xml version="1.0"?>\n<!DOCTYPE lolz [\n'
+        + "\n".join(levels)
+        + "\n]>\n<lolz>&lol9;</lolz>\n"
+    ).encode("utf-8")
+
+
+def test_h_a_billion_laughs_upload_is_refused_at_its_first_declaration():
+    """CLAIMS: the classic billion-laughs is refused with 400, by our screen,
+    and nothing is staged.
+
+    EXPECTED: fails without the screen. Measured with expat 2.6.2 and the
+    screen disabled (in a separate, memory-capped process): expat refuses it
+    itself, by its amplification limit, so the status is still 400 but the
+    message says "not readable XML". The message assertion is what fails.
+    This pins our refusal, which does not depend on the libexpat version.
+    """
+    document = _billion_laughs_xml()
+    assert len(document) < 1024, f"meant to be a small file: {len(document)} bytes"
+
+    response = _post_config(document, "config.xml", "application/xml")
+
+    assert response.status_code == 400, (
+        f"a billion-laughs upload was accepted with {response.status_code}: "
+        f"{response.text[:300]}"
+    )
+    detail = response.json().get("detail", "")
+    assert "entity 'lol' is declared" in detail, (
+        f"refused, but not at its first entity declaration: {detail!r}"
+    )
+    staged = list(main.CONFIGS_DIR.glob("*")) if main.CONFIGS_DIR.exists() else []
+    assert staged == [], f"a refused upload staged {staged}"
