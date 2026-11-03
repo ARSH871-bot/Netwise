@@ -113,3 +113,26 @@ def test_a_faithful_explanation_is_still_accepted(monkeypatch, status):
         f"{_FAITHFUL[status]!r}. The output check must still let an accurate "
         f"answer through, or every test in this file passes for the wrong reason."
     )
+
+
+# --- GAP 1, RED ON PURPOSE: a check that could not run, explained as fine ------
+#
+# F-4. status="error" means nobody looked. Each sentence below tells the
+# user the opposite, and each is accepted today because none of its words is
+# in _RESULT_CLAIM_WORDS. ("No issues found." and "...the rule is safe." are
+# already refused for this status, by "issues" and "safe", so they are not
+# repeated here.)
+
+@pytest.mark.parametrize("text", [
+    "There are no problems with this rule.",
+    "This is fine and nothing needs fixing.",
+    "Everything looks clean.",
+    "This check passed.",
+])
+def test_an_error_finding_is_not_explained_as_fine(monkeypatch, text):
+    assert not _accepted(monkeypatch, "error", text), (
+        f"a status='error' finding -- the check COULD NOT RUN -- was explained "
+        f"to the user as {text!r}, labelled as model output. That is F-4's "
+        f"failure: 'we could not check' shown as 'we checked and it is fine'. "
+        f"The error-only result-claim list does not cover this wording."
+    )
