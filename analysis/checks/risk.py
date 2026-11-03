@@ -62,6 +62,12 @@ def _evidence(finding: Dict[str, Any]) -> str:
 # Our own fixed wording, not config text, and the same shape ai/explain.py
 # reads. The first "(action ...)." before "Blocked by:" is ours; the line
 # text before it comes from Batfish and never carries one.
+#
+# R-1 matches the START of the evidence, not the word anywhere (#444). Every
+# other producer opens with its own fixed words ("Expected", "Flow",
+# "Example permitted flow", "Referenced as"), while "unreachable" turns up in
+# routing assertions, Batfish dispositions and Cisco ICMP keywords.
+_DEAD_LINE = "unreachable line: "
 _DEAD_DENY = re.compile(r"unreachable line: .+?\(action deny\)\. blocked by:")
 
 
@@ -79,17 +85,23 @@ def _rule_dead_rule_is_low(finding: Dict[str, Any]) -> Optional[str]:
     (#434): a deny shadowed by a SPECIFIC permit went to low, R-2 did not
     fire, and the only finding about that traffic sat at the bottom.
 
-    Only a clear "(action DENY)" marker is left alone. Anything else that
-    says "unreachable" keeps the old answer, low.
+    Only a clear "(action DENY)" marker is left alone. A dead-line finding
+    without one keeps the old answer, low.
 
-    FIRST ON PURPOSE. A dead-rule finding normally quotes the line that shadows
-    it, and that line is very often a blanket permit -- so if R-2 ran first it
-    would match the quoted BLOCKER and rate a dead permit "high". For a dead
-    deny this rule passes, and R-2 still does not promote it, because the
-    blocker follows "Blocked by:" and is a citation.
+    ONLY A DEAD ACL LINE. The evidence must start with "Unreachable line: ",
+    as access_control writes it. It used to be the word "unreachable"
+    anywhere, which lowered routing isolation assertions ("Expected
+    UNREACHABLE ...") and any finding quoting an ICMP `unreachable` line
+    (#444).
+
+    FIRST ON PURPOSE. When the dead line is itself a blanket permit, R-2
+    would match it and rate a dead permit "high" if it ran first. The
+    blocker is not the risk: it follows "Blocked by:", so R-2 treats it as a
+    citation. For a dead deny this rule passes, and R-2 does not promote it
+    for the same reason.
     """
     detail = _evidence(finding)
-    if "unreachable" not in detail:
+    if not detail.startswith(_DEAD_LINE):
         return None
     if _DEAD_DENY.search(detail):
         return None
