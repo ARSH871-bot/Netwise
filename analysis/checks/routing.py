@@ -269,6 +269,12 @@ def _evaluate(expected: str, traces: Sequence[Any]) -> Optional[str]:
     exercises both branches and specifically regression-tests the
     EXITS_NETWORK case described in the module docstring.
     """
+    # No trace is no evidence either way. With nothing traced, both branches
+    # below find nothing wrong and report "holds" -- a false all-clear, so it
+    # is refused the same way as a bad "expected" at the bottom.
+    if len(traces) == 0:
+        raise ValueError("traceroute returned no traces, so nothing was checked")
+
     successes = [t for t in traces if t.disposition in SUCCESS_DISPOSITIONS]
     failures = [t for t in traces if t.disposition not in SUCCESS_DISPOSITIONS]
     multi = len(traces) > 1

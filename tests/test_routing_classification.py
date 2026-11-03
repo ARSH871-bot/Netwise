@@ -139,3 +139,50 @@ def test_unknown_expected_value_raises_rather_than_silently_passing():
     false "all clear" the way the original UNREACHABLE gap did."""
     with pytest.raises(ValueError):
         _evaluate("SOMETHING_ELSE", [FakeTrace("ACCEPTED")])
+
+
+# --- No traces at all ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("expected", ["REACHABLE", "UNREACHABLE"])
+def test_no_traces_raises_rather_than_silently_passing(expected):
+    """Zero traces is zero evidence, for either expectation.
+
+    With an empty list there are no failures (so REACHABLE "held") and no
+    successes (so UNREACHABLE "held"). Measured on main dc93ccb, both
+    returned None, and routing.run() said "All 1 route assertion(s) ...
+    hold", status none, for a path nobody traced.
+    """
+    with pytest.raises(ValueError):
+        _evaluate(expected, [])
+
+
+def test_no_traces_reaches_the_user_as_could_not_check(monkeypatch):
+    """And through the pipeline's isolation it becomes an error, not a tick."""
+    import pandas as pd
+
+    from analysis import pipeline
+    from analysis.checks import routing
+
+    class _Answer:
+        def answer(self): return self
+        def frame(self): return pd.DataFrame([{"Traces": []}])
+
+    class _Session:
+        class q:  # noqa: N801 -- mirrors pybatfish's bf.q
+            @staticmethod
+            def traceroute(**_kwargs): return _Answer()
+
+    route = {
+        "description": "hq must reach branch", "node": "rtr-hq",
+        "src_ip": "10.1.1.1", "dst_ip": "10.2.2.2", "expected": "REACHABLE",
+        "violation_summary": "hq cannot reach branch",
+        "violation_severity": "high", "number": 1,
+    }
+    monkeypatch.setattr(routing, "ROUTES", [route])
+    monkeypatch.setattr(routing.snapshot, "device_names", lambda bf: {"rtr-hq"})
+    monkeypatch.setattr(routing, "_routing_hygiene", lambda bf: [])
+
+    results = pipeline.run_check(_Session(), "routing")
+
+    assert [f["status"] for f in results] == ["error"], results

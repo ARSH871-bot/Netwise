@@ -699,6 +699,29 @@ def _restore_protected_findings(
             )
             continue
 
+        # Status is what a CHECK concluded, not a post-processor's to change
+        # (docs/severity-rules.md section 2, which says this is enforced
+        # here). Until it was, a stage setting status="none" turned "could
+        # not check" into a green tick and nothing said so.
+        if current.get("status") != original.get("status"):
+            number += 1
+            complaints.append(
+                findings.error_finding(
+                    check=name,
+                    device=original.get("device", "unknown"),
+                    summary=f"The {name.replace('_', ' ')} stage changed a finding's status",
+                    detail=(
+                        f"{fid} was {original.get('status')} and was set to "
+                        f"{current.get('status')}. Restored. A post-processor "
+                        "may re-rate and re-order, never change what a check "
+                        "concluded."
+                    ),
+                    source="analysis/pipeline.py",
+                    number=number,
+                )
+            )
+            current["status"] = original.get("status")
+
         if original.get("status") != "error":
             continue
 
