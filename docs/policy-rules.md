@@ -822,9 +822,18 @@ breach is), once against each snapshot:
 |---|---|---|
 | holds | holds | unchanged — *on the rule's filter*, which is all that is claimed |
 | breached | breached, by the same traffic | **still breached** — `found`, `low`: not caused by this edit, but never a green tick (#402) |
-| breached | breached, by different traffic | **ALTERS** the rule — at the rule's own severity, from a differential `searchFilters` (#402) |
+| breached | breached, by **more** traffic | **WIDENS** the breach — at the rule's own severity |
+| breached | breached, by **less** traffic | **NARROWS** the breach — `low`, still breached, never the "opens access" banner (#406 review) |
+| breached | breached, some flows added and some removed | **ALTERS** the rule — at the rule's own severity, direction *changed* |
 | breached | holds | **FIXES** the rule, `low` |
 | holds | breached | **BREAKS** the rule, at the rule's own severity |
+
+The last three rows come from one differential `searchFilters`. Each row it
+returns carries both verdicts, and Batfish returns one example per direction,
+so a flow now taking the breaching action that did not before widens the
+breach, and the reverse narrows it. The first version asked only *whether*
+the breach moved and rated every move at the rule's own severity, so a pure
+deny raised the "opens access" warning.
 
 Direction uses change impact's existing terms: a prohibition breach created is
 *opening*, a requirement breach created is *tightening*, and the reverse for
@@ -862,7 +871,9 @@ python -m analysis.change_impact before/ after/ my-policy.json
 ### What it does not look at, said out loud (#402, #403)
 
 - **Devices added or removed** are their own `found` cards. Before #403, deleting a whole router came back as "No change detected" with a green tick, because neither Batfish comparison describes a device that exists on one side only.
-- **A rule about a device in neither configuration** is *not applicable* — this change cannot affect it — and is named in the result, not reported as an error. Reporting it as an error made every proposal on a network without `rtr-us5` "could not be fully verified".
+- **One of our built-in rules about a device in neither configuration** is *not applicable* — this change cannot affect it — and is named in the result, not reported as an error. Reporting it as an error made every proposal on a network without `rtr-us5` "could not be fully verified".
+- **One of the user's own rules about a device in neither configuration** is part of the `CH-051` error instead. A scan of the same files calls it `PC-050`, could not check, and the two must not disagree (#406 review).
+- **Device names are compared as Batfish compares them**, case-free. A policy naming `RTR-US5` is about the device Batfish calls `rtr-us5`; a case-sensitive test once filed a real breach on it under a tick.
 - **A rule about a device on one side only** cannot be compared and is a single `CH-051` error.
 - **Only `policy_compliance` rules are compared.** A policy with `access_control` or `routing` rules gets a sentence beginning "NOT compared:" naming how many, and a policy with no `policy_compliance` rules says no rule of the user's was checked.
 - **"Unchanged" means the rule's filter decided its traffic the same way.** Unbinding the filter from its interface changes the network without changing that answer, so the wording claims no more than that.
