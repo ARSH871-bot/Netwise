@@ -34,6 +34,7 @@ from types import SimpleNamespace
 import pytest
 
 from analysis import change_impact
+from analysis import policy as policy_module
 
 
 def _trace(disposition):
@@ -182,6 +183,58 @@ def test_ids_stay_inside_the_ch_prefix(monkeypatch):
     results = change_impact.analyse_change("before", "after")
     assert all(f["id"].startswith("CH-") for f in results)
     assert all(f["check"] == "change_impact" for f in results)
+
+
+# --- the supplied policy actually reaches the real install (#405 review) ---
+#
+# Every test above drives analyse_change() with _policy_change_findings()
+# itself stubbed to ([], [], number), so none of them touch the line that
+# installs `policy`. Found in review: changing
+# `policy_module.set_active_policy(policy)` to `set_active_policy(None)`
+# inside analyse_change() left the WHOLE SUITE green, because nothing
+# exercised the real install with a policy that would answer differently
+# from the built-in rules if it were ignored.
+
+
+def test_the_supplied_policy_is_what_gets_installed_not_dropped(monkeypatch):
+    """Drives the real `pc.rules_in_use()` path, not a stub of the stage that
+    reads it. A policy naming a device and a violation summary the built-in
+    rules never use, so a silently-ignored `policy` argument is detectable
+    by its ABSENCE from the result, not just by a call count."""
+    monkeypatch.setattr(change_impact, "connect", lambda host="localhost": SimpleNamespace(
+        set_network=lambda *a, **k: None, set_snapshot=lambda *a, **k: None))
+    monkeypatch.setattr(change_impact, "load_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(change_impact, "find_parse_problems", lambda bf: [])
+    monkeypatch.setattr(change_impact, "_filter_change_findings",
+                        lambda bf, number: ([], number))
+    monkeypatch.setattr(change_impact, "_reachability_change_findings",
+                        lambda bf, number: ([], number))
+    monkeypatch.setattr(
+        change_impact, "_rule_breached",
+        lambda bf, snapshot, rule: snapshot == change_impact.AFTER_SNAPSHOT,
+    )
+
+    policy = policy_module.load_policy({
+        "device": "rtr-supplied-policy-marker",
+        "policy_compliance": [{
+            "number": 1, "kind": "requirement", "node": "rtr-supplied-policy-marker",
+            "filter": "acl_in", "description": "d", "violation_severity": "high",
+            "violation_summary": "a rule only the supplied policy carries",
+            "queries": [{"dstIps": "10.20.0.9"}],
+        }],
+    })
+
+    results = change_impact.analyse_change("before", "after", policy=policy)
+
+    details = " ".join(f["evidence"]["detail"] for f in results)
+    assert "a rule only the supplied policy carries" in details, (
+        f"the supplied policy's own rule never reached the comparison -- "
+        f"analyse_change() used some other rule set instead: {details!r}"
+    )
+    assert policy_module.active_policy() is None, (
+        "set_active_policy() must be cleared on the way out even when the "
+        "stage succeeds, not just on the error paths"
+    )
 
 
 def test_the_error_sentinel_cannot_collide_with_a_real_finding():
