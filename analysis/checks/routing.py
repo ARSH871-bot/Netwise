@@ -300,10 +300,9 @@ def _evaluate(expected: str, traces: Sequence[Any]) -> Optional[str]:
         return detail
 
     # A statement with anything else in "expected" is a bug in ROUTES, not a
-    # runtime condition -- raising here means run() surfaces it through the
-    # pipeline's own crash-isolation as a status="error" finding (see
-    # run_check() in analysis/pipeline.py) rather than silently doing nothing,
-    # which is exactly the failure this function exists to replace.
+    # runtime condition -- raising here means run() reports that one route as
+    # status="error" rather than silently doing nothing, which is exactly the
+    # failure this function exists to replace.
     raise ValueError(f"route 'expected' must be REACHABLE or UNREACHABLE, got {expected!r}")
 
 
@@ -471,7 +470,24 @@ def run(bf: Session) -> List[Dict[str, Any]]:
             continue
 
         row = frame.iloc[0]
-        violation = _evaluate(route["expected"], row["Traces"])
+        try:
+            violation = _evaluate(route["expected"], row["Traces"])
+        except ValueError as error:
+            # This route cannot be judged: nothing was traced, or its "expected"
+            # is not a value we know. Same handling as the two cases above, so
+            # one bad route does not end the check for the routes after it or
+            # for the policy-free analyses below.
+            results.append(
+                findings.error_finding(
+                    check=CHECK_NAME,
+                    device=node,
+                    summary=f"Could not check: {route['description'].lower()}",
+                    detail=findings.describe_error(error),
+                    source=f"{node}:{route['dst_ip']}",
+                    number=route["number"],
+                )
+            )
+            continue
 
         if violation is None:
             # The statement holds. Nothing to report.
