@@ -699,20 +699,55 @@ def load_policy_file(path: Any) -> Policy:
     if not file_path.exists():
         raise PolicyError(f"no policy file at {file_path}")
 
-    text = file_path.read_text(encoding="utf-8").strip()
+    try:
+        text = file_path.read_text(encoding="utf-8").strip()
+    except UnicodeDecodeError as error:
+        raise PolicyError(
+            f"{file_path} is not UTF-8 text: byte {error.start} cannot be "
+            f"decoded. Save the policy as UTF-8 and try again"
+        ) from error
     if not text:
         # An empty FILE is an empty POLICY, which is valid and loud (D4).
         return Policy({section: [] for section in POLICY_SECTIONS})
 
+    # Three more ways a file used to escape as a raw exception -- an HTTP 500
+    # on upload rather than a refusal naming the file: an integer of more
+    # than 4,300 digits (ValueError), and nesting deeper than Python's
+    # recursion limit, hit by json.loads or by load_policy() walking it.
     try:
-        parsed = json.loads(text)
+        parsed = json.loads(text, object_pairs_hook=_refuse_duplicate_keys)
+        return load_policy(parsed)
     except json.JSONDecodeError as error:
         raise PolicyError(
             f"{file_path} is not valid JSON: line {error.lineno}, "
             f"column {error.colno}: {error.msg}"
         ) from error
+    except PolicyError:
+        raise
+    except RecursionError as error:
+        raise PolicyError(f"{file_path} is nested too deeply to be a policy") from error
+    except ValueError as error:
+        raise PolicyError(f"{file_path} holds a value that cannot be read: {error}") from error
 
-    return load_policy(parsed)
+
+def _refuse_duplicate_keys(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
+    """Build one JSON object, refusing a key that appears twice in it.
+
+    json.loads keeps the LAST of two equal keys and drops the first without a
+    word. Measured: `{"policy_compliance": [<a rule>], "policy_compliance":
+    []}` loaded as an EMPTY policy, and the upload said so with HTTP 200 --
+    the user's rule gone. An unknown key is refused (D5) because a key nobody
+    reads is a rule nobody enforces; a key written twice is the same failure.
+    """
+    built: Dict[str, Any] = {}
+    for key, value in pairs:
+        if key in built:
+            raise PolicyError(
+                f"the key {key!r} appears twice in one object. JSON keeps only "
+                f"the last, so the first would be silently ignored"
+            )
+        built[key] = value
+    return built
 
 
 # ------------------------------------------------------------------------------
