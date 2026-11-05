@@ -148,14 +148,67 @@ _DEAD_RULE_DETAIL_PATTERN = re.compile(
 
 def _compute_dead_rule_outcome(detail: str) -> Optional[str]:
     """For a dead-ACL-rule finding, compute what actually happens to
-    traffic matching the dead line -- rather than asking the model to
-    infer it from the raw text, which measurably goes wrong sometimes.
+    traffic matching the dead line, AND what the dead line's own action
+    actually is -- rather than asking the model to infer either from the
+    raw text, which measurably goes wrong sometimes.
 
     The rule: whichever line SHADOWS the dead one decides the outcome for
     matching traffic, because it is evaluated first. A dead line's own
     action never takes effect, regardless of what it says.
 
-    Returns a plain-English statement of the real outcome, or None if:
+    THE DEAD LINE'S OWN ACTION IS A SEPARATE FACT FROM THE OUTCOME (#384)
+        The original version of this function stated only the OUTCOME
+        (what happens to matching traffic) and deliberately did not state
+        what the dead line's own action IS -- on the reasoning that it
+        "never takes effect, regardless of what it says", so stating it
+        seemed unnecessary. Found live, not assumed: `(action PERMIT)` is
+        shown in the raw evidence text either way, and sometimes the model
+        mischaracterised a PERMIT line as a block/deny rule anyway, even
+        though it correctly stated the OUTCOME was denied -- e.g. "the
+        device's ACL rule, which is supposed to block traffic... never
+        actually takes effect". Correct about the outcome, backwards about
+        what the dead line itself says.
+
+        Re-measured on the same real finding immediately before this fix:
+        3 of 8 live generations mischaracterised or were internally
+        inconsistent about the dead line's own action (worse than the 1-in-8
+        originally reported). Fixed the same way the other computed-fact
+        functions already handle a two-sided fact: state both sides
+        explicitly, not just the one judged most important.
+
+    WHY THIS FUNCTION ALSO NEEDS A BRANCH THE OTHER TWO DON'T (found in
+    review, before this merged)
+        _compute_policy_outcome() and _compute_expected_actual_outcome() can
+        always say their two sides differ, because the finding that feeds
+        them only EXISTS when they do -- a policy_compliance violation and a
+        testFilters mismatch are both, by construction, "expected one thing,
+        got the other". A dead-ACL-rule finding carries no such guarantee:
+        it exists whenever a line is unreachable, whether the line shadowing
+        it agrees with the dead line's own action (redundant -- a tidiness
+        problem) or disagrees (the real exposure this check exists to catch).
+        The two facts are independent, so a single template that always
+        says "different" is false for the redundant case.
+
+        Measured live, 60 generations each, on a real redundant-deny finding
+        (a DENY shadowed by an earlier DENY): the single-template wording
+        that shipped before this branch existed produced "no traffic is
+        actually denied" and "the actual action... is different from what
+        its own stated action claims" -- the exact #52 inversion this whole
+        function exists to prevent, reintroduced by assuming "different"
+        when the real relationship is "the same, coincidentally". Separately
+        measured on AC-002 (a real PERMIT-vs-DENY finding, where the two
+        sides genuinely do differ): the previous single template's own
+        repetition ("not what happens... what actually happens is
+        different... regardless of what it says") measurably made the model
+        more likely to give up and copy the Modelfile's Example 1 almost
+        verbatim instead of using the computed fact -- 0/60 on the
+        single-template wording's predecessor against 9/60 with the
+        single-template version. The two-branch wording below removes both:
+        each branch states its own case once, plainly, and never claims
+        "different" when the lines happen to agree.
+
+    Returns a plain-English statement of the real outcome AND the dead
+    line's own stated action, or None if:
       - `detail` is not in the exact shape access_control.py's dead-rule
         check produces (nothing to compute from), or
       - more than one blocking line is named and they do not all agree on
@@ -187,11 +240,27 @@ def _compute_dead_rule_outcome(detail: str) -> Optional[str]:
         return None  # blocking lines disagree -- not confident enough to state one outcome
 
     outcome = outcomes.pop()
+    dead_action = match.group("dead_action")
+    own = "permitted" if dead_action == "PERMIT" else "denied"
+
+    if own == outcome:
+        # Redundant, not contradicted -- the two facts happen to agree. Never
+        # say "different" or "not what happens" here; that is #444's exact
+        # shape, reintroduced.
+        verb = "permits" if outcome == "permitted" else "denies"
+        return (
+            f"the unreachable line's own stated action is {dead_action}, "
+            f"and traffic matching it is {outcome} anyway, by an earlier "
+            f"line that also {verb} it and is evaluated first. The outcome "
+            f"is the same as the unreachable line says; only the line that "
+            f"decides is different."
+        )
+
     return (
-        f"traffic matching the unreachable line's pattern is actually "
-        f"{outcome}, because the blocking rule is evaluated first and "
-        f"decides instead. The unreachable line's own action never takes "
-        f"effect, regardless of what it says."
+        f"the unreachable line's own stated action is {dead_action}, but it "
+        f"never takes effect: traffic matching it is actually {outcome}, "
+        f"because an earlier line that matches the same traffic is "
+        f"evaluated first and decides instead."
     )
 
 
