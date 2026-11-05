@@ -505,6 +505,18 @@ def propose_change(
         f for f in impact if f["status"] == "found" and f["severity"] == "high"
     ]
     warning = bool(high_severity_found)
+    # Returned alongside `warning` rather than left for the caller to
+    # re-derive from `impact` (#405 review, Arsh + Samika). `web/static/
+    # app.js` used to render every `warning=True` response with "This change
+    # opens access that is currently blocked", unconditionally -- correct
+    # when `warning` meant only an opening, wrong the moment it could also
+    # mean a closing breach that is still a serious effect. The same
+    # direction check `warning_text` below already makes, hoisted into the
+    # response so the one place that decides it is this function, not every
+    # renderer that reads the response.
+    opens_access = warning and all(
+        f.get("direction") == "opening" for f in high_severity_found
+    )
 
     if warning:
         # The trigger stays severity-high regardless of direction (#402) --
@@ -517,7 +529,7 @@ def propose_change(
         # @ARSH871-bot reviewing #389. Checking the real `direction` field
         # (analysis/change_impact.py) rather than assuming severity implies
         # it is what avoids repeating that mistake here.
-        if all(f.get("direction") == "opening" for f in high_severity_found):
+        if opens_access:
             warning_text = (
                 "Warning: simulating this change shows it newly opens access "
                 "that was previously blocked -- see the impact list."
@@ -562,6 +574,7 @@ def propose_change(
         "impact": impact,
         "verified": verified,
         "warning": warning,
+        "opens_access": opens_access,
         "grounded": True,
         "answer": answer,
     }
@@ -635,7 +648,11 @@ def propose_and_scan(
     "findings": [] and "grounded": False -- there is nothing to scan when
     there was nothing to propose.
     """
-    base = propose_change(request, before_dir, host=host)
+    # The staged policy threads into the full-scan pipeline below already --
+    # it must reach this narrower call too (#405 review, Samika), or the
+    # "impact" list this function also returns is evaluated against the
+    # built-in example rules while the full scan beside it uses the user's.
+    base = propose_change(request, before_dir, host=host, policy=policy)
     change = base["proposed_change"]
     if change is None:
         return {

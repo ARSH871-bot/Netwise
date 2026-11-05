@@ -492,6 +492,9 @@ def test_a_well_formed_request_that_opens_something_is_a_warning(monkeypatch, tm
     assert result["grounded"] is True
     assert result["verified"] is True
     assert result["warning"] is True
+    assert result["opens_access"] is True, (
+        "a pure opening must set the fact app.js's banner keys on (#405 review)"
+    )
     # after_config_text is asserted separately below -- its exact wording is
     # not this test's concern, and hardcoding the full banner here would
     # make every wording tweak fail a test unrelated to the change it is
@@ -537,6 +540,10 @@ def test_a_high_severity_closing_warns_without_claiming_it_opens_access(monkeypa
     assert result["warning"] is True, "under-warning a serious change is the dangerous direction"
     assert "Warning" in result["answer"]
     assert "opens access" not in result["answer"]
+    assert result["opens_access"] is False, (
+        "a closing breach must not set the fact app.js's banner would render "
+        "as 'opens access' (#405 review)"
+    )
 
 
 def test_a_mix_of_opening_and_closing_does_not_claim_simple_opening(monkeypatch, tmp_path):
@@ -554,6 +561,9 @@ def test_a_mix_of_opening_and_closing_does_not_claim_simple_opening(monkeypatch,
 
     assert result["warning"] is True
     assert "opens access" not in result["answer"]
+    assert result["opens_access"] is False, (
+        "mixed directions must not claim a simple opening either (#405 review)"
+    )
 
 
 def test_the_caller_supplied_policy_actually_reaches_analyse_change(monkeypatch, tmp_path):
@@ -892,6 +902,26 @@ def test_full_scan_passes_the_policy_through(monkeypatch, tmp_path):
     propose.propose_and_scan(GOOD_REQUEST, before_dir, policy=sentinel_policy)
 
     assert captured["policy"] is sentinel_policy
+
+
+def test_full_scans_own_impact_list_also_gets_the_policy(monkeypatch, tmp_path):
+    """#405 review (Samika): propose_and_scan() threads `policy` into the
+    full-scan pipeline above, but its own call to propose_change() -- which
+    builds the "impact" list this function also returns -- used to call it
+    with no `policy` at all, so that list stayed evaluated against the
+    built-in example rules regardless of what the caller staged."""
+    before_dir = _write_snapshot(tmp_path)
+    _stub_batfish(monkeypatch)
+    monkeypatch.setattr("analysis.pipeline.analyse", lambda *a, **k: [])
+
+    calls = []
+    sentinel_policy = object()
+    _stub_change_impact_recording(monkeypatch, [_none_finding()], calls)
+
+    propose.propose_and_scan(GOOD_REQUEST, before_dir, policy=sentinel_policy)
+
+    assert len(calls) == 1
+    assert calls[0]["policy"] is sentinel_policy
 
 
 def test_full_scan_never_mutates_the_original_config_directory(monkeypatch, tmp_path):
