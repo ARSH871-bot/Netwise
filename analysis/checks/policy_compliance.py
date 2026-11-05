@@ -694,6 +694,10 @@ def run(bf: Session) -> List[Dict[str, Any]]:
         # note in the module docstring.
         hits: List[Any] = []
         failures: List[Exception] = []
+        # A rule with no queries asks Batfish nothing, and "nothing found"
+        # would then read as "the rule holds". It is a rule we could not check.
+        if not rule["queries"]:
+            failures.append(ValueError("this rule has no queries, so nothing was asked"))
         for headers in rule["queries"]:
             try:
                 hits.extend(_search(bf, node, filter_name, action, headers))
