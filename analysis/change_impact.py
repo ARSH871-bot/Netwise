@@ -151,6 +151,36 @@ def _direction(line_action: str) -> str:
     return "opened" if str(line_action).upper() == "PERMIT" else "closed"
 
 
+#: One vocabulary for "direction" across all three finding producers here,
+#: carried on the finding as an extra key (see _attach_direction()) rather
+#: than left for a caller to infer from severity or parse out of `detail`.
+#:
+#: WHY THIS EXISTS (#402, raised by @ARSH871-bot reviewing #389)
+#:     For the filter and reachability producers, severity already IS a
+#:     faithful proxy for direction (_OPENING_SEVERITY/_CLOSING_SEVERITY are
+#:     assigned directly from "opened"/"closed"). For the POLICY producer it
+#:     is not: severity there tracks whether a breach was newly created, and
+#:     a newly-created breach can be a prohibition violated (access opens)
+#:     OR a requirement violated (access closes -- something that must flow
+#:     no longer does). A caller that assumes "severity high means opened"
+#:     -- ai/propose.py did -- gets the direction backwards for exactly the
+#:     second case. A real field removes the need to infer it at all.
+_DIRECTION_NORMAL_FORM = {
+    "opened": "opening",
+    "closed": "closing",
+    "changed": "changed",
+    "opening": "opening",
+    "tightening": "closing",
+}
+
+
+def _attach_direction(finding: Dict[str, Any], raw_direction: str) -> Dict[str, Any]:
+    """Set the normalised `direction` key on `finding` and return it, so
+    every append site reads as one line rather than three."""
+    finding["direction"] = _DIRECTION_NORMAL_FORM[raw_direction]
+    return finding
+
+
 # Which trace dispositions count as the flow having got through.
 #
 # DELIBERATELY WIDER THAN analysis/checks/routing.py'S SET, which excludes
@@ -239,23 +269,26 @@ def _filter_change_findings(
             severity = _CLOSING_SEVERITY
 
         results.append(
-            findings.make_finding(
-                check=CHECK_NAME,
-                severity=severity,
-                device=node,
-                summary=summary,
-                # Both lines, verbatim from Batfish. The reader needs the pair
-                # to see the change; one line alone is not a diff.
-                detail=(
-                    f"After:  {row['Line_Content']} (line {row['Line_Index']}, "
-                    f"{row['Line_Action']}). "
-                    f"Before: {row['Reference_Line_Content']} "
-                    f"(line {row['Reference_Line_Index']}). "
-                    "Both match at least one common flow and treat it differently."
+            _attach_direction(
+                findings.make_finding(
+                    check=CHECK_NAME,
+                    severity=severity,
+                    device=node,
+                    summary=summary,
+                    # Both lines, verbatim from Batfish. The reader needs the
+                    # pair to see the change; one line alone is not a diff.
+                    detail=(
+                        f"After:  {row['Line_Content']} (line {row['Line_Index']}, "
+                        f"{row['Line_Action']}). "
+                        f"Before: {row['Reference_Line_Content']} "
+                        f"(line {row['Reference_Line_Index']}). "
+                        "Both match at least one common flow and treat it differently."
+                    ),
+                    source=f"{node}:{filter_name}",
+                    status="found",
+                    number=number,
                 ),
-                source=f"{node}:{filter_name}",
-                status="found",
-                number=number,
+                direction,
             )
         )
         number += 1
@@ -297,19 +330,22 @@ def _reachability_change_findings(
             severity = _OPENING_SEVERITY
 
         results.append(
-            findings.make_finding(
-                check=CHECK_NAME,
-                severity=severity,
-                device=_device_of(row["Flow"]),
-                summary=summary,
-                detail=(
-                    f"Flow {row['Flow']}. "
-                    f"After:  {_first_trace(row['Snapshot_Traces'])}. "
-                    f"Before: {_first_trace(row['Reference_Traces'])}."
+            _attach_direction(
+                findings.make_finding(
+                    check=CHECK_NAME,
+                    severity=severity,
+                    device=_device_of(row["Flow"]),
+                    summary=summary,
+                    detail=(
+                        f"Flow {row['Flow']}. "
+                        f"After:  {_first_trace(row['Snapshot_Traces'])}. "
+                        f"Before: {_first_trace(row['Reference_Traces'])}."
+                    ),
+                    source="differentialReachability",
+                    status="found",
+                    number=number,
                 ),
-                source="differentialReachability",
-                status="found",
-                number=number,
+                direction,
             )
         )
         number += 1
@@ -436,25 +472,28 @@ def _policy_change_findings(bf: Any, number: int) -> Tuple[List[Dict[str, Any]],
             not_compared.append(f"{_rule_label(rule)}: more rule changes than finding numbers")
             continue
         results.append(
-            findings.make_finding(
-                check=CHECK_NAME,
-                severity=(rule.get("violation_severity", "high") if created else "low"),
-                device=rule["node"],
-                summary=(
-                    f"This change BREAKS {_rule_label(rule)}"
-                    if created else
-                    f"This change FIXES {_rule_label(rule)}"
+            _attach_direction(
+                findings.make_finding(
+                    check=CHECK_NAME,
+                    severity=(rule.get("violation_severity", "high") if created else "low"),
+                    device=rule["node"],
+                    summary=(
+                        f"This change BREAKS {_rule_label(rule)}"
+                        if created else
+                        f"This change FIXES {_rule_label(rule)}"
+                    ),
+                    detail=(
+                        f"{rule['kind']} on {rule['node']} filter {rule['filter']}: "
+                        f"{'held before, breached after' if created else 'breached before, holds after'}. "
+                        f"Direction: {direction}. "
+                        + (f"Violation if applied: {rule.get('violation_summary')}." if created
+                           else "The breach this rule reports is gone in the proposed config.")
+                    ),
+                    source=f"{policy_label}; rule {rule.get('number', '?')}",
+                    status="found",
+                    number=number,
                 ),
-                detail=(
-                    f"{rule['kind']} on {rule['node']} filter {rule['filter']}: "
-                    f"{'held before, breached after' if created else 'breached before, holds after'}. "
-                    f"Direction: {direction}. "
-                    + (f"Violation if applied: {rule.get('violation_summary')}." if created
-                       else "The breach this rule reports is gone in the proposed config.")
-                ),
-                source=f"{policy_label}; rule {rule.get('number', '?')}",
-                status="found",
-                number=number,
+                direction,
             )
         )
         number += 1

@@ -317,11 +317,23 @@ def _refuse(reason: str) -> Dict[str, Any]:
 
 
 def propose_change(
-    request: str, before_dir: "str | Path", host: "str | None" = None
+    request: str,
+    before_dir: "str | Path",
+    host: "str | None" = None,
+    policy: Any = None,
 ) -> Dict[str, Any]:
     """Propose ONE config change from plain English, and simulate it against
     a scratch copy of `before_dir` -- see the module docstring for the shape,
     the scope limit, and why neither step here calls a model.
+
+    `policy` (#402): the user's staged policy, or None to compare against
+    Netwise's built-in example rules. Passed straight through to
+    `analyse_change()`, which already installs and clears it -- this
+    function does no policy handling of its own. Before this parameter
+    existed, propose always used the built-in rules regardless of what the
+    caller had staged, and `policy_compliance`'s own evidence then correctly
+    -- but misleadingly -- reported "no policy file was supplied", because
+    nothing here had ever told it otherwise.
 
     Never raises. Every failure -- an unparseable request, an unknown
     device, an unreachable Batfish -- is a refusal, not an exception, the
@@ -455,7 +467,7 @@ def propose_change(
         after_dir = Path(tmp) / "after"
         shutil.copytree(before_dir, after_dir)
         (after_dir / "configs" / cfg_path.name).write_text(new_cfg_text, encoding="utf-8")
-        impact = change_impact.analyse_change(before_dir, after_dir, host=host)
+        impact = change_impact.analyse_change(before_dir, after_dir, host=host, policy=policy)
 
     # Shown on the dashboard as a before/after diff of the affected filter,
     # not just the one generated line -- a line in isolation does not say
@@ -489,15 +501,48 @@ def propose_change(
     # know" reads as LESS alarming than the truth. Gating warning on
     # verified silently swallowed the proof in that direction.
     verified = all(f["status"] != "error" for f in impact)
-    warning = any(
-        f["status"] == "found" and f["severity"] == "high" for f in impact
+    high_severity_found = [
+        f for f in impact if f["status"] == "found" and f["severity"] == "high"
+    ]
+    warning = bool(high_severity_found)
+    # Returned alongside `warning` rather than left for the caller to
+    # re-derive from `impact` (#405 review, Arsh + Samika). `web/static/
+    # app.js` used to render every `warning=True` response with "This change
+    # opens access that is currently blocked", unconditionally -- correct
+    # when `warning` meant only an opening, wrong the moment it could also
+    # mean a closing breach that is still a serious effect. The same
+    # direction check `warning_text` below already makes, hoisted into the
+    # response so the one place that decides it is this function, not every
+    # renderer that reads the response.
+    opens_access = warning and all(
+        f.get("direction") == "opening" for f in high_severity_found
     )
 
     if warning:
+        # The trigger stays severity-high regardless of direction (#402) --
+        # under-warning on a genuinely serious change is the dangerous
+        # direction, same reasoning as the verified/warning split above. What
+        # changes is the WORDING: "opens access" is only true when every
+        # triggering finding actually opens something. A high-severity
+        # POLICY finding can instead be a requirement breached, which CLOSES
+        # access that should stay open -- the opposite claim, found by
+        # @ARSH871-bot reviewing #389. Checking the real `direction` field
+        # (analysis/change_impact.py) rather than assuming severity implies
+        # it is what avoids repeating that mistake here.
+        if opens_access:
+            warning_text = (
+                "Warning: simulating this change shows it newly opens access "
+                "that was previously blocked -- see the impact list."
+            )
+        else:
+            warning_text = (
+                "Warning: simulating this change has a serious effect that "
+                "is not simply opening access -- see the impact list for "
+                "exactly what changed."
+            )
         answer = (
             f"Generated: {rule_line}, on {device}'s {acl_name!r} filter. "
-            "Warning: simulating this change shows it newly opens access "
-            "that was previously blocked -- see the impact list."
+            f"{warning_text}"
         )
         if not verified:
             answer += (
@@ -529,6 +574,7 @@ def propose_change(
         "impact": impact,
         "verified": verified,
         "warning": warning,
+        "opens_access": opens_access,
         "grounded": True,
         "answer": answer,
     }
@@ -602,7 +648,11 @@ def propose_and_scan(
     "findings": [] and "grounded": False -- there is nothing to scan when
     there was nothing to propose.
     """
-    base = propose_change(request, before_dir, host=host)
+    # The staged policy threads into the full-scan pipeline below already --
+    # it must reach this narrower call too (#405 review, Samika), or the
+    # "impact" list this function also returns is evaluated against the
+    # built-in example rules while the full scan beside it uses the user's.
+    base = propose_change(request, before_dir, host=host, policy=policy)
     change = base["proposed_change"]
     if change is None:
         return {

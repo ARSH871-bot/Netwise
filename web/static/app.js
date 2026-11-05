@@ -1799,11 +1799,12 @@ function addProposeResponse(result, requestText) {
 
   const refused = result.grounded !== true;
 
-  // THREE INDEPENDENT FACTS, NEVER FOLDED INTO ONE.
+  // FOUR INDEPENDENT FACTS, NEVER FOLDED INTO ONE.
   //
-  //     refused          nothing ran
-  //     warning === true a high-severity OPENING was proved in the diff
-  //     verified !== true some of the impact analysis could not run
+  //     refused            nothing ran
+  //     warning === true   a serious (high-severity) effect was proved
+  //     opensAccess === true  that effect is specifically an OPENING
+  //     verified !== true  some of the impact analysis could not run
   //
   // #183 made `verified` and `warning` separate booleans after review found
   // a proved opening being suppressed by an unrelated error in the same
@@ -1814,6 +1815,17 @@ function addProposeResponse(result, requestText) {
   // `grounded !== true` above: a missing or malformed key must never
   // silently drop the warning, and must never silently claim verification.
   const warned = result.warning === true;
+
+  // `warning` alone used to be read as "this opens access" everywhere this
+  // pane rendered it (#405 review, Arsh + Samika). That was only ever true
+  // while `warning` COULD mean nothing else. ai/propose.py also sets it for
+  // a high-severity POLICY breach that CLOSES access -- the opposite claim
+  // -- so this reads the real direction fact the backend now sends rather
+  // than assuming. `=== true` here too: a missing or malformed flag gets
+  // the generic wording below, which is true whichever direction the real
+  // change turns out to be, rather than a specific claim ("opens access")
+  // that a malformed response gives no grounds for.
+  const opensAccess = result.opens_access === true;
 
   // A NON-BOOLEAN `warning` IS NOT A "NO".
   //     `=== true` alone would render a malformed flag as silence, and
@@ -1840,8 +1852,11 @@ function addProposeResponse(result, requestText) {
       el(
         "div",
         "propose-warning",
-        "This change opens access that is currently blocked. Read the " +
-          "simulated impact below before applying it."
+        opensAccess
+          ? "This change opens access that is currently blocked. Read the " +
+            "simulated impact below before applying it."
+          : "This change has a serious effect that is not simply opening " +
+            "access. Read the simulated impact below before applying it."
       )
     );
   }
