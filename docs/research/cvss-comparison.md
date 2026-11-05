@@ -45,7 +45,7 @@ appendix.
 | Blanket permit, internet-facing | `permit ip any any` (R-2) | high → high | 5.3 Medium – **10.0 Critical** | 6.9 Medium – **10.0 Critical** |
 | Forged source permitted | PC-003 | medium → medium | 3.7 Low – 6.5 Medium | 6.3 Medium – 8.3 High |
 | Opening change | CH, opening direction | high → high | as "forbidden traffic permitted" | same |
-| Dead `deny` line | AC, `filterLineReachability` | high → **low** (R-1) | as "forbidden traffic permitted" (see below) | same |
+| Dead `deny` line | AC, `filterLineReachability` | high → **low** (R-1, as measured); **high** once #443 lands | as "forbidden traffic permitted" (see below) | same |
 | Required traffic blocked | PC-004, PC-005 | medium → medium | **not applicable**: no attacker | not applicable |
 | Reachability failure | RT-001 | high → medium (R-3) | not applicable | not applicable |
 | Dead `permit` line, unused filter, routing hygiene | AC, RT-1xx | medium → low / medium | not applicable | not applicable |
@@ -115,6 +115,15 @@ haven't changed anything. It's his ruleset, and §6.2 records that R-2 itself
 fires on none of our fixtures, so the "reported separately" half may need a
 look too.
 
+**Answered, 3 November.** Samika chose option A: R-1 now lowers a dead
+`permit` only, and a dead `deny` keeps its check's `high`. He implemented it
+in #443, and #445 makes R-1 match a dead ACL line by its evidence rather than
+by the word "unreachable". Re-measured on the three-line ACL above:
+`AC-002 low` on `main`, `AC-002 high` with #443. One known over-rating
+remains: a dead deny whose blocker also denies is rated `high` although its
+traffic is denied either way. R-1 cannot see the blocker's action in the
+evidence, so it is recorded in `docs/severity-rules.md` and tracked as #447.
+
 ### 5. CVSS has a Critical band and we don't: keep it that way
 
 A blanket permit on an internet-facing filter reaches 10.0 at the top of its
@@ -138,11 +147,11 @@ have. The cap is the right reading of the standard, not a departure from it.
 1. **Don't add CVSS scores to findings.** It would be false precision (point 1).
 2. **Keep three levels; no `critical`** (point 5).
 3. **Ask Samika about R-1 and dead `deny` lines** (point 4). It's the one
-   place I measured CVSS being right and us being wrong. Raised on this PR,
-   not changed.
+   place I measured CVSS being right and us being wrong. **Done:** he chose
+   option A, implemented in #443 (with #445), with one known limit (#447).
 4. In `docs/severity-rules.md`, if Samika agrees: one line saying the business
-   context tier is our equivalent of CVSS Environmental metrics. A reviewer
-   who knows CVSS would find the design faster.
+   context tier is our equivalent of CVSS Environmental metrics. **Done in
+   #443.**
 
 ## Appendix: vectors
 
