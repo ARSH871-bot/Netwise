@@ -29,6 +29,7 @@ import shutil
 import tempfile
 import threading
 import xml.etree.ElementTree as ET
+from xml.parsers import expat
 from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -1365,6 +1366,79 @@ def get_findings(http_response: Response = None) -> List[Dict[str, Any]]:
     return response
 
 
+class _EntityDeclarationFound(Exception):
+    """Raised by the screen below, out of an expat handler. Never escapes."""
+
+
+def _refuse_xml_entity_declarations(data: bytes, display_name: str) -> None:
+    """Refuse an XML upload that DECLARES an entity, before anything parses it
+    for content.
+
+    WHY THIS EXISTS (#397)
+        analysis/pfsense_convert.py parses with xml.etree.ElementTree
+        (:128, :840), which expands internal entity declarations. Measured on
+        this machine, a 492-byte document declaring three nested entities
+        (_ENTITY_DECLARING_XML in tests/test_upload_xml_entities.py) produced
+        a 90-character element value -- so expansion happens, and
+        whether it is harmful depends on a libexpat version this project does
+        not pin (2.6.2 here; Python's own docs put the threshold at 2.7.2).
+        Rather than survive expansion, refuse the construct: nothing in a
+        pfSense export needs an entity declaration.
+
+    WHY THE PARSER'S OWN HANDLER, NOT A SEARCH FOR b"DOCTYPE"
+        A byte search is wrong in both directions, both measured:
+          - it MISSES a UTF-16 document. The same attack encoded UTF-16
+            contains neither b"DOCTYPE" nor b"ENTITY" anywhere in its bytes,
+            and ElementTree still expanded it. expat reads the BOM and decodes
+            for itself, so its handler fires where a search finds nothing.
+          - it REJECTS a normal config that merely mentions the words in
+            element text or an XML comment. Neither fires EntityDeclHandler.
+
+    WHAT IS REFUSED
+        Any entity declaration -- internal, external, parameter or unparsed.
+        A plain <!DOCTYPE pfsense> with no declarations is deliberately still
+        accepted: it carries no expansion, and refusing it would reject a
+        valid export for no gain.
+
+    WHY THERE IS NO ExternalEntityRefHandler
+        There was one, and it could not be reached. Measured with expat 2.6.2:
+        it fires only when a declared external entity is referenced, and the
+        declaration fires EntityDeclHandler first, which refuses. A DOCTYPE
+        that only names an external DTD (SYSTEM or PUBLIC, no declarations)
+        fires neither handler, and is accepted like the plain DOCTYPE above.
+
+    WHAT IS NOT DECIDED HERE
+        A malformed document. expat.ExpatError is swallowed on purpose, so a
+        truncated or non-XML file keeps the message it already had from the
+        ET.ParseError branch below rather than acquiring a second one.
+    """
+    parser = expat.ParserCreate()
+
+    def _entity_declared(name, is_parameter_entity, *_rest):
+        kind = "parameter entity" if is_parameter_entity else "entity"
+        raise _EntityDeclarationFound(f"{kind} {name!r} is declared")
+
+    parser.EntityDeclHandler = _entity_declared
+
+    try:
+        parser.Parse(data, True)
+    except _EntityDeclarationFound as found:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{display_name}' was refused: it declares XML entities "
+                f"({found}). Netwise does not accept entity declarations, "
+                "because reading one makes the file expand as it is parsed. A "
+                "pfSense export does not need them -- re-export the config, or "
+                "remove the DOCTYPE block at the top of the file."
+            ),
+        ) from found
+    except expat.ExpatError:
+        # Not well-formed. Left to the ET.ParseError branch, which already
+        # has a message for it.
+        return
+
+
 @app.post("/api/upload")
 async def upload_config(file: UploadFile) -> Dict[str, Any]:
     """Accept a config file, validating it before we do anything with it,
@@ -1450,6 +1524,11 @@ async def upload_config(file: UploadFile) -> Dict[str, Any]:
     skipped: List[str] = []
     device_text: Optional[str] = None
     if is_pfsense:
+        # BEFORE the temp file, and before convert() parses it (#397). The
+        # upload path reaches exactly one parse -- convert() at
+        # pfsense_convert.py:840 -- so screening these bytes once here covers
+        # it. write_snapshot()'s second parse is not on this path.
+        _refuse_xml_entity_declarations(bytes(contents), display_name)
         with tempfile.NamedTemporaryFile(
             suffix=".xml", delete=False
         ) as tmp_file:
