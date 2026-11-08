@@ -354,7 +354,7 @@ def _real_routing_detail_multi(expected: str, dispositions, src="10.10.10.5",
     exercises routing._evaluate()'s "(n of m paths failed/succeeded)" suffix
     against the real function, for the mixed-result case (#399 review,
     @shubhamkataria2005)."""
-    from analysis.checks.routing import _evaluate
+    from analysis.checks.routing import _evaluate, _violation_detail
 
     class _FakeHop:
         def __init__(self, node):
@@ -367,7 +367,9 @@ def _real_routing_detail_multi(expected: str, dispositions, src="10.10.10.5",
 
     violation = _evaluate(expected, [_FakeTrace(d) for d in dispositions])
     assert violation is not None, "fixture dispositions did not violate the assertion"
-    return f"Expected {expected} for a flow from {src} to {dst}, but {violation}"
+    # Through the real producer (#439), not a hand-typed copy of its
+    # prefix -- same reasoning as calling _evaluate() itself above.
+    return _violation_detail(expected, src, dst, violation)
 
 
 def test_a_required_reachable_flow_that_is_actually_blocked():
@@ -420,6 +422,11 @@ def test_a_mixed_reachable_result_states_the_split_not_a_flat_claim():
     assert "do NOT reach" in outcome
     assert "mixed" in outcome
     assert "does NOT reach" not in outcome, "must not also state the flat claim"
+    assert "at least one of them ended in NO_ROUTE" in outcome, (
+        "#439: 'one ended in X' implies only one path failed, when the "
+        "count already says otherwise -- must read as one OF the failures, "
+        "not THE failure"
+    )
 
 
 def test_a_mixed_unreachable_result_states_the_split_not_a_flat_claim():
@@ -432,6 +439,9 @@ def test_a_mixed_unreachable_result_states_the_split_not_a_flat_claim():
     assert "DO reach" in outcome
     assert "mixed" in outcome
     assert "DOES reach" not in outcome, "must not also state the flat claim"
+    assert "at least one of them succeeded as ACCEPTED" in outcome, (
+        "#439: same wording fix, mirrored for the succeeded-disposition case"
+    )
 
 
 def test_a_unanimous_multi_path_result_still_states_the_flat_claim():
@@ -444,6 +454,54 @@ def test_a_unanimous_multi_path_result_still_states_the_flat_claim():
     assert "does NOT reach" in outcome
     assert "mixed" not in outcome
     assert "of 2" not in outcome
+
+
+# --- #439: the cause named must match the real disposition, not default to
+#     "routing" for every one -------------------------------------------------
+#
+# Measured on main (ccb2591) and confirmed still present (d424e05): both flat
+# branches said "the network's current routing is what disagrees" no matter
+# what Batfish actually reported. DENIED_IN/DENIED_OUT are filter decisions
+# (routing.py's own module docstring); EXITS_NETWORK most often means the
+# destination device is missing from the snapshot, not a routing conflict.
+
+def test_a_filter_denial_is_not_blamed_on_routing():
+    detail = _real_routing_detail("REACHABLE", "DENIED_IN")
+    outcome = _compute_routing_outcome(detail)
+    assert outcome is not None
+    assert "a filter rule" in outcome
+    assert "current routing is what disagrees" not in outcome
+
+
+def test_the_other_filter_disposition_is_also_not_blamed_on_routing():
+    """DENIED_OUT, like DENIED_IN, is excluded from SUCCESS_DISPOSITIONS
+    (routing.py:158), so it can only ever appear as a failure of a
+    REACHABLE assertion -- never as the "unexpectedly succeeded"
+    disposition of an UNREACHABLE one."""
+    detail = _real_routing_detail("REACHABLE", "DENIED_OUT")
+    outcome = _compute_routing_outcome(detail)
+    assert outcome is not None
+    assert "a filter rule" in outcome
+    assert "current routing is what disagrees" not in outcome
+
+
+def test_exits_network_names_a_missing_device_not_routing():
+    detail = _real_routing_detail("REACHABLE", "EXITS_NETWORK")
+    outcome = _compute_routing_outcome(detail)
+    assert outcome is not None
+    assert "not in this snapshot" in outcome
+    assert "current routing is what disagrees" not in outcome
+
+
+def test_a_genuine_routing_disposition_still_blames_routing():
+    """The control: NO_ROUTE really is a routing outcome, so the existing
+    wording must still appear -- without this, a fix that removed the
+    causal claim entirely would make every test above pass for the wrong
+    reason."""
+    detail = _real_routing_detail("REACHABLE", "NO_ROUTE")
+    outcome = _compute_routing_outcome(detail)
+    assert outcome is not None
+    assert "current routing is what disagrees" in outcome
 
 
 def test_routing_outcome_returns_none_for_an_unrelated_finding():
