@@ -245,8 +245,8 @@ def _compute_dead_rule_outcome(detail: str) -> Optional[str]:
 
     if own == outcome:
         # Redundant, not contradicted -- the two facts happen to agree. Never
-        # say "different" or "not what happens" here; that is #444's exact
-        # shape, reintroduced.
+        # say "different" or "not what happens" here; that is the #52
+        # inversion, reintroduced.
         verb = "permits" if outcome == "permitted" else "denies"
         return (
             f"the unreachable line's own stated action is {dead_action}, "

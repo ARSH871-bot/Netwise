@@ -323,6 +323,12 @@ def test_a_redundant_dead_deny_states_agreement_not_difference():
         f"the real outcome IS what the dead line's own action says here, "
         f"so this phrase is false for the redundant case: {outcome!r}"
     )
+    # Pins the actual agreement sentence, not just the absence of the two
+    # false phrases above -- found in review (5 November): without these,
+    # a rewrite that drops the agreement sentence entirely, or inverts its
+    # verb, still passes every assertion that was here before.
+    assert "also denies it" in outcome
+    assert "the same as the unreachable line says" in outcome
 
 
 def test_a_redundant_dead_permit_states_agreement_not_difference():
@@ -340,6 +346,8 @@ def test_a_redundant_dead_permit_states_agreement_not_difference():
         f"the real outcome IS what the dead line's own action says here, "
         f"so this phrase is false for the redundant case: {outcome!r}"
     )
+    assert "also permits it" in outcome
+    assert "the same as the unreachable line says" in outcome
 
 
 # --- _compute_policy_outcome (#145) ---------------------------------------------
