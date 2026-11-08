@@ -198,6 +198,24 @@ def test_returns_none_when_blocking_lines_disagree():
     assert _compute_dead_rule_outcome(detail) is None
 
 
+def test_two_agreeing_blocking_lines_are_both_named_with_plural_grammar():
+    """Two blocking lines, both DENY -- not ambiguous (they agree), so this
+    states the outcome and names both lines. Added in review (5 November):
+    not live-tested by anyone before this, and the first version written
+    here had a real subject-verb mismatch ("lines ... are ... decides"),
+    caught before it shipped."""
+    detail = (
+        "Unreachable line: permit udp 10.10.10.0 0.0.0.255 host 218.8.104.58 "
+        "eq domain (action PERMIT). Blocked by: deny ip 10.10.10.0 "
+        "0.0.0.255 any, deny tcp 10.10.10.0 0.0.0.255 any. Reason: BLOCKING_LINES"
+    )
+    outcome = _compute_dead_rule_outcome(detail)
+    assert outcome is not None
+    assert "earlier lines (" in outcome
+    assert "deny ip 10.10.10.0 0.0.0.255 any, deny tcp 10.10.10.0 0.0.0.255 any" in outcome
+    assert "are evaluated first and decide instead" in outcome
+
+
 def test_returns_none_for_unrecognised_blocking_line_syntax():
     detail = (
         "Unreachable line: permit tcp any any eq 80 (action PERMIT). "
@@ -260,6 +278,14 @@ def test_the_dead_lines_own_action_and_the_outcome_can_differ():
     assert outcome is not None
     assert "own stated action is PERMIT" in outcome
     assert "actually denied" in outcome
+    # Names the real blocking line rather than a vague "same traffic" claim
+    # (found in review, 5 November, on this exact AC-002 finding): the old
+    # wording read as "blocks all traffic with the same destination IP
+    # address", which is false -- this blocker is one source subnet to ANY
+    # destination.
+    assert "deny ip 10.10.10.0 0.0.0.255 any" in outcome
+    assert "same traffic" not in outcome
+    assert "same destination" not in outcome
 
 
 def _real_dead_rule_detail(dead_action: str, blocking_action: str) -> str:

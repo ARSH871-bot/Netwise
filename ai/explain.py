@@ -256,11 +256,22 @@ def _compute_dead_rule_outcome(detail: str) -> Optional[str]:
             f"decides is different."
         )
 
+    # Name the actual blocking line(s) rather than a vague "same traffic"
+    # claim (found in review, 5 November). Measured on AC-002: the vague
+    # wording was read as "blocks all traffic with the same destination IP
+    # address" when the real blocker (deny ip 10.10.10.0 0.0.0.255 any) is
+    # one source subnet to ANY destination -- a real misdescription, not a
+    # one-off. Naming the line leaves nothing for the model to invent.
+    named = " ".join(match.group("blocking").split())  # Batfish pads its spaces
+    lines, verb, decide_verb = (
+        ("earlier lines", "are", "decide") if len(blocking_lines) > 1
+        else ("an earlier line", "is", "decides")
+    )
     return (
         f"the unreachable line's own stated action is {dead_action}, but it "
         f"never takes effect: traffic matching it is actually {outcome}, "
-        f"because an earlier line that matches the same traffic is "
-        f"evaluated first and decides instead."
+        f"because {lines} ({named}) {verb} evaluated first and {decide_verb} "
+        f"instead."
     )
 
 

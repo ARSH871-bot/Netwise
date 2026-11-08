@@ -792,8 +792,10 @@ that no longer exists by the time anyone reads this table.
 
 ### The held-out set and its ratings
 
-Two rounds so far (Ankeet, 10 October; AC-002 re-captured and re-rated by
-Ankeet, 3 November, after #401) - see
+Three rounds so far (Ankeet, 10 October; AC-002 re-captured and re-rated by
+Ankeet, 3 November, after #401; AC-002 re-captured and re-rated by Ankeet
+again, 8 November, after review found the 3 November capture's own wording
+was itself a misdescription) - see
 [`tests/fixtures/explanation_quality/holdout.json`](../tests/fixtures/explanation_quality/holdout.json)
 for the full captured findings, explanations and reasoning behind each
 score. Same 1-5 scale as Part 3 (accuracy: does the text claim only what the
@@ -805,7 +807,7 @@ read `evidence.detail` what is wrong).
 | RT-050 | fallback | 5 | 4 | Deterministic, cannot be wrong by construction - **reported separately below, not part of the model score.** |
 | AC-001 | model | 5 | 4 | Correct, no inversion. |
 | PC-001 | model | 5 | 4 | Regenerated post-#145: inversion gone. |
-| AC-002 | model | 5 | 4 | **Re-captured under #401's fix (was 2/2, see #384 above).** Correctly names the dead line's own action as PERMIT and the real outcome as blocked, no inversion either way. |
+| AC-002 | model | 5 | 4 | **Re-captured 8 November, after the computed fact was changed to name the real blocking line instead of describing it loosely (review, 5 November).** The 3 November capture said the blocker "blocks all traffic with the same destination IP address" - false, the real blocker (`deny ip 10.10.10.0 0.0.0.255 any`) is one source subnet to ANY destination, which is what cost that capture its accuracy=4 from two independent raters. This capture says "blocks all traffic through that same interface" instead, which is true and does not repeat the destination claim. 30 live generations measured on this exact finding: 1/30 still said "same destination", 0/30 called the permit line a block, 1/30 copied Modelfile Example 1 - normal model variance, not something this wording hides. **@ARSH871-bot @shubhamkataria2005, this is a fresh capture - your earlier 4s rated the 3 November text, not this one. Please rate again.** |
 | PC-005 | model | 5 | 3 | Regenerated post-#145: inversion gone. First-sentence phrasing still asks the reader to resolve an apparent contradiction before it resolves itself - a readability risk, not a false claim this time. |
 
 @ARSH871-bot @shubhamkataria2005 @SamikaPerera - a second independent rating

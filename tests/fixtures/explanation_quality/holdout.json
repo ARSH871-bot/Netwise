@@ -105,15 +105,15 @@
         },
         "status": "found"
       },
-      "captured_explanation": "The ACL rule on the RTR-US5 device, which allows traffic to reach host 218.8.104.58 over UDP, is never actually applied because an earlier rule blocks all traffic with the same destination IP address. As a result, this specific rule has no effect, even though it explicitly states that it should permit traffic.",
+      "captured_explanation": "The ACL rule on the RTR-US5 device, which allows unencrypted UDP traffic to reach host 218.8.104.58 from the internal network (10.10.10.0/24), is never actually enforced because an earlier deny rule takes precedence and blocks all traffic through that same interface. As a result, this specific permit action is effectively ignored by the device's access control system.",
       "captured_explanation_source": "model",
-      "captured_prompt_sha256": "8ea2eeb9812dacac19d1f6079f6ac5e7d79c65c82506b8657fb238d77b76afc3",
+      "captured_prompt_sha256": "f037179380f1eb6904c3686eab657ca1045ce1559fd83008d9950a7014454643",
       "ratings": [
         {
           "rater": "Ankeet",
           "accuracy": 5,
           "usefulness": 4,
-          "notes": "RE-CAPTURED after #384/#401 rewrote _compute_dead_rule_outcome() -- the prompt-hash guard (#385) correctly flagged this entry as stale the moment #401 merged onto this set. Old capture named the dead line a rule \"which is supposed to block traffic\" when its real action is PERMIT (the #384 defect, accuracy 2/2, see the superseded note in git history). This capture correctly says the line \"allows traffic... should permit traffic\" -- own action named right, outcome (no effect, blocked by the earlier deny) also right, no inversion. Checked for reproducibility before rating: 16 live generations across this exact finding and the mirror redundant-dead-rule case (see #401), 0 of 16 inverted the dead line's own action and 0 of 16 copied ai/Modelfile's Example 1, which #401's own review measured happening 9/60 under the wording this replaces."
+          "notes": "RE-CAPTURED again after review (5 November) found the previous capture's 'same destination IP address' claim was false -- the real blocker (deny ip 10.10.10.0 0.0.0.255 any) is one source subnet to ANY destination, not a destination match. The computed fact now names the real blocking line text instead of describing it loosely, so there is less room for the model to invent a relationship between the two rules. This capture says the deny rule 'blocks all traffic through that same interface', which is true (the ACL applies to the whole interface) and does not repeat the destination-IP claim. 30 live generations on this exact finding, measured: 1/30 still said 'same destination', 0/30 called the permit line a block, 1/30 copied Modelfile Example 1 near-verbatim -- all three are the model's own variance, not something this capture's wording hides. Posted for Shubham and Arsh to add their own rating of THIS capture, since their earlier 4s rated the previous one."
         }
       ]
     },
