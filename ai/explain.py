@@ -327,6 +327,15 @@ def _compute_dead_rule_outcome(detail: str) -> Optional[str]:
     generates an explanation from the raw finding either way. This function
     only ever ADDS confidence; it never blocks a finding from being
     explained.
+
+    WHAT "THE REAL OUTCOME" MEANS FOR THE CONTRADICTED CASE (#453)
+        When the blocking line's action disagrees with the dead line's
+        own action, this no longer claims a single outcome for ALL
+        traffic matching the dead line's pattern -- see the comment
+        above that branch's return statement for why that claim is not
+        always true and what is stated instead. The redundant case
+        (blocking line agrees with the dead line) is unaffected -- see
+        that branch's own comment for why.
     """
     match = _DEAD_RULE_DETAIL_PATTERN.search(detail)
     if not match:
@@ -367,8 +376,10 @@ def _compute_dead_rule_outcome(detail: str) -> Optional[str]:
     # syntax (found in review, 9 November -- raw syntax measurably traded
     # that misdescription for a different one, confusing the model about
     # which address was "a specific host"; see _describe_acl_line()'s own
-    # docstring). If any blocking line does not parse, fall back to
-    # naming them in raw syntax rather than withholding the fact.
+    # docstring). This path only ever states what the blocking line itself
+    # does, never a claim about the dead line's whole pattern, so it does
+    # not carry #453's overclaim risk either (see the fallback below for
+    # what that risk was).
     descriptions = [_describe_acl_line(line) for line in blocking_lines]
     if all(d is not None for d in descriptions):
         if len(descriptions) == 1:
@@ -385,16 +396,39 @@ def _compute_dead_rule_outcome(detail: str) -> Optional[str]:
             f"decide instead -- {cases}."
         )
 
+    # If any blocking line does not parse, fall back to naming them in raw
+    # syntax -- but NOT to a universal-outcome claim (#453). Blocking_Lines
+    # does not always name every earlier line, specifically one sharing the
+    # DEAD line's own action rather than the named blocking line's opposite
+    # one, so "traffic matching it is actually {outcome}" can be false for
+    # a subset of the dead line's own pattern. Measured: a real config had
+    # `permit host 10.1.1.5 any` before both `deny 10.1.1.0/24 any` (the
+    # named blocker) and the dead `permit 10.1.1.0/24 ... eq 443` --
+    # Batfish named only the deny, so the old sentence said "actually
+    # denied" for the whole /24, but testFilters showed host .5 is
+    # actually PERMITted, by the earlier, unnamed, same-action-as-the-
+    # dead-line permit.
+    #
+    # What stays true regardless of anything Blocking_Lines could have
+    # left out: filterLineReachability verifies the dead line's own action
+    # never fires, across its whole match space, exhaustively -- that part
+    # of "unreachable" is sound. And whatever IS named here genuinely is
+    # evaluated before the dead line and genuinely does have the opposite
+    # action -- that is just what Blocking_Lines means. Stating only those
+    # two facts, and nothing about what therefore happens to "traffic
+    # matching it", is what stays true no matter what is missing from this
+    # list.
     named = " ".join(match.group("blocking").split())  # Batfish pads its spaces
-    lines, verb, decide_verb = (
-        ("earlier lines", "are", "decide") if len(blocking_lines) > 1
-        else ("an earlier line", "is", "decides")
+    outcome_action = "DENY" if outcome == "denied" else "PERMIT"
+    lines, decide_verb, verb = (
+        ("earlier lines", "are", "have") if len(blocking_lines) > 1
+        else ("an earlier line", "is", "has")
     )
     return (
-        f"the unreachable line's own stated action is {dead_action}, but it "
-        f"never takes effect: traffic matching it is actually {outcome}, "
-        f"because {lines} ({named}) {verb} evaluated first and {decide_verb} "
-        f"instead."
+        f"the unreachable line's own stated action is {dead_action}, but "
+        f"that action never takes effect: {lines} ({named}), which "
+        f"{decide_verb} evaluated first, {verb} the opposite action "
+        f"({outcome_action}) instead."
     )
 
 
