@@ -146,6 +146,112 @@ _DEAD_RULE_DETAIL_PATTERN = re.compile(
 )
 
 
+def _parse_cisco_endpoint(tokens, i):
+    """Consume one Cisco ACL endpoint (source or destination) starting at
+    tokens[i]: "any", "host A.B.C.D", or "A.B.C.D W.X.Y.Z" (wildcard) --
+    the exact three forms ai/propose.py's own _cisco_endpoint() ever
+    emits in the other direction. Returns (kind, value, next_index), or
+    None for anything else -- refuse rather than guess at an
+    unfamiliar shape (#401 review, @shubhamkataria2005, 9 November).
+    """
+    if i >= len(tokens):
+        return None
+    if tokens[i] == "any":
+        return "any", None, i + 1
+    if tokens[i] == "host":
+        if i + 1 >= len(tokens):
+            return None
+        return "host", tokens[i + 1], i + 2
+    if i + 1 >= len(tokens):
+        return None
+    addr, wildcard = tokens[i], tokens[i + 1]
+    octets = wildcard.split(".")
+    if len(octets) != 4:
+        return None
+    try:
+        netmask = ".".join(str(255 - int(b)) for b in octets)
+        network = ipaddress.ip_network(f"{addr}/{netmask}", strict=False)
+    except ValueError:
+        return None  # not a valid address, or a non-contiguous wildcard
+        # mask (the inverted bytes do not form a legal netmask) -- same
+        # reason analysis/draft_policy.py refuses one of these as
+        # "cannot be written as one" prefix.
+    return "network", f"{network.network_address}/{network.prefixlen}", i + 2
+
+
+def _format_endpoint(kind, value, role):
+    if kind == "any":
+        return "anywhere" if role == "source" else "any destination"
+    if kind == "host":
+        return f"host {value}"
+    return value  # bare CIDR, e.g. "10.10.10.0/24"
+
+
+def _describe_acl_line(line):
+    """A plain-English description of one Cisco ACL line's own criteria,
+    not a restatement of its raw syntax.
+
+    WHY THIS EXISTS (#401 review, @shubhamkataria2005, 9 November)
+        Naming the blocking line in raw ACL text (the previous fix for a
+        different misdescription, found in review 5 November) measurably
+        traded one misdescription for another: 30 live generations on
+        AC-002 went from 12/30 calling the dead PERMIT line a block (the
+        original #384 bug, now 0/30) to 16/30 calling the dead line's own
+        /24 source "a specific host" -- a confusion that did not happen
+        on main or on the commit before the raw-syntax fix. The raw
+        blocking-line text sits next to the dead line's own raw text
+        (also shown to the model, in evidence.detail), and the two
+        addresses of different specificity next to each other appear to
+        get their roles crossed. Removing the raw ACL syntax from the
+        computed fact removes that collision.
+
+    Recognises exactly "permit|deny PROTOCOL SRC [SRC] DST [DST] [eq
+    PORT]" -- the only shape this project's own checks and converters
+    ever produce. Returns None for anything else (an unrecognised
+    protocol-keyword shape, a source-port clause, trailing tokens, a
+    non-contiguous wildcard mask) rather than guess at it; the caller
+    falls back to the current raw-syntax naming in that case, so this
+    never blocks a finding from being explained, only changes how
+    confidently the blocking line's own criteria can be phrased.
+    """
+    tokens = line.split()
+    if len(tokens) < 4:
+        return None
+    action = tokens[0].lower()
+    if action not in ("permit", "deny"):
+        return None
+    verb = "permits" if action == "permit" else "denies"
+    protocol = tokens[1].lower()
+
+    src = _parse_cisco_endpoint(tokens, 2)
+    if src is None:
+        return None
+    src_kind, src_value, i = src
+    dst = _parse_cisco_endpoint(tokens, i)
+    if dst is None:
+        return None
+    dst_kind, dst_value, i = dst
+
+    port = None
+    if i < len(tokens):
+        if tokens[i].lower() == "eq" and i + 1 < len(tokens):
+            port = tokens[i + 1]
+            i += 2
+        else:
+            return None  # a shape this project does not recognise
+    if i != len(tokens):
+        return None  # trailing tokens left over -- refuse rather than guess
+
+    proto_phrase = "all traffic" if protocol == "ip" else f"{protocol.upper()} traffic"
+    sentence = (
+        f"{verb} {proto_phrase} from {_format_endpoint(src_kind, src_value, 'source')} "
+        f"to {_format_endpoint(dst_kind, dst_value, 'destination')}"
+    )
+    if port is not None:
+        sentence += f" on port {port}"
+    return sentence
+
+
 def _compute_dead_rule_outcome(detail: str) -> Optional[str]:
     """For a dead-ACL-rule finding, compute what actually happens to
     traffic matching the dead line, AND what the dead line's own action
@@ -256,12 +362,29 @@ def _compute_dead_rule_outcome(detail: str) -> Optional[str]:
             f"decides is different."
         )
 
-    # Name the actual blocking line(s) rather than a vague "same traffic"
-    # claim (found in review, 5 November). Measured on AC-002: the vague
-    # wording was read as "blocks all traffic with the same destination IP
-    # address" when the real blocker (deny ip 10.10.10.0 0.0.0.255 any) is
-    # one source subnet to ANY destination -- a real misdescription, not a
-    # one-off. Naming the line leaves nothing for the model to invent.
+    # Describe the actual blocking line(s) in plain English rather than a
+    # vague "same traffic" claim (found in review, 5 November) OR raw ACL
+    # syntax (found in review, 9 November -- raw syntax measurably traded
+    # that misdescription for a different one, confusing the model about
+    # which address was "a specific host"; see _describe_acl_line()'s own
+    # docstring). If any blocking line does not parse, fall back to
+    # naming them in raw syntax rather than withholding the fact.
+    descriptions = [_describe_acl_line(line) for line in blocking_lines]
+    if all(d is not None for d in descriptions):
+        if len(descriptions) == 1:
+            return (
+                f"the unreachable line's own stated action is {dead_action}, "
+                f"but it never takes effect: an earlier line, evaluated "
+                f"first, {descriptions[0]} instead."
+            )
+        first, rest = descriptions[0], descriptions[1:]
+        cases = f"one {first}" + "".join(f", and another {d}" for d in rest)
+        return (
+            f"the unreachable line's own stated action is {dead_action}, "
+            f"but it never takes effect: earlier lines, evaluated first, "
+            f"decide instead -- {cases}."
+        )
+
     named = " ".join(match.group("blocking").split())  # Batfish pads its spaces
     lines, verb, decide_verb = (
         ("earlier lines", "are", "decide") if len(blocking_lines) > 1

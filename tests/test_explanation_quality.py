@@ -164,16 +164,17 @@ def test_the_published_score_matches_the_committed_ratings():
     deliberately (docs/evaluation.md Part 4), don't just update this
     assertion to make it pass.
 
-    Re-measured after #401 re-captured AC-002 under its fixed prompt --
-    #385's guard flagged it stale the moment #401 merged onto this set,
-    since #384's defect is exactly what #401 fixes. AC-002 moved from 2/2
-    to 5/4; see docs/evaluation.md Part 4 for the dated note."""
+    Re-measured again (9 November) after review found the raw-ACL-syntax
+    wording traded one misdescription for another (#401 review,
+    @shubhamkataria2005) -- #385's guard flagged AC-002 as stale the
+    moment the fix changed its prompt. AC-002 moved from 5/4 to 5/5; see
+    docs/evaluation.md Part 4 for the dated note."""
     score = score_holdout(load_holdout())
     assert score["n_findings"] == 4
     assert score["n_ratings"] == 4
     assert score["mean_accuracy"] == pytest.approx(5.0)
     assert score["min_accuracy"] == 5
-    assert score["mean_usefulness"] == pytest.approx(3.75)
+    assert score["mean_usefulness"] == pytest.approx(4.0)
     assert score["min_usefulness"] == 3
     assert {row["id"] for row in score["per_finding"]} == {
         "AC-001", "PC-001", "AC-002", "PC-005",

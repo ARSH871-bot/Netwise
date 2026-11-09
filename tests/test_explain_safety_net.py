@@ -30,6 +30,7 @@ from ai.explain import (
     _compute_expected_actual_outcome,
     _compute_policy_outcome,
     _compute_routing_outcome,
+    _describe_acl_line,
     _evidence_detail,
     _fallback_error_explanation,
     _fallback_plain_restatement,
@@ -164,8 +165,9 @@ def test_dead_deny_shadowed_by_permit_means_traffic_is_permitted():
     )
     outcome = _compute_dead_rule_outcome(detail)
     assert outcome is not None
-    assert "permitted" in outcome
-    assert "denied" not in outcome
+    assert "own stated action is DENY" in outcome
+    assert "permits all traffic from anywhere to 2.128.0.0/16" in outcome
+    assert "denies" not in outcome
 
 
 def test_dead_permit_shadowed_by_deny_means_traffic_is_denied():
@@ -177,8 +179,9 @@ def test_dead_permit_shadowed_by_deny_means_traffic_is_denied():
     )
     outcome = _compute_dead_rule_outcome(detail)
     assert outcome is not None
-    assert "denied" in outcome
-    assert "permitted" not in outcome
+    assert "own stated action is PERMIT" in outcome
+    assert "denies all traffic from anywhere to any destination" in outcome
+    assert "permits" not in outcome
 
 
 def test_returns_none_for_a_finding_that_is_not_a_dead_rule():
@@ -211,9 +214,9 @@ def test_two_agreeing_blocking_lines_are_both_named_with_plural_grammar():
     )
     outcome = _compute_dead_rule_outcome(detail)
     assert outcome is not None
-    assert "earlier lines (" in outcome
-    assert "deny ip 10.10.10.0 0.0.0.255 any, deny tcp 10.10.10.0 0.0.0.255 any" in outcome
-    assert "are evaluated first and decide instead" in outcome
+    assert "earlier lines, evaluated first, decide instead" in outcome
+    assert "one denies all traffic from 10.10.10.0/24 to any destination" in outcome
+    assert "and another denies TCP traffic from 10.10.10.0/24 to any destination" in outcome
 
 
 def test_returns_none_for_unrecognised_blocking_line_syntax():
@@ -277,15 +280,59 @@ def test_the_dead_lines_own_action_and_the_outcome_can_differ():
     outcome = _compute_dead_rule_outcome(detail)
     assert outcome is not None
     assert "own stated action is PERMIT" in outcome
-    assert "actually denied" in outcome
-    # Names the real blocking line rather than a vague "same traffic" claim
-    # (found in review, 5 November, on this exact AC-002 finding): the old
-    # wording read as "blocks all traffic with the same destination IP
-    # address", which is false -- this blocker is one source subnet to ANY
-    # destination.
-    assert "deny ip 10.10.10.0 0.0.0.255 any" in outcome
+    # Describes the real blocking line in plain English rather than a vague
+    # "same traffic" claim (found in review, 5 November) or raw ACL syntax
+    # (found in review, 9 November, on this exact AC-002 finding: raw
+    # syntax measurably made the model call this /24 source "a specific
+    # host" 16/30 times). "10.10.10.0 0.0.0.255 any" is one source subnet
+    # to ANY destination.
+    assert "denies all traffic from 10.10.10.0/24 to any destination" in outcome
     assert "same traffic" not in outcome
     assert "same destination" not in outcome
+    assert "a specific host" not in outcome
+    assert "0.0.0.255" not in outcome, "raw wildcard-mask syntax must not leak into the fact"
+
+
+# --- _describe_acl_line (#401 review, @shubhamkataria2005, 9 November) -------
+# Measured live: naming the blocking line in raw ACL syntax (review, 5
+# November) made the model call a /24 source "a specific host" 16 of 30
+# times -- a different misdescription from the one it fixed. These pin the
+# plain-English replacement directly against the two real shapes measured,
+# plus the refusal cases this function must not guess past.
+
+def test_describes_a_wildcard_source_and_any_destination():
+    assert _describe_acl_line("deny ip 10.10.10.0 0.0.0.255 any") == (
+        "denies all traffic from 10.10.10.0/24 to any destination"
+    )
+
+
+def test_describes_a_non_ip_protocol_by_name():
+    assert _describe_acl_line("deny tcp 10.10.10.0 0.0.0.255 any") == (
+        "denies TCP traffic from 10.10.10.0/24 to any destination"
+    )
+
+
+def test_describes_a_host_destination():
+    assert _describe_acl_line("permit udp any host 218.8.104.58 eq domain") == (
+        "permits UDP traffic from anywhere to host 218.8.104.58 on port domain"
+    )
+
+
+def test_returns_none_for_a_source_port_clause():
+    """A shape this project's own converters never emit -- refuse rather
+    than guess at what the extra token means."""
+    assert _describe_acl_line("permit tcp any eq 1024 any eq 443") is None
+
+
+def test_returns_none_for_a_non_contiguous_wildcard_mask():
+    """Same reason analysis/draft_policy.py refuses one of these: the
+    inverted bytes do not form a legal netmask, so there is no CIDR to
+    state."""
+    assert _describe_acl_line("deny ip 10.10.10.0 0.0.255.0 any") is None
+
+
+def test_returns_none_for_too_few_tokens():
+    assert _describe_acl_line("permit ip any") is None
 
 
 def _real_dead_rule_detail(dead_action: str, blocking_action: str) -> str:
@@ -958,7 +1005,7 @@ def test_prompt_includes_the_computed_outcome_for_a_dead_rule_finding():
         },
     }
     prompt = _build_prompt(finding)
-    assert "denied" in prompt
+    assert "denies" in prompt
     assert "already verified" in prompt.lower()
 
 
@@ -1006,7 +1053,7 @@ def test_prompt_prefers_the_dead_rule_computation_when_both_could_apply():
     }
     prompt = _build_prompt(finding)
     assert "already verified" in prompt.lower()
-    assert "denied" in prompt
+    assert "denies" in prompt
 
 
 def test_prompt_includes_the_computed_outcome_for_a_testfilters_finding():
