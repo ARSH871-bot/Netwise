@@ -124,7 +124,14 @@ class _FakeQuestions:
     def fileParseStatus(self, **_kwargs):
         if self._devices is None:
             raise RuntimeError("Batfish said no")
-        return _FakeAnswer(_FakeFrame([{"Nodes": sorted(self._devices)}]))
+        # The three columns real Batfish always returns, not just Nodes:
+        # answer_question() now checks Status before answering (it refuses on
+        # a config Batfish could not read), as tests/test_query_translation.py's
+        # own fake does.
+        return _FakeAnswer(_FakeFrame([{
+            "File_Name": "configs/fake.cfg", "Status": "PASSED",
+            "Nodes": sorted(self._devices),
+        }]))
 
     def traceroute(self, **kwargs):
         self.traceroute_calls.append(kwargs)

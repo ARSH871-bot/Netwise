@@ -221,6 +221,25 @@ def test_a_clean_parse_attaches_no_caveat(monkeypatch, _stubbed_run):
     assert not [f for f in results if "may be incomplete" in f["summary"]]
 
 
+def test_a_parse_status_batfish_cannot_report_refuses_to_analyse(monkeypatch,
+                                                                _stubbed_run):
+    """Batfish answering the upload and then failing fileParseStatus.
+
+    Nothing pinned this branch: replacing its `except Exception` with one
+    that catches nothing passed the whole suite on main dc93ccb, with Batfish
+    stopped and with it running. The exception then escaped analyse(), which
+    promises never to raise for an operational failure.
+    """
+    def fails(bf):
+        raise RuntimeError("BatfishException: Work terminated abnormally")
+
+    monkeypatch.setattr(pipeline, "classify_parse_status", fails)
+    results = pipeline.analyse("tests/fixtures/rtr-us5-secure")
+
+    assert results and all(f["status"] == "error" for f in results), results
+    assert "parse status could not be read" in results[0]["summary"]
+
+
 def test_a_fatal_parse_still_refuses_to_analyse(monkeypatch, _stubbed_run):
     """Unchanged, and it must stay unchanged.
 

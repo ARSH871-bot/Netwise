@@ -87,12 +87,16 @@ class _FakeQuestions:
 
     def __init__(
         self, *, devices=frozenset(), traceroute_frame=None,
-        whole_snapshot_frame=None, raises=False,
+        whole_snapshot_frame=None, raises=False, parse_rows=None,
     ):
         self._devices = devices
         self._traceroute_frame = traceroute_frame
         self._whole_snapshot_frame = whole_snapshot_frame
         self._raises = raises
+        # fileParseStatus rows, for a test about what Batfish could READ.
+        # None means one fully parsed file holding `devices`, which is what
+        # every other test here assumes.
+        self._parse_rows = parse_rows
         # What traceroute() was actually called with, so a test can check
         # what address query.py resolved and handed to Batfish, not just
         # what it printed back -- the #70 fix is entirely about those two
@@ -102,7 +106,13 @@ class _FakeQuestions:
     def fileParseStatus(self, **_kwargs):
         if self._devices is None:
             raise RuntimeError("Batfish said no")
-        return _FakeAnswer(_FakeFrame([{"Nodes": sorted(self._devices)}]))
+        if self._parse_rows is not None:
+            return _FakeAnswer(_FakeFrame(self._parse_rows))
+        # The three columns real Batfish always returns, not just Nodes.
+        return _FakeAnswer(_FakeFrame([{
+            "File_Name": "configs/fake.cfg", "Status": "PASSED",
+            "Nodes": sorted(self._devices),
+        }]))
 
     def traceroute(self, **kwargs):
         self.traceroute_calls.append(kwargs)
@@ -414,6 +424,78 @@ def test_undefined_reference_question_nonempty_result():
     session = FakeSession(_FakeQuestions(whole_snapshot_frame=frame))
     result = answer_question("Anything undefined in the config?", session)
     assert result["answer"].startswith("Yes, found 1")
+
+
+# --- A config Batfish could not read is not a config with nothing in it -------
+#
+# Measured live on main dc93ccb, a snapshot whose one file Batfish could not
+# read at all (fileParseStatus UNKNOWN, zero devices):
+#
+#     "are there any dead rules?"  -> "No, checked the whole snapshot and
+#                                      found none."   grounded: True
+#
+# analyse() refuses the same snapshot ("the config did not fully parse"). The
+# question path never asked what Batfish had read, so an empty answer about
+# NOTHING came back as a confident, grounded "no".
+
+_UNREADABLE = [{"File_Name": "configs/router.cfg", "Status": "UNKNOWN", "Nodes": []}]
+_PARTLY_READ = [{"File_Name": "configs/fw.cfg", "Status": "PARTIALLY_UNRECOGNIZED",
+                 "Nodes": ["fw-asa"]}]
+
+
+def test_a_whole_snapshot_question_about_an_unreadable_config_is_refused():
+    session = FakeSession(_FakeQuestions(
+        whole_snapshot_frame=_FakeFrame([]), parse_rows=_UNREADABLE))
+    for question in ("Are there any dead rules?", "Anything undefined in the config?"):
+        result = answer_question(question, session)
+        assert result["grounded"] is False, result
+        assert not result["answer"].startswith("No"), result
+        assert "configs/router.cfg" in result["answer"]
+        # Shape C survives the refusal: the person still sees what was asked.
+        assert result["question_understood"] is not None
+
+
+def test_a_reachability_question_is_refused_when_any_file_could_not_be_read():
+    """One readable router and one file Batfish could not read: the router
+    resolves, but the unread file may sit on the path, so no yes or no."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("DENIED_IN")]}])
+    rows = _UNREADABLE + [{"File_Name": "configs/rtr-us5.cfg", "Status": "PASSED",
+                           "Nodes": ["rtr-us5"]}]
+    session = FakeSession(_FakeQuestions(
+        devices={"rtr-us5"}, traceroute_frame=frame, parse_rows=rows))
+    result = answer_question("Can rtr-us5 reach 10.20.0.5?", session)
+    assert result["grounded"] is False, result
+    assert not result["answer"].startswith(("Yes", "No")), result
+    assert session.q.traceroute_calls == []
+    # The refusal keeps answer_question()'s four-key shape (#318), and hands
+    # a follow-up nothing to reuse from a config Batfish could not read.
+    assert result["resolved_entities"] is None
+
+
+def test_a_parse_status_refusal_keeps_the_four_key_shape():
+    session = FakeSession(_FakeQuestions(devices=None, whole_snapshot_frame=_FakeFrame([])))
+    result = answer_question("Are there any dead rules?", session)
+    assert set(result) == {"question_understood", "answer", "grounded", "resolved_entities"}
+    assert result["resolved_entities"] is None
+
+
+def test_a_partly_read_config_answers_with_the_caveat_not_whole_snapshot():
+    """PARTIALLY_UNRECOGNIZED is analysed AND caveated, as analyse() does
+    (#217) -- never "checked the whole snapshot" about lines it skipped."""
+    session = FakeSession(_FakeQuestions(
+        whole_snapshot_frame=_FakeFrame([]), parse_rows=_PARTLY_READ))
+    result = answer_question("Are there any dead rules?", session)
+    assert result["grounded"] is True
+    assert result["answer"].startswith("No")
+    assert "whole snapshot" not in result["answer"]
+    assert "configs/fw.cfg" in result["answer"]
+
+
+def test_a_parse_status_that_cannot_be_read_is_a_refusal():
+    session = FakeSession(_FakeQuestions(devices=None, whole_snapshot_frame=_FakeFrame([])))
+    result = answer_question("Are there any dead rules?", session)
+    assert result["grounded"] is False
+    assert not result["answer"].startswith("No")
 
 
 # --- Intent classification does not cross-fire ----------------------------------
