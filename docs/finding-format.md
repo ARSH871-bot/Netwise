@@ -435,7 +435,7 @@ is refused at `make_finding()`.
 | **Shubham** | ✅ — proposed it in #390 |
 | **Arsh** | ⬜ |
 | **Ankeet** | ✅ - checked `SUBJECT_KEYS`, `SUBJECT_PROTOCOLS` and `_canonical_address()` directly against this table and mutation-tested the two checks that matter most (host-bits-set addresses, and `True` passing as a port), both killed for the right reason |
-| **Samika** | ⬜ |
+| **Samika** | ✅ - agreed on #438 on 3 Nov, and again on #449 for the added 'no IPv6 zone ID (%)' rule on src. Checked the five keys against `SUBJECT_KEYS` (analysis/findings.py:133). |
 
 > **NOT RATIFIED until the table above is full.** The table is the record,
 > so this note does not repeat its count (#438, D3: it said "one of four"
