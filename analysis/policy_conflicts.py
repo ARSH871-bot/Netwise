@@ -342,11 +342,19 @@ def _compare(prohibitions: Sequence[Any], requirements: Sequence[Any],
             node, filter_name = forbid.get("node", ""), forbid.get("filter", "")
             where = f"on {node} filter {filter_name}" if node and filter_name else ""
             if scope is None:
-                undecided.append(
-                    f"{name_p(forbid)} and {name_r(require)} name filters "
-                    f"{forbid.get('filter')!r} and {require.get('filter')!r} on {node}, "
-                    "which Batfish may resolve to the same ACL; could not be compared"
-                )
+                # The traffic first (#440, N1). Two rules whose traffic is
+                # provably disjoint cannot collide whichever ACL Batfish
+                # resolves their filters to, so only a pair that might overlap
+                # is worth a warning about the spelling of its filter names.
+                pairs = [overlap(qa, qb)[0]
+                         for qa in forbid.get("queries", []) or []
+                         for qb in require.get("queries", []) or []]
+                if any(verdict is not False for verdict in pairs):
+                    undecided.append(
+                        f"{name_p(forbid)} and {name_r(require)} name filters "
+                        f"{forbid.get('filter')!r} and {require.get('filter')!r} on {node}, "
+                        "which Batfish may resolve to the same ACL; could not be compared"
+                    )
                 continue
             unknown_here: List[str] = []
             found = False
