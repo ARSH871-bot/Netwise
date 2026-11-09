@@ -117,8 +117,10 @@ Batfish runs in Docker container `batfish` (image `batfish/allinone`), exposing
 - The client's real firewall is **PF Sense**, which exports XML that Batfish
   cannot read at all. `analysis/pfsense_convert.py` translates it into Cisco
   IOS text, so a converted config re-enters the same `analyse()` as everything
-  else. Interfaces and filter rules are covered; NAT, aliases, DHCP, VPN, IPv6
-  and combined `tcp/udp` rules are not, and each raises rather than guessing.
+  else. Interfaces and filter rules are covered; NAT, aliases, DHCP, VPN, IPv6,
+  combined `tcp/udp`, negated (`<not/>`) addresses and ICMP-type rules are
+  not, and each raises rather than guessing. A disabled rule is left out,
+  exactly as pfSense itself leaves it out.
 
   **Rule order: PF Sense and Cisco disagree, and the converter now MODELS the
   difference where it can and refuses where it cannot.** PF Sense evaluates
@@ -722,7 +724,7 @@ project's recurring failure family arriving through process rather than code.
 | **AI explanation on screen** | Ankeet + Samika | Done (#56, closing #31). `/api/findings` attaches an `explanation` to every `status="found"` finding, **not** an F-1 field, added downstream of validation so the contract is untouched. Since #109/#143, also attaches `explanation_source` (`"model"` or `"fallback"`), same reasoning, so the dashboard can eventually stop labelling deterministic fallback text as AI-authored, which it still does today (#109 stays open until the byline itself changes) |
 | **`risk` scoring** | Samika | Done (#60) — `POST_PROCESSORS`, ruleset in `docs/severity-rules.md`. Re-rates severity and sorts worst-first; the two limits are enforced in `pipeline.run_post_processors()`, not trusted |
 | Dashboard + secure upload | Samika | Done — real findings on screen since #39 |
-| PF Sense conversion | Ankeet | Done — `analysis/pfsense_convert.py`, and **hardened**: refuses config injection and path traversal via free-text fields (#53), an unbound ACL / empty rule set / unvalidated addressing (#54), and ambiguous rule order (#58, closing #47). See §7 |
+| PF Sense conversion | Ankeet | Done — `analysis/pfsense_convert.py`, and **hardened**: refuses config injection and path traversal via free-text fields (#53), an unbound ACL / empty rule set / unvalidated addressing (#54), and ambiguous rule order (#58, closing #47). Also refuses an interface tag that is not a plain name (a namespaced tag injected config lines), and, per rule, `<not/>`, IPv6-only and ICMP-type rules; disabled rules are left out, as pfSense does. See §7 |
 | **`change_impact`** | Shubham | Done (#140, merged 17 August) — `analysis/change_impact.py`, `analyse_change(before, after)`. Shape C: **not** in `CHECKS`, and both the module docstring and the registry comment say so. Pairs `compareFilters` (which ACL *lines* moved) with `differentialReachability` (which *traffic* changed fate), because a changed line that moves no traffic is noise and moved traffic with no changed line is the case a filter diff alone misses. Direction-aware per `docs/policy-rules.md`: opening `high`, tightening `medium`, both reported |
 | **A user policy reaching a check** | Arsh | Done (#181, merged 28 August) — `analysis/policy.py` loads and validates it; `policy_compliance` reads it via `rules_in_use()`, keyed on `active_policy() is None` rather than on emptiness. Measured below: policy-driven detections on a stranger's network go 3 → 8 |
 | **Draft a policy from your own config** | Arsh | Done (#326) — `analysis/draft_policy.py`, `/api/policy/draft`, a button under the policy picker. One `policy_compliance` rule per line of each applied filter, citing the file and line Batfish records for it. Each rule is checked with the same `searchFilters` question the check will ask, so a line an earlier line partly decides is listed as not drafted, with Batfish's example packet, rather than copied. `kind` and `violation_severity` are left as `<FILL IN ...>`, and `analysis/policy.py` refuses the file until they are decided and its `draft` block is deleted: accepted as it stands, a draft passes on `rtr-us5-insecure` |
