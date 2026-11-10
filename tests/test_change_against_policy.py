@@ -101,6 +101,7 @@ def test_a_rule_with_the_same_verdict_either_side_is_unchanged_not_a_finding(mon
 def test_direction_is_stated_in_this_modules_own_terms(monkeypatch, kind, before, after, direction, normalised):
     found, _, _ = stage(monkeypatch, [rule(1, kind)], {1: (before, after)})
     assert f"Direction: {direction}" in found[0]["evidence"]["detail"]
+    assert found[0]["direction"] == normalised
 
 
 @pytest.mark.parametrize("kind,before,after,normalised", [
