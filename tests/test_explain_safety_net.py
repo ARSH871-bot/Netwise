@@ -373,6 +373,29 @@ def test_an_earlier_same_action_line_omitted_from_blocking_lines_is_not_overclai
     assert "traffic matching it" not in outcome
 
 
+def test_an_unparseable_blocking_line_falls_back_without_a_universal_claim():
+    """#453's own fix, exercised directly through its actual code path.
+    When the blocking line's shape _describe_acl_line() refuses (here, a
+    source-port clause #401's parser does not recognise), the contradicted
+    branch must still fall back to naming it in raw syntax -- but never to
+    the dropped universal-outcome claim ("traffic matching it is actually
+    {outcome}") #453 found false for a subset of the dead line's own
+    pattern. Nothing else in this file reaches this fallback, since every
+    other fixture's blocking line happens to parse -- without this test,
+    #453's fix would be silently untested."""
+    detail = (
+        "Unreachable line: permit tcp any any eq 443 (action PERMIT). "
+        "Blocked by: deny tcp any eq 1024 any eq 443. Reason: BLOCKING_LINES"
+    )
+    outcome = _compute_dead_rule_outcome(detail)
+    assert outcome is not None
+    assert "own stated action is PERMIT" in outcome
+    assert "deny tcp any eq 1024 any eq 443" in outcome
+    assert "opposite action (DENY)" in outcome
+    assert "traffic matching it is actually" not in outcome
+    assert "actually denied" not in outcome
+
+
 def _real_dead_rule_detail(dead_action: str, blocking_action: str) -> str:
     """The genuine evidence string, from the genuine check -- not a literal.
 
