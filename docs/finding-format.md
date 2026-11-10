@@ -512,3 +512,49 @@ somewhere later reports it as agreed, sourced from nothing.
 >
 > **A ⬜ here is not a disagreement.** It is the absence of a recorded answer,
 > which is the only state this file is able to distinguish from agreement.
+
+### A-5 - one vocabulary for `direction`, in the field and in the words
+
+**PROPOSED, not ratified.**
+
+The structural `direction` field already uses three values in code -
+`"opening"`, `"closing"`, `"changed"` - via `_DIRECTION_NORMAL_FORM` in
+`analysis/change_impact.py`, and `opens_access` in `ai/propose.py` already
+relies on exactly those three. That part is a de facto standard: nothing
+here proposes changing it, only recording that it is agreed.
+
+What is not settled is the human-readable `"Direction: X"` phrase inside
+`evidence.detail`, which still uses a second vocabulary for the same fact.
+`analysis/change_impact.py:488` writes `"Direction: tightening"` for the
+same case the structural field calls `"closing"`: `_RULE_DIRECTION` maps a
+policy requirement newly breached to the raw value `"tightening"`, which
+`_attach_direction()` then normalises to `"closing"` on the field, while the
+sentence a person reads still says "tightening". PR #406 (not yet merged)
+separately writes `"Direction: changed."` for its own case, a third,
+independently chosen word for a fact the field already has a name for.
+
+This proposes ratifying `opening` / `closing` / `changed` as the single
+vocabulary for BOTH the structural field and the `"Direction: X"` phrasing,
+one set of words rather than two that happen to describe the same thing.
+
+**Not changing `analysis/change_impact.py:488`'s actual wording in this
+PR.** That edit, replacing `tightening` with `closing` in the sentence
+itself, is exactly the code change this table is meant to gate, the same
+discipline A-4 uses for `cve_mapping`: the agreement is recorded before the
+behaviour changes, not after.
+
+| Member | Why it touches them | Agreed |
+|---|---|---|
+| **Arsh** | Raised the inconsistency on #405's review; owns the shared pipeline this field flows through | ⬜ |
+| **Ankeet** | `ai/explain.py` reads finding text when building an explanation, and a sentence using one word while the field uses another is exactly the kind of mismatch that module is built to not repeat | ⬜ |
+| **Shubham** | Owns `analysis/change_impact.py`, where `_RULE_DIRECTION` and the `"Direction: tightening"` wording live | ⬜ |
+| **Samika** | `opens_access` in `ai/propose.py` already reads the structural field; the dashboard banner is downstream of whichever wording this settles on | ⬜ |
+
+> **NOT RATIFIED - zero of four, as of 11 November.** The structural field's
+> three values are already relied on and are not what this table gates.
+> **`"Direction: tightening"` must not be changed to `"Direction: closing"`
+> in `analysis/change_impact.py`, and #406's `"Direction: changed"` must not
+> be treated as settled, until this table is full.**
+>
+> **A ⬜ here is not a disagreement.** It is the absence of a recorded answer,
+> which is the only state this file is able to distinguish from agreement.
