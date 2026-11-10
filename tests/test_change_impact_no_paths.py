@@ -158,6 +158,13 @@ def test_propose_passes_labels(monkeypatch, tmp_path):
         seen["labels"] = labels
         return []
     monkeypatch.setattr(propose.change_impact, "analyse_change", fake)
+    # propose_change() connects and loads BEFORE it reaches analyse_change(),
+    # through its own imported copies. Without these it refuses early when no
+    # Batfish is running, as on CI, and the fake is never called (#463 review).
+    monkeypatch.setattr(propose, "connect", lambda host=None: object())
+    monkeypatch.setattr(propose, "load_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(propose, "find_parse_problems", lambda bf: [])
+    monkeypatch.setattr(propose.snapshot, "device_names", lambda bf: {"rtr-us5"})
     propose.propose_change("block 10.10.10.5 to 10.20.0.5 on tcp/22 on rtr-us5",
                            FIXTURES / "rtr-us5-secure")
 
