@@ -371,6 +371,8 @@ def test_a_legacy_key_loads_and_is_reported_rather_than_refused(section, legacy)
     for key in _SECTION_REQUIRED.get(section, ()):
         if key == "queries":
             filler = [{"srcIps": "10.0.0.0/8"}]
+        elif key == "headers":
+            filler = {"srcIps": "10.0.0.0/8"}
         else:
             filler = allowed[key][0] if key in allowed else "x"
         entry.setdefault(key, filler)

@@ -61,9 +61,12 @@ WHAT THIS MODULE MUST NOT BECOME
 from __future__ import annotations
 
 import json
+import re
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
+
+import attr
 
 from analysis import policy_conflicts
 
@@ -465,7 +468,71 @@ def _validate_entry(
     if bad:
         raise PolicyError(f"{where}: " + "; ".join(bad))
 
+    # THE TRAFFIC A RULE DESCRIBES (#442 review, #467). Both sections hand
+    # these straight to Batfish's HeaderConstraints, which accepts almost
+    # anything locally, so a rule the check cannot use used to load and fail
+    # only at scan time, as "could not check" with a Python or Batfish error
+    # the user could not act on: `"queries": "10.10.10.0/24"` ran thirteen
+    # queries, one per character. Refused here, naming the rule, instead.
+    if section == "policy_compliance" and "queries" in normalised:
+        queries = normalised["queries"]
+        if not isinstance(queries, list) or not queries:
+            raise PolicyError(
+                f"{where}: 'queries' must be a non-empty list of traffic descriptions, "
+                f"got {queries!r}. A rule with no queries asks Batfish nothing"
+            )
+        for number, query in enumerate(queries, start=1):
+            _check_traffic(f"{where}, query {number}", query)
+    if section == "access_control" and "headers" in normalised:
+        _check_traffic(f"{where}, 'headers'", normalised["headers"])
+
     return normalised, renamed
+
+
+#: An address element that is plainly meant as one address or prefix: only
+#: digits, dots and at most a slash. Batfish's address language is much
+#: larger -- ranges (`a-b`), wildcards (`a:b`), set difference, `@` and
+#: `ref.` names -- and none of that is judged here; Batfish does.
+_PLAIN_ADDRESS = re.compile(r"^[0-9.]+(/[0-9]+)?$")
+
+
+def _check_traffic(where: str, spec: Any) -> None:
+    """Refuse a traffic description Batfish cannot be asked. Raises PolicyError.
+
+    Checked: it is a mapping, every key is a HeaderConstraints field, and every
+    plain address in srcIps/dstIps is a real address or prefix. An EMPTY
+    mapping is allowed: it means all traffic, and "this filter must permit
+    nothing" is a rule someone can mean.
+    """
+    import ipaddress
+
+    from pybatfish.datamodel.flow import HeaderConstraints
+
+    if not isinstance(spec, Mapping):
+        raise PolicyError(
+            f"{where}: expected a mapping such as {{\"srcIps\": \"10.10.10.0/24\"}}, "
+            f"got {type(spec).__name__} {spec!r}"
+        )
+    fields = set(attr.fields_dict(HeaderConstraints))
+    unknown = sorted(set(spec) - fields)
+    if unknown:
+        raise PolicyError(
+            f"{where}: unknown traffic field(s) {', '.join(map(repr, unknown))}. "
+            f"Batfish accepts: {', '.join(sorted(fields))}"
+        )
+    for key in ("srcIps", "dstIps"):
+        value = spec.get(key)
+        if not isinstance(value, str):
+            continue
+        for part in (p.strip() for p in value.split(",")):
+            if not _PLAIN_ADDRESS.match(part):
+                continue
+            try:
+                ipaddress.ip_network(part, strict=False)
+            except ValueError:
+                raise PolicyError(
+                    f"{where}: {key} {part!r} is not a valid address or prefix"
+                ) from None
 
 
 def _highest_numbers() -> Dict[str, int]:
