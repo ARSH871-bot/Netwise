@@ -987,6 +987,74 @@ def test_a_whitespace_only_interface_gets_the_right_refusal_message():
     )
 
 
+# --- Fields that change what a rule matches (pfSense filter.inc at 480a1c0626) ---
+# Each used to be ignored, so the rule converted as if it matched more traffic
+# than it does. Every rule below is <quick/>, so the order model is not in play.
+
+
+def _acl_lines(text: str) -> list:
+    return [ln.strip() for ln in text.splitlines() if ln.strip().startswith(("permit", "deny"))]
+
+
+def test_a_disabled_rule_is_left_out_as_pfsense_does():
+    """Measured before the fix: a disabled catch-all block came out as the
+    first line of acl_in, so Batfish denied LAN->8.8.8.8:80, which the real
+    firewall permits (it does not load a disabled rule, filter.inc:5543)."""
+    result = _convert_string_full(_minimal_xml(rules_xml="""
+        <rule><type>block</type><interface>lan</interface><disabled/><quick/>
+        <source><any/></source><destination><any/></destination></rule>
+        <rule><type>pass</type><interface>lan</interface><quick/>
+        <source><network>lan</network></source><destination><any/></destination></rule>
+    """))
+    assert _acl_lines(result.text) == ["permit ip 10.0.0.0 0.0.0.255 any"]
+    assert result.skipped == [], "an exact model of a disabled rule is not a gap"
+
+
+def test_a_negated_destination_is_refused_not_inverted():
+    """<not/> means "every destination EXCEPT 10.20.0.5". Before the fix it
+    emitted `permit tcp ... host 10.20.0.5`: Batfish permitted exactly the
+    host the rule exempts and denied the traffic it allows."""
+    result = _convert_string_full(_minimal_xml(rules_xml="""
+        <rule><type>pass</type><interface>lan</interface><protocol>tcp</protocol><quick/>
+        <source><network>lan</network></source>
+        <destination><not/><address>10.20.0.5</address></destination></rule>
+        <rule><type>block</type><interface>lan</interface><quick/>
+        <source><any/></source><destination><any/></destination></rule>
+    """))
+    assert _acl_lines(result.text) == ["deny ip any any"]
+    assert len(result.skipped) == 1
+    assert REFUSALS["negated_endpoint"] in result.skipped[0]
+
+
+def test_an_ipv6_only_rule_is_not_applied_to_ipv4_traffic():
+    """An inet6 block on the LAN subnet came out as an IPv4 `deny ip
+    10.0.0.0 0.0.0.255 any` ahead of the IPv4 pass, so every IPv4 flow from
+    LAN was denied in the model and permitted by the firewall."""
+    result = _convert_string_full(_minimal_xml(rules_xml="""
+        <rule><type>block</type><interface>lan</interface><ipprotocol>inet6</ipprotocol><quick/>
+        <source><network>lan</network></source><destination><any/></destination></rule>
+        <rule><type>pass</type><interface>lan</interface><ipprotocol>inet</ipprotocol><quick/>
+        <source><network>lan</network></source><destination><any/></destination></rule>
+    """))
+    assert _acl_lines(result.text) == ["permit ip 10.0.0.0 0.0.0.255 any"]
+    assert len(result.skipped) == 1
+    assert REFUSALS["ipv6_rule"] in result.skipped[0]
+
+
+def test_an_icmp_type_limit_is_refused_not_widened_to_all_icmp():
+    result = _convert_string_full(_minimal_xml(rules_xml="""
+        <rule><type>block</type><interface>lan</interface><protocol>icmp</protocol>
+        <icmptype>echoreq</icmptype><quick/>
+        <source><any/></source><destination><any/></destination></rule>
+        <rule><type>pass</type><interface>lan</interface><protocol>icmp</protocol>
+        <icmptype>any</icmptype><quick/>
+        <source><any/></source><destination><any/></destination></rule>
+    """))
+    assert _acl_lines(result.text) == ["permit icmp any any"]
+    assert len(result.skipped) == 1
+    assert REFUSALS["icmp_type"] in result.skipped[0]
+
+
 # --- Rule order is preserved -----------------------------------------------------
 
 
@@ -1162,6 +1230,29 @@ def test_if_with_an_embedded_newline_also_raises():
     )
     with pytest.raises(PfSenseConversionError):
         _convert_string(xml_text)
+
+
+def test_a_namespaced_interface_tag_cannot_inject_config_lines():
+    """The interface ROLE is a tag name, and ElementTree reports a namespaced
+    tag as "{namespace}name" -- free text, newlines included. Before the fix
+    this emitted `permit ip any any` as the first line of acl_in, and
+    Batfish's testFilters on the LAN ACL answered PERMIT for every flow,
+    against a rule set whose only rule is a deny."""
+    xml_text = _minimal_xml(
+        interfaces_xml="""
+        <lan><if>em1</if><descr>LAN</descr><ipaddr>10.0.0.1</ipaddr><subnet>24</subnet></lan>
+        <x:opt1 xmlns:x="z&#10;ip access-list extended acl_in&#10; permit ip any any&#10;!">
+          <if>em2</if><descr>OPT1</descr><ipaddr>10.30.0.1</ipaddr><subnet>24</subnet>
+        </x:opt1>
+        """,
+        rules_xml="""
+            <rule><type>block</type><interface>lan</interface>
+            <source><any/></source><destination><any/></destination></rule>
+        """,
+    )
+    with pytest.raises(PfSenseConversionError) as excinfo:
+        _convert_string(xml_text)
+    assert REFUSALS["invalid_interface_role"] in str(excinfo.value)
 
 
 def test_a_hostname_with_ordinary_punctuation_still_converts():

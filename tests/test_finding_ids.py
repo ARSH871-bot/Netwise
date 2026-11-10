@@ -364,6 +364,29 @@ def test_downgrading_an_error_finding_is_undone_and_reported(monkeypatch):
     assert "RT-000" in complaints[0]["evidence"]["detail"]
 
 
+def test_changing_a_finding_status_is_undone_and_reported(monkeypatch):
+    """docs/severity-rules.md section 2: a post-processor must not change
+    `status`, and that document says the rule is enforced here. Measured on
+    main dc93ccb, it was not: a stage setting every status to "none" turned
+    "could not check" into a green tick, and nothing said so."""
+    from analysis import pipeline
+
+    def relabel_everything_clean(results):
+        for f in results:
+            f["status"] = "none"
+        return results
+
+    monkeypatch.setattr(pipeline, "POST_PROCESSORS", {"risk": relabel_everything_clean})
+    out = pipeline.run_post_processors(_mixed_results())
+
+    by_id = {f["id"]: f for f in out}
+    assert by_id["RT-000"]["status"] == "error", "a blind spot must not become a green tick"
+    assert by_id["AC-001"]["status"] == "found", "a problem must not become a green tick"
+    complaints = [f for f in out if "changed a finding's status" in f["summary"]]
+    assert len(complaints) == 2
+    assert all(c["status"] == "error" for c in complaints)
+
+
 def test_dropping_a_finding_is_undone_and_reported(monkeypatch):
     """Removing a finding is the same lie as never producing it."""
     from analysis import pipeline
