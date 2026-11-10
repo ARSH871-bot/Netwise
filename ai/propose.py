@@ -654,10 +654,12 @@ def propose_and_scan(
     "findings": [] and "grounded": False -- there is nothing to scan when
     there was nothing to propose.
     """
-    # The staged policy threads into the full-scan pipeline below already --
-    # it must reach this narrower call too (#405 review, Samika), or the
-    # "impact" list this function also returns is evaluated against the
-    # built-in example rules while the full scan beside it uses the user's.
+    # Every call to propose_change() should see the same policy regardless
+    # of caller (#405 review, Samika). Only base["proposed_change"] and
+    # base["answer"] are read below -- neither depends on policy -- so this
+    # has no visible effect on what this function returns today. Kept
+    # anyway: passing the wrong policy into a shared helper is the wrong
+    # default even when nothing currently reads the result.
     base = propose_change(request, before_dir, host=host, policy=policy)
     change = base["proposed_change"]
     if change is None:

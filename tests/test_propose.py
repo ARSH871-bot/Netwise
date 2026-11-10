@@ -906,10 +906,12 @@ def test_full_scan_passes_the_policy_through(monkeypatch, tmp_path):
 
 def test_full_scans_own_impact_list_also_gets_the_policy(monkeypatch, tmp_path):
     """#405 review (Samika): propose_and_scan() threads `policy` into the
-    full-scan pipeline above, but its own call to propose_change() -- which
-    builds the "impact" list this function also returns -- used to call it
-    with no `policy` at all, so that list stayed evaluated against the
-    built-in example rules regardless of what the caller staged."""
+    full-scan pipeline above, but its own call to propose_change() used to
+    call it with no `policy` at all. Nothing this function returns reads
+    propose_change()'s impact/warning/opens_access today -- it computes its
+    own findings via the full pipeline instead -- but every caller of
+    propose_change() should still see the same policy, not a different one
+    depending on which function reached it."""
     before_dir = _write_snapshot(tmp_path)
     _stub_batfish(monkeypatch)
     monkeypatch.setattr("analysis.pipeline.analyse", lambda *a, **k: [])
