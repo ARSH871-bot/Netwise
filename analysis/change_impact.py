@@ -684,6 +684,51 @@ def analyse_change(
     after_dir: str | Path,
     host: "str | None" = None,
     policy: Any = None,
+    labels: "Tuple[str, str] | None" = None,
+) -> List[Dict[str, Any]]:
+    """Compare two config folders; see _analyse_change() for what is reported.
+
+    LABELS, NOT PATHS, WHEN THE CALLER ASKS (#462). Propose-a-change passes
+    the session's upload folder as `before_dir`, and that folder is named
+    after the `netwise_session` cookie. Every card used to carry the folder
+    in `evidence.source`, so the dashboard printed the cookie the
+    `httponly` flag exists to hide, plus the user's own folders and a temp
+    directory that no longer existed. `labels` names the two sides
+    instead, and every string in every finding passes through ONE
+    replacement here -- `source`, summary, detail and any error message
+    quoting a folder alike. One place on purpose: a second copy at each
+    `source=` was tried and was never load-bearing, since this pass covered
+    it, so neither copy could be trusted alone. With no labels, as from the
+    command line, the paths the user typed are shown as typed.
+    """
+    results = _analyse_change(before_dir, after_dir, host, policy)
+    if not labels:
+        return results
+    swaps = []
+    for folder, label in zip((before_dir, after_dir), labels):
+        path = Path(folder)
+        for spelling in {str(folder), str(path), path.as_posix(), str(path.resolve())}:
+            swaps.append((spelling, label))
+    swaps.sort(key=lambda pair: len(pair[0]), reverse=True)   # longest first
+
+    def clean(text: Any) -> Any:
+        if not isinstance(text, str):
+            return text
+        for spelling, label in swaps:
+            text = text.replace(spelling, label)
+        return text
+
+    for finding in results:
+        finding["summary"] = clean(finding["summary"])
+        finding["evidence"] = {key: clean(value) for key, value in finding["evidence"].items()}
+    return results
+
+
+def _analyse_change(
+    before_dir: str | Path,
+    after_dir: str | Path,
+    host: "str | None",
+    policy: Any,
 ) -> List[Dict[str, Any]]:
     """Compare two config folders and return F-1 findings describing the change.
 
@@ -879,7 +924,12 @@ def main() -> None:
         )
     policy = None
     if len(sys.argv) == 4:
-        policy = policy_module.load_policy_file(sys.argv[3])
+        try:
+            policy = policy_module.load_policy_file(sys.argv[3])
+        except policy_module.PolicyError as error:
+            # A message, not a traceback, and nothing runs -- the same as
+            # `python -m analysis.pipeline --policy` (#440, N5).
+            sys.exit(f"Policy not loaded, so nothing was analysed.\n  {error}")
         # Every channel, like `python -m analysis.pipeline --policy` (#402 item 6).
         for note in list(policy.renamed) + list(policy.assigned):
             print(f"note: {note}")
