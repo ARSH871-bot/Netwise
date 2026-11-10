@@ -1106,3 +1106,89 @@ def test_a_grounded_generation_still_comes_from_the_model(monkeypatch):
     monkeypatch.setattr(explain_module, "_generate",
                         lambda finding: "Devices on 10.10.10.0/24 can reach 10.20.0.5 on port 443.")
     assert explain_with_source(_POLICY_FINDING)[1] == "model"
+
+
+# --- a copied Modelfile worked example, rather than a real explanation (#455) -
+#
+# Found by @ARSH871-bot while measuring PR #401: the model occasionally
+# abandons the real finding and returns ai/Modelfile's own "Example 1" or
+# "Example 2" almost word for word, unrelated to what was actually being
+# explained. Measured: 2/120 across two independent live runs on two real
+# findings (a dead DNS permit, a dead SSH deny) -- not status-specific, so
+# checked for every status, not just "error".
+#
+# Example 3 is deliberately NOT covered here -- see _MODELFILE_EXAMPLE_PATTERN's
+# own comment in ai/explain.py for why: its "everything checked out" wording
+# is what a genuine status="none" finding is SUPPOSED to produce.
+
+# The exact two sentences measured live, pinned word for word so a change to
+# the phrase list cannot silently stop catching the actual failure this was
+# filed for.
+_MEASURED_EXAMPLE_1_COPY = (
+    "The internal server can be reached over unencrypted web traffic that "
+    "should have been blocked. The device's rule set currently allows all "
+    "traffic through with no restriction, which is what let this through."
+)
+_MEASURED_EXAMPLE_2_COPY = (
+    "This check could not be completed, so nothing is confirmed about "
+    "whether the HQ network can reach the branch network. The underlying "
+    "analysis tool crashed while running the check."
+)
+
+
+@pytest.mark.parametrize("text", [
+    _MEASURED_EXAMPLE_1_COPY,
+    _MEASURED_EXAMPLE_2_COPY,
+    "unencrypted web traffic that should have been blocked, apparently.",
+    "a sentence ending in which is what let this through, nothing else.",
+    "Nothing is confirmed about whether the HQ network can reach the branch network today.",
+    "the underlying analysis tool crashed while running the check, again.",
+])
+def test_a_copied_modelfile_example_is_rejected_for_every_status(text):
+    for status_is_error in (True, False):
+        assert explain_module._is_unacceptable(
+            text, is_error=status_is_error, finding=_POLICY_FINDING
+        ), (
+            f"a Modelfile worked example was copied into the explanation, "
+            f"unrelated to the real finding, and not rejected: {text!r}"
+        )
+
+
+def test_the_measured_example_1_copy_is_rejected_end_to_end(monkeypatch):
+    """End to end, through explain_with_source(): the real failure measured
+    live on PR #401 -- a dead DNS permit (status="found") explained with
+    Example 1's fixed, fictional scenario -- now falls back instead of
+    reaching the user labelled as model output."""
+    monkeypatch.setattr(explain_module, "_generate",
+                        lambda finding: _MEASURED_EXAMPLE_1_COPY)
+    text, source = explain_with_source(_POLICY_FINDING)
+    assert source == "fallback"
+    assert "unencrypted web traffic" not in text
+
+
+def test_a_faithful_found_explanation_is_not_caught_by_the_new_check():
+    """The control: an accurate explanation that merely happens to describe
+    a device and some traffic must not be rejected just because it is in
+    the same subject area as the Modelfile's own examples."""
+    faithful = (
+        "The LAN can reach the internal server on port 443, because an "
+        "earlier rule permits that exact traffic before the required deny "
+        "rule is ever reached."
+    )
+    assert not explain_module._is_unacceptable(
+        faithful, is_error=False, finding=_POLICY_FINDING
+    )
+
+
+def test_a_faithful_error_explanation_is_not_caught_by_the_new_check():
+    """The control's error-status twin -- a legitimate status="error"
+    explanation never claims a result either way, so it cannot share any
+    wording with the earlier test's "found" sentence."""
+    faithful = (
+        "This check did not complete, so nothing is confirmed about the "
+        "internal server either way. The underlying analysis tool "
+        "crashed before finishing."
+    )
+    assert not explain_module._is_unacceptable(
+        faithful, is_error=True, finding=_POLICY_FINDING
+    )

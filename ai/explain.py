@@ -648,6 +648,45 @@ _SPECULATION_PATTERN = re.compile(
 )
 _LEAD_TO_PATTERN = re.compile(r"\bcan\s+lead\s+to\b", re.IGNORECASE)
 
+# ai/Modelfile's own worked examples, copied back almost verbatim instead of
+# a real explanation of the finding actually given (#455). Measured live: a
+# dead DNS permit and a dead SSH deny, both status="found", came back as
+# Example 1's fixed, fictional scenario -- an unrelated "internal server"
+# reachable over "unencrypted web traffic" -- 2 of 120 generations across
+# two independent runs. Checked for EVERY status, not just "error": this
+# fictional content is wrong glued onto any real finding, regardless of its
+# status.
+#
+# Only Examples 1 and 2 are covered, not Example 3. Examples 1 and 2 each
+# describe one fixed, never-otherwise-correct scenario (an unencrypted-web-
+# traffic server; a crashed HQ-to-branch check), so any match is
+# unambiguously a copy. Example 3's wording is generic "everything checked
+# out" language that a genuine status="none" finding is SUPPOSED to produce
+# -- treating it as forbidden would reject correct answers, not just copied
+# ones, so it is deliberately left out.
+#
+# Phrases are copied verbatim from ai/Modelfile's own text -- the single
+# source of truth, so a changed Modelfile goes stale here visibly (the
+# phrase stops matching) rather than silently, the same trade-off
+# _ALL_CLEAR_PATTERN (#456) already accepts.
+#
+# "allows all traffic through with no restriction" is deliberately NOT in
+# this list, even though it is in Example 1's own text: found, while
+# testing this guard, to be a plausible, legitimate description of any
+# genuinely wide-open ACL rule, not specific to the example's fictional
+# scenario -- two existing tests in this file independently use that exact
+# wording as an ordinary stub for an unrelated "permit ip any any" finding.
+# The other two phrases below are specific enough to the example's own
+# invented scenario to still catch the measured copy without it.
+_MODELFILE_EXAMPLE_PATTERN = re.compile(
+    r"(unencrypted web traffic that should have been blocked|"
+    r"which is what let this through|"
+    r"nothing is confirmed about whether the hq network can reach the "
+    r"branch network|"
+    r"the underlying analysis tool crashed while running the check)",
+    re.IGNORECASE,
+)
+
 
 def _looks_like_a_result_claim(text: str) -> bool:
     """True if `text` uses language that asserts something about the
@@ -854,10 +893,13 @@ def _is_unacceptable(text: str, *, is_error: bool,
                      finding: Optional[Dict[str, Any]] = None) -> bool:
     """One check, used for every status. status="error" additionally
     rejects any claimed result about the network; every status rejects
-    hedged speculation, and -- given the finding -- any address, port or
-    device the finding does not contain. See the module docstring's
-    failure-modes sections for why these are checked separately."""
+    hedged speculation, a copied Modelfile worked example, and -- given
+    the finding -- any address, port or device the finding does not
+    contain. See the module docstring's failure-modes sections for why
+    these are checked separately."""
     if is_error and _looks_like_a_result_claim(text):
+        return True
+    if _MODELFILE_EXAMPLE_PATTERN.search(text):
         return True
     if finding is not None and _names_an_invented_fact(text, finding):
         return True
