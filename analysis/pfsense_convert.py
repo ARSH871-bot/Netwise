@@ -178,6 +178,10 @@ REFUSALS: Dict[str, str] = {
         "injection or path traversal"
     ),
     "no_interfaces_section": "the export has no <interfaces> section at all",
+    "invalid_interface_role": (
+        "an interface's tag under <interfaces> is not a plain name like "
+        "'lan' or 'opt1', and it is written into the generated config"
+    ),
     "invalid_interface_address": (
         "an interface's <ipaddr>/<subnet> do not form a valid IPv4 network"
     ),
@@ -205,6 +209,18 @@ REFUSALS: Dict[str, str] = {
         "like 'tcp/udp' need two Cisco ACL lines and are not handled"
     ),
     "missing_source_or_destination": "a rule has no <source> or <destination>",
+    "negated_endpoint": (
+        "a <source> or <destination> carries <not/>, meaning everything "
+        "EXCEPT that address -- one Cisco ACL line cannot express 'except'"
+    ),
+    "ipv6_rule": (
+        "an IPv6-only rule (<ipprotocol>inet6) -- this module models IPv4 "
+        "only, so the rule's IPv6 traffic is not analysed"
+    ),
+    "icmp_type": (
+        "an ICMP rule limited to particular ICMP types -- this module does "
+        "not translate pfSense's ICMP type names"
+    ),
     "invalid_port": (
         "a rule's <port> is not a single numeric port -- named aliases and "
         "ranges are out of scope"
@@ -357,6 +373,10 @@ def _sanitised_hostname(text: str) -> str:
     return text
 
 
+# pfSense's own interface keys: wan, lan, opt1, ... -- see _parse_interfaces().
+_ROLE_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
+
+
 def _parse_interfaces(root: ET.Element) -> Dict[str, Dict[str, str]]:
     """Return {role: {"if": ..., "ipaddr": ..., "subnet": ..., "descr": ...}}
     for every interface PF Sense defines, in document order.
@@ -373,6 +393,16 @@ def _parse_interfaces(root: ET.Element) -> Dict[str, Dict[str, str]]:
     interfaces: Dict[str, Dict[str, str]] = {}
     for iface_el in interfaces_el:
         role = iface_el.tag
+        # The role becomes part of an ACL name in the emitted config (see
+        # _acl_name()), so it gets the same allowlist treatment as
+        # <hostname>. A tag name looks safe, but ElementTree reports a
+        # namespaced tag as "{namespace}name", and the namespace is free
+        # text: `xmlns:x="&#10;ip access-list extended acl_in&#10; permit ip
+        # any any"` on <x:opt1> put that permit line at the top of acl_in.
+        if not _ROLE_PATTERN.fullmatch(role):
+            raise PfSenseConversionError(
+                f"{REFUSALS['invalid_interface_role']}: {role!r}"
+            )
         ipaddr = _text(iface_el, "ipaddr")
         subnet = _text(iface_el, "subnet")
         if not ipaddr or not subnet:
@@ -516,10 +546,9 @@ def _acl_name(role: str, *, rule_bearing_roles: "set[str]") -> str:
     the same convention _assign_cisco_interface_names() already uses for
     interface names, rather than a second naming scheme.
 
-    `role` is an XML tag name (see _parse_interfaces()), not free text pulled
-    from an element's content the way <descr> or <hostname> are, so it is
-    already constrained by XML's own tag-name grammar and does not need the
-    separate validation those fields do.
+    `role` is an XML tag name, validated against _ROLE_PATTERN in
+    _parse_interfaces(). This docstring used to say a tag name was already
+    safe by XML's own grammar; a namespaced tag is not -- see there.
     """
     if role in rule_bearing_roles and len(rule_bearing_roles) == 1:
         return ACL_NAME
@@ -560,6 +589,14 @@ def _resolve_endpoint(el: ET.Element, interfaces: Dict[str, Dict[str, str]]) -> 
     """
     if el.find("any") is not None:
         return "any"
+
+    # <not/> inverts the match: "everything EXCEPT this" (filter.inc:4249).
+    # It used to be ignored, so the emitted line matched exactly the traffic
+    # the rule exempts and none of the traffic it covers. One Cisco line
+    # cannot say "except", so the rule is refused. After the <any/> check on
+    # purpose: pfSense ignores <not/> beside <any/> too (filter.inc:4103).
+    if el.find("not") is not None:
+        raise PfSenseConversionError(REFUSALS["negated_endpoint"])
 
     network = _text(el, "network")
     if network is not None:
@@ -755,6 +792,18 @@ def _rule_to_acl_line(rule_el: ET.Element, interfaces: Dict[str, Dict[str, str]]
             f"{pf_protocol!r}"
         )
 
+    # Two fields that make pfSense match LESS than the fields above say, and
+    # that used to be ignored (filter.inc at 480a1c0626). Ignored, a block
+    # rule blocked more in the model than on the firewall: a stricter ACL,
+    # the direction that turns a real violation into a clean result (#302).
+    if _text(rule_el, "ipprotocol") == "inet6":  # filter.inc:4333
+        raise PfSenseConversionError(REFUSALS["ipv6_rule"])
+    icmp_type = _text(rule_el, "icmptype")
+    if pf_protocol == "icmp" and icmp_type not in (None, "any"):  # filter.inc:4522
+        raise PfSenseConversionError(
+            f"{REFUSALS['icmp_type']}: <icmptype> is {icmp_type!r}"
+        )
+
     source_el = rule_el.find("source")
     destination_el = rule_el.find("destination")
     if source_el is None or destination_el is None:
@@ -847,6 +896,12 @@ def convert(xml_path: Union[str, Path]) -> ConversionResult:
 
     filter_el = root.find("filter")
     rule_els = filter_el.findall("rule") if filter_el is not None else []
+
+    # A disabled rule is not loaded by pfSense at all (filter.inc:5543), so
+    # leaving it out is the exact model, not a gap -- nothing is skipped.
+    # It used to be converted as live: a disabled block denied traffic in
+    # the model that the real firewall lets through.
+    rule_els = [r for r in rule_els if r.find("disabled") is None]
 
     # WHY AN EMPTY RULE SET IS REFUSED, NOT CONVERTED AS "NO ACL"
     #   Found in a senior-level adversarial QA pass. PF Sense fails CLOSED

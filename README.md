@@ -124,8 +124,10 @@ permitted. Those remain ours.
   its own ACL, checked independently — and it **models** PF Sense's
   last-match-wins order rather than refusing it wherever it can do so exactly
   (#104). It **refuses rather than guesses** on NAT, aliases, VPN, IPv6,
-  interfaces with no static address, interfaces named by a rule but never
-  declared, and rule orders it cannot model exactly. A real client export is
+  negated (`<not/>`) addresses, ICMP-type rules, interface tags that are not
+  plain names, interfaces with no static address, interfaces named by a rule
+  but never declared, and rule orders it cannot model exactly. A disabled
+  rule is left out, as pfSense itself does. A real client export is
   still refused, on the last two of those.
   `analysis/pfsense_convert.REFUSALS` is the single source of truth for
   exactly what is refused and why (#155).
