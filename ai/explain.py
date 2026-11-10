@@ -327,6 +327,20 @@ def _compute_dead_rule_outcome(detail: str) -> Optional[str]:
     generates an explanation from the raw finding either way. This function
     only ever ADDS confidence; it never blocks a finding from being
     explained.
+
+    WHAT "THE REAL OUTCOME" MEANS FOR THE CONTRADICTED CASE (#453)
+        When the blocking line's action disagrees with the dead line's
+        own action, this no longer claims a single outcome for ALL
+        traffic matching the dead line's pattern -- see the comment
+        above that branch's return statement for why that claim is not
+        always true and what is stated instead. The redundant case
+        (blocking line agrees with the dead line) is unaffected -- see
+        that branch's own comment for why.
+
+        If a blocking line's action is known but its shape cannot be
+        rendered in plain English, this now returns None instead of
+        naming it in raw syntax (#461) -- see the comment above that
+        return statement for the measurement behind it.
     """
     match = _DEAD_RULE_DETAIL_PATTERN.search(detail)
     if not match:
@@ -367,8 +381,10 @@ def _compute_dead_rule_outcome(detail: str) -> Optional[str]:
     # syntax (found in review, 9 November -- raw syntax measurably traded
     # that misdescription for a different one, confusing the model about
     # which address was "a specific host"; see _describe_acl_line()'s own
-    # docstring). If any blocking line does not parse, fall back to
-    # naming them in raw syntax rather than withholding the fact.
+    # docstring). This path only ever states what the blocking line itself
+    # does, never a claim about the dead line's whole pattern, so it does
+    # not carry #453's overclaim risk either (see the fallback below for
+    # what that risk was).
     descriptions = [_describe_acl_line(line) for line in blocking_lines]
     if all(d is not None for d in descriptions):
         if len(descriptions) == 1:
@@ -385,17 +401,37 @@ def _compute_dead_rule_outcome(detail: str) -> Optional[str]:
             f"decide instead -- {cases}."
         )
 
-    named = " ".join(match.group("blocking").split())  # Batfish pads its spaces
-    lines, verb, decide_verb = (
-        ("earlier lines", "are", "decide") if len(blocking_lines) > 1
-        else ("an earlier line", "is", "decides")
-    )
-    return (
-        f"the unreachable line's own stated action is {dead_action}, but it "
-        f"never takes effect: traffic matching it is actually {outcome}, "
-        f"because {lines} ({named}) {verb} evaluated first and {decide_verb} "
-        f"instead."
-    )
+    # If any blocking line does not parse, refuse rather than fall back to
+    # naming it in raw syntax (#461 review, @shubhamkataria2005). #453's own
+    # fix tried a raw-syntax fallback here, stating only that the named
+    # line has the opposite action -- no claim about "traffic matching it",
+    # specifically to avoid the universal-outcome overclaim described below.
+    # Measured anyway, 20 live generations on the exact fixture that
+    # fallback exists for: 10/20 copied the Modelfile's Example 1 almost
+    # verbatim, against 1/20 for #401's main-head wording and 0/20 for no
+    # computed fact at all. A sentence with no outcome in it still leaves a
+    # gap for the model to fill, and it filled it with Example 1 more often
+    # than either alternative. Returning None here is not a weaker version
+    # of that fallback; it is the same refusal this function already makes
+    # a few lines up for unrecognised syntax and disagreeing blocking
+    # lines -- "not confident enough to say" covers this case too.
+    #
+    # What the overclaim this used to guard against actually was, kept for
+    # the record: Blocking_Lines does not always name every earlier line,
+    # specifically one sharing the DEAD line's own action rather than the
+    # named blocking line's opposite one, so a claim like "traffic matching
+    # it is actually {outcome}" can be false for a subset of the dead
+    # line's own pattern. Measured: a real config had `permit host 10.1.1.5
+    # any` before both `deny 10.1.1.0/24 any` (the named blocker) and the
+    # dead `permit 10.1.1.0/24 ... eq 443` -- Batfish named only the deny,
+    # so that sentence said "actually denied" for the whole /24, but
+    # testFilters showed host .5 is actually PERMITted, by the earlier,
+    # unnamed, same-action-as-the-dead-line permit. A fallback stating only
+    # the named line's own action, with no claim about what therefore
+    # happens to "traffic matching it", would have been safe from that
+    # specific overclaim -- it is just also, separately, the wording that
+    # measurably invites Example 1 copying. Refusing avoids both.
+    return None
 
 
 # ------------------------------------------------------------------------------
