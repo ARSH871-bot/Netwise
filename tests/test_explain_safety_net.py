@@ -373,27 +373,43 @@ def test_an_earlier_same_action_line_omitted_from_blocking_lines_is_not_overclai
     assert "traffic matching it" not in outcome
 
 
-def test_an_unparseable_blocking_line_falls_back_without_a_universal_claim():
-    """#453's own fix, exercised directly through its actual code path.
-    When the blocking line's shape _describe_acl_line() refuses (here, a
-    source-port clause #401's parser does not recognise), the contradicted
-    branch must still fall back to naming it in raw syntax -- but never to
-    the dropped universal-outcome claim ("traffic matching it is actually
-    {outcome}") #453 found false for a subset of the dead line's own
-    pattern. Nothing else in this file reaches this fallback, since every
-    other fixture's blocking line happens to parse -- without this test,
-    #453's fix would be silently untested."""
+def test_an_unparseable_blocking_line_returns_none_rather_than_a_weaker_claim():
+    """#461 review (@shubhamkataria2005), measured live. #453's own fix
+    fell back to naming an unparseable blocking line in raw syntax,
+    stating only that it has the opposite action -- no "traffic matching
+    it" claim, specifically to avoid the overclaim the test below this one
+    pins. Measured anyway: 20 live generations on this exact fixture gave
+    10/20 Modelfile Example 1 copies for that fallback sentence, against
+    1/20 for #401's main-head wording and 0/20 for no computed fact at
+    all. A sentence with no outcome in it still leaves a gap, and the
+    model filled it with Example 1 more often than either alternative.
+    This must now return None -- the same refusal this function already
+    makes for unrecognised syntax and disagreeing blocking lines, not a
+    softer version of the dropped fallback sentence. Nothing else in this
+    file reaches this path, since every other fixture's blocking line
+    happens to parse -- without this test, #461's fix would be silently
+    untested."""
     detail = (
         "Unreachable line: permit tcp any any eq 443 (action PERMIT). "
         "Blocked by: deny tcp any eq 1024 any eq 443. Reason: BLOCKING_LINES"
     )
-    outcome = _compute_dead_rule_outcome(detail)
-    assert outcome is not None
-    assert "own stated action is PERMIT" in outcome
-    assert "deny tcp any eq 1024 any eq 443" in outcome
-    assert "opposite action (DENY)" in outcome
-    assert "traffic matching it is actually" not in outcome
-    assert "actually denied" not in outcome
+    assert _compute_dead_rule_outcome(detail) is None
+
+
+def test_one_unparseable_line_among_several_blocking_lines_also_returns_none():
+    """The `all(d is not None for d in descriptions)` check already
+    requires every named blocking line to parse before taking the
+    plain-English path, so a mix of one parseable and one unparseable
+    line should fall through to the same refusal as a single unparseable
+    line -- not a partial description naming only the one that parsed.
+    Nothing pinned this specifically before #461; added alongside the
+    single-line case rather than left as an untested assumption."""
+    detail = (
+        "Unreachable line: permit tcp any any eq 443 (action PERMIT). "
+        "Blocked by: deny tcp 10.1.1.0 0.0.0.255 any, deny tcp any eq "
+        "1024 any eq 443. Reason: BLOCKING_LINES"
+    )
+    assert _compute_dead_rule_outcome(detail) is None
 
 
 def _real_dead_rule_detail(dead_action: str, blocking_action: str) -> str:
