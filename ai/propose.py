@@ -50,11 +50,15 @@ HOW #14 FALLS OUT OF #13, PER THE SAME DOCUMENT
     compareFilters/differentialReachability comparison Shubham's feature
     (#30) already runs for a given before/after pair. That module already
     grades severity by direction: a change that newly OPENS traffic is
-    `high` (silent -- nothing breaks, so nobody looks), a change that
-    CLOSES traffic is `medium` (loud -- someone notices). `warning=True`
-    here means exactly "a high-severity finding is present in that diff" --
-    running the tool the project already trusts, twice, and reading its
-    answer. No new judgement is introduced.
+    `high` (silent -- nothing breaks, so nobody looks), a filter or
+    reachability change that CLOSES traffic is `medium` (loud -- someone
+    notices). A CLOSING that breaches a written policy requirement is the
+    one exception (#402): it carries that rule's own `violation_severity`
+    instead, which can be `high` -- this PR exists because that case was
+    reported with the wrong banner. `warning=True` here means exactly "a
+    high-severity finding is present in that diff" -- running the tool
+    the project already trusts, twice, and reading its answer. No new
+    judgement is introduced.
 
     This module does NOT audit the proposed state the way change_impact's
     own docstring flags as unbuilt ("it will not tell you that the after
