@@ -330,6 +330,12 @@ def test_an_empty_upload_is_rejected_rather_than_read_as_asserting_nothing():
             {"policy_compliance": [{"filter": "acl_in"}]},
             "missing the required description/node",
         ),
+        # The next three were an HTTP 500 (raw exception) or, the last, a 200
+        # with the rule silently dropped, until the loader refused them.
+        pytest.param(b'{"device": "r\xe9"}', "not UTF-8", id="not-utf8"),
+        pytest.param(b"[" * 100000 + b"]" * 100000, "nested too deeply", id="deep"),
+        pytest.param(b'{"routing": [{"description": "x"}], "routing": []}',
+                     "duplicate key", id="duplicate-key"),
     ],
 )
 def test_a_rejected_policy_is_never_staged(bad_body, why):
@@ -349,6 +355,29 @@ def test_a_rejected_policy_is_never_staged(bad_body, why):
         f"{why}: the policy was REJECTED but staged anyway -- the next "
         "analysis would run against a file nobody accepted"
     )
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        # PowerShell 5.1's `>` and Notepad's "Unicode" both save UTF-16.
+        (json.dumps(VALID_POLICY).encode("utf-16"), "not UTF-8"),
+        (json.dumps(VALID_POLICY).replace("rtr-us5", "rtr-café").encode("latin-1"),
+         "not UTF-8"),
+        (b"[" * 200_000 + b"]" * 200_000, "nested too deeply"),
+    ],
+    ids=["utf-16", "latin-1", "deep-nesting"],
+)
+def test_a_file_the_loader_cannot_decode_is_a_400_not_a_500(raw, expected):
+    """Measured on origin/main: all three were HTTP 500 Internal Server
+    Error, because `UnicodeDecodeError` and `RecursionError` escaped the
+    loader instead of becoming a `PolicyError` the endpoint already turns
+    into a message. Refused, never guessed at: no other encoding is tried."""
+    response = _post_policy(raw)
+
+    assert response.status_code == 400
+    assert expected in response.json()["detail"]
+    assert not main.POLICY_PATH.exists()
 
 
 def test_a_rejection_leaves_an_earlier_good_policy_alone():
