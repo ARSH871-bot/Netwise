@@ -1815,6 +1815,7 @@ function addSkippedNotes(notes) {
  *       impact:            F-1 findings,
  *       verified:          bool,
  *       warning:           bool,
+ *       opens_access:      bool,
  *       grounded:          bool,
  *       answer:            string }
  *

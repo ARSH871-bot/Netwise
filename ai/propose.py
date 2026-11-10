@@ -14,6 +14,7 @@ WHAT THIS DOES
          "impact": list[dict],   # F-1 findings from change_impact, [] if none
          "verified": bool,
          "warning": bool,
+         "opens_access": bool,   # see the warning/opens_access split below
          "grounded": bool,
          "answer": str}
 
@@ -311,6 +312,7 @@ def _refuse(reason: str) -> Dict[str, Any]:
         "impact": [],
         "verified": False,
         "warning": False,
+        "opens_access": False,
         "grounded": False,
         "answer": reason,
     }

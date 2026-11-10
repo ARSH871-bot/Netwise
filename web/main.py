@@ -2490,7 +2490,8 @@ def propose_change_endpoint(body: ProposeRequest) -> Dict[str, Any]:
     impact before returning it (US-13, US-14).
 
     Always returns ai.propose.propose_change()'s shape (request_understood,
-    proposed_change, impact, verified, warning, grounded, answer), whether
+    proposed_change, impact, verified, warning, opens_access, grounded,
+    answer), whether
     the request was understood or refused. Never a 500 for an operational
     failure -- no upload yet, an unreachable Batfish, or a request that
     does not resolve are all refusals in the same shape, the same
@@ -2528,6 +2529,7 @@ def propose_change_endpoint(body: ProposeRequest) -> Dict[str, Any]:
             "impact": [],
             "verified": False,
             "warning": False,
+            "opens_access": False,
             "grounded": False,
             "answer": (
                 "Upload a config first, there is nothing to propose a "
