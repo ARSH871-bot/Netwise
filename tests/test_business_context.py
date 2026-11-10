@@ -383,6 +383,29 @@ def test_malformed_json_names_the_line_and_column(tmp_path):
     assert "line" in message and "column" in message
 
 
+@pytest.mark.parametrize(
+    "contents, said",
+    [
+        # Loaded as "standard" before the fix: the user's "critical" dropped.
+        pytest.param(b'[{"device": "rtr-us5", "tier": "critical", "tier": "standard"}]',
+                     "appears twice", id="duplicate-key"),
+        pytest.param(b'[{"device": "r\xe9", "tier": "critical"}]', "not UTF-8", id="not-utf8"),
+        pytest.param(b'[{"device": "r", "tier": 1' + b"0" * 5000 + b"}]", "cannot be read",
+                     id="5000-digit-int"),
+        pytest.param(b"[" * 100000 + b"]" * 100000, "nested too deeply", id="deep-json"),
+    ],
+)
+def test_a_file_json_cannot_hold_faithfully_is_refused_not_crashed_or_trimmed(
+    tmp_path, contents, said
+):
+    """Mirrors the policy loader's test: a raw exception (HTTP 500 on
+    upload), or a silently dropped value, before the fix."""
+    path = tmp_path / "business-context.json"
+    path.write_bytes(contents)
+    with pytest.raises(BusinessContextError, match=said):
+        load_business_context_file(path)
+
+
 def test_a_real_file_round_trips(tmp_path):
     path = tmp_path / "business-context.json"
     path.write_text(
