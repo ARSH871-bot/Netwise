@@ -243,6 +243,23 @@ def test_a_file_json_cannot_hold_faithfully_is_refused_not_crashed_or_trimmed(
         load_policy_file(path)
 
 
+def test_a_duplicate_key_refusal_keeps_its_own_message_not_a_generic_one(tmp_path):
+    """_refuse_duplicate_keys() raises a PolicyError from inside json.loads,
+    and PolicyError is a ValueError. Without `except PolicyError: raise` the
+    bare `except ValueError` beside it re-wraps it as "holds a value that
+    cannot be read: ... appears twice", which a substring match on "appears
+    twice" still accepts, so the parametrized test above cannot tell. This
+    one can: the user is told what is actually wrong, in the loader's words."""
+    path = tmp_path / "policy.json"
+    path.write_bytes(b'{"policy_compliance": [' + _A_RULE + b'], "policy_compliance": []}')
+
+    with pytest.raises(PolicyError) as raised:
+        load_policy_file(path)
+
+    assert "appears twice" in str(raised.value)
+    assert "cannot be read" not in str(raised.value)
+
+
 def test_a_bug_in_the_validator_is_not_relabelled_as_a_bad_file(tmp_path, monkeypatch):
     """The broad `except ValueError` used to wrap load_policy() too, so a plain
     ValueError raised by a validation bug reached the user as "holds a value
