@@ -308,6 +308,17 @@ def test_reachability_findings_rate_a_tightening_medium():
     assert "no longer reaches" in results[0]["summary"]
 
 
+def test_reachability_findings_say_changed_when_the_direction_is_unknown():
+    """#405 review (Arsh): neither side counts as having got through, so this
+    is not an opening or a closing -- opens_access must not treat it as one."""
+    bf = _FakeSessionWithFlows([_flow_row("NO_ROUTE", "DENIED_IN")])
+    results, _ = change_impact._reachability_change_findings(bf, 1)
+
+    assert len(results) == 1
+    assert results[0]["severity"] == "high"
+    assert results[0]["direction"] == "changed"
+
+
 class _FakeSessionWithFilterRows:
     def __init__(self, rows):
         self.q = SimpleNamespace(compareFilters=lambda **kw: _FakeQuestion(rows))

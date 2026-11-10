@@ -566,6 +566,19 @@ def test_a_mix_of_opening_and_closing_does_not_claim_simple_opening(monkeypatch,
     )
 
 
+def test_an_unclassified_high_finding_warns_without_claiming_an_opening(monkeypatch, tmp_path):
+    """#405 review (Arsh): a "changed" direction is neither an opening nor a
+    closing -- opens_access's all() must not treat it as one by default."""
+    before_dir = _write_snapshot(tmp_path)
+    _stub_batfish(monkeypatch)
+    _stub_change_impact(monkeypatch, [_found(severity="high", direction="changed")])
+
+    result = propose.propose_change(GOOD_REQUEST, before_dir)
+
+    assert result["warning"] is True
+    assert result["opens_access"] is False
+
+
 def test_the_caller_supplied_policy_actually_reaches_analyse_change(monkeypatch, tmp_path):
     """#402's own bug, pinned directly: a stub that merely ACCEPTS a
     `policy` keyword is not proof propose_change() passes its real value
