@@ -343,6 +343,94 @@ def test_part_headers_longer_than_the_allowance_never_stage_a_shortened_file():
         assert r.status in (400, 422), r.body[:300]
 
 
+# --- The middleware on its own, without the parser in front of it -----------
+#
+# Two of its rules cannot be seen through main.app, and mutation testing
+# found both surviving. Starlette's multipart parser refuses part headers
+# long before 64 KB (measured: 8 KB of headers is "There was an error parsing
+# the body", 1 KB is accepted), so the "headers ended inside the allowance"
+# rule is never reached through the app. And nothing in the app calls
+# receive() again after the body has ended, so "never read on after the cut"
+# is never exercised either. Both are what keep the middleware safe in front
+# of a different parser or app, so they are pinned here directly.
+
+
+def through_the_limit_only(pieces: Iterator[bytes]):
+    """Run UploadBodyLimit around a recording app instead of main.app. The
+    inner app reads the body to its end, answers, then calls receive() once
+    more, as an app listening for a disconnect would."""
+    bodies: List[bytes] = []
+    counts = {"server_reads": 0}
+    after = {}
+
+    async def run() -> None:
+        finished = asyncio.Event()
+        source = iter(pieces)
+        nxt = next(source, None)
+
+        async def receive() -> dict:
+            nonlocal nxt
+            if nxt is None:
+                await finished.wait()
+                return {"type": "http.disconnect"}
+            piece, nxt = nxt, next(source, None)
+            counts["server_reads"] += 1
+            return {"type": "http.request", "body": piece, "more_body": nxt is not None}
+
+        async def send(message: dict) -> None:
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                finished.set()
+
+        async def inner(scope, receive, send):
+            while True:
+                message = await receive()
+                bodies.append(message.get("body", b""))
+                if not message.get("more_body", False):
+                    break
+            counts["at_end"] = counts["server_reads"]
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+            after["message"] = await receive()
+            counts["after"] = counts["server_reads"]
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/upload",
+            "headers": [(b"content-type", b"multipart/form-data; boundary=" + BOUNDARY)],
+        }
+        await main.UploadBodyLimit(inner)(scope, receive, send)
+
+    asyncio.run(run())
+    return bodies, counts, after
+
+
+def test_part_headers_longer_than_the_allowance_end_the_body_without_a_closing_boundary():
+    pad = b"X-Pad: " + b"a" * (70 * 1024) + CRLF
+
+    def body() -> Iterator[bytes]:
+        yield part_head("r1.txt", extra_header=pad)
+        yield from file_bytes(BIG)
+
+    bodies, _, _ = through_the_limit_only(body())
+
+    assert not bodies[-1].endswith(CLOSING)
+
+
+def test_one_part_with_short_headers_is_closed_with_its_own_boundary():
+    bodies, _, _ = through_the_limit_only(one_file_body("r1.txt", BIG))
+
+    assert bodies[-1].endswith(CLOSING)
+
+
+def test_after_the_cut_the_server_is_never_asked_for_another_byte():
+    bodies, counts, after = through_the_limit_only(one_file_body("r1.txt", BIG))
+
+    assert sum(len(b) for b in bodies) <= MOST_THE_APP_MAY_READ
+    assert after["message"] == {"type": "http.disconnect"}
+    assert counts["after"] == counts["at_end"]
+
+
 # --- What the endpoint decides first still decides ---------------------------
 
 WRONG_EXTENSION = [
