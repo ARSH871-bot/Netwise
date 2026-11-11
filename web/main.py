@@ -22,6 +22,7 @@ THE SEAM
     knows how to render, which is exactly the F-4 guarantee end to end.
 """
 
+import asyncio
 import hashlib
 from datetime import datetime, timezone
 import json
@@ -107,6 +108,20 @@ MAX_UPLOAD_BYTES = 2 * 1024 * 1024
 # Read the upload in pieces rather than all at once, so an oversized file is
 # rejected after 64 KB instead of after we have swallowed the whole thing.
 CHUNK_BYTES = 64 * 1024
+
+# How far past MAX_UPLOAD_BYTES a request BODY may run before UploadBodyLimit
+# (below) ends it. The body is more than the file: one multipart part carries
+# its boundary line, a Content-Disposition with the filename, a Content-Type
+# and the closing boundary -- a few hundred bytes for any real upload. 64 KB
+# covers that with room for a very long filename, so an upload of exactly
+# MAX_UPLOAD_BYTES is never cut, and it is the same size as CHUNK_BYTES, so
+# the most a refused upload costs is the limit plus one chunk.
+UPLOAD_ALLOWANCE_BYTES = 64 * 1024
+
+# The three endpoints that read an uploaded file. Nothing else is limited.
+SIZE_LIMITED_UPLOAD_PATHS = frozenset(
+    {"/api/upload", "/api/policy", "/api/business-context"}
+)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -477,6 +492,142 @@ async def attach_session(request: Request, call_next):
             samesite="lax",
         )
     return response
+
+
+# --- The size limit, applied to the request body ----------------------------
+#
+# WHY THE ENDPOINTS' OWN CHECK WAS NOT ENOUGH
+#     Each upload endpoint reads its file in CHUNK_BYTES pieces and stops at
+#     MAX_UPLOAD_BYTES. But FastAPI parses the whole multipart body BEFORE the
+#     endpoint runs, so by the time that loop sees the first chunk, the whole
+#     request has already been received and spooled to a temporary file.
+#     Measured against a real uvicorn: a 200 MB upload was received in full
+#     and written to a 200 MB temporary file before the 400 came back, on all
+#     three endpoints, with or without Content-Length. The message was right;
+#     the work before it was not.
+#
+# WHAT THIS DOES
+#     It counts the body bytes as the server delivers them and, once
+#     MAX_UPLOAD_BYTES + UPLOAD_ALLOWANCE_BYTES have gone by, ENDS the body:
+#     it closes the multipart with its own closing boundary and tells the app
+#     there is no more. The parser then finishes with a file part just over
+#     the limit, and the endpoint's existing size check refuses it with its
+#     existing message. So the answer is unchanged, byte for byte -- the
+#     filename, each endpoint's own wording, and the extension check still
+#     running first -- and no message is written twice.
+#
+#     It never refuses anything itself, and it does not look at
+#     Content-Length: a header the client writes cannot make it read more or
+#     less, and a chunked body with no length is counted the same way.
+#
+# WHEN IT DOES NOT CLOSE THE MULTIPART CLEANLY
+#     A clean close is only safe when it leaves the file part OVER the limit.
+#     Two shapes would leave it under -- and staged, shortened, as if it were
+#     the user's whole config: a second part (a decoy before `file`), and
+#     part headers longer than the allowance. Measured: a decoy part followed
+#     by a cut `file` part, closed cleanly, came back 200 with a 112-byte file.
+#     So a clean close requires exactly one boundary line so far, and the end
+#     of that part's headers within the first UPLOAD_ALLOWANCE_BYTES. Anything
+#     else is ended with no closing boundary at all, the part never completes,
+#     and FastAPI answers 422 for the missing field.
+#
+# AFTER THE CUT
+#     A later receive() waits for the response to go out and then reports a
+#     disconnect -- what uvicorn does once a body is complete. It never asks
+#     the server for another byte. The server then closes the connection
+#     with the rest of the body unread. Measured: browsers (Chromium fetch),
+#     curl and http.client all still show the 400 and its message; only a
+#     raw socket that keeps writing sees a reset.
+#
+# A pure ASGI middleware, not @app.middleware("http"): this is about the
+# receive channel itself, which a BaseHTTPMiddleware does not hand over.
+
+
+def _multipart_delimiter(headers) -> Optional[bytes]:
+    """The `--boundary` line that separates parts, or None if this is not a
+    multipart body with a boundary we can read."""
+    for name, value in headers:
+        if name.lower() == b"content-type":
+            for param in value.split(b";")[1:]:
+                key, _, boundary = param.strip().partition(b"=")
+                if key.lower() == b"boundary" and boundary.strip(b'"'):
+                    return b"--" + boundary.strip(b'"')
+    return None
+
+
+class UploadBodyLimit:
+    """End an upload's body at MAX_UPLOAD_BYTES + UPLOAD_ALLOWANCE_BYTES."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if (
+            scope["type"] != "http"
+            or scope["method"] != "POST"
+            or scope["path"] not in SIZE_LIMITED_UPLOAD_PATHS
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        limit = MAX_UPLOAD_BYTES + UPLOAD_ALLOWANCE_BYTES
+        delimiter = _multipart_delimiter(scope["headers"])
+        passed = 0
+        head = b""        # the first UPLOAD_ALLOWANCE_BYTES of the body
+        tail = b""        # enough bytes to find a delimiter split across chunks
+        delimiters = 0
+        cut = False
+        response_done = asyncio.Event()
+
+        def note(body: bytes) -> None:
+            nonlocal passed, head, tail, delimiters
+            passed += len(body)
+            if len(head) < UPLOAD_ALLOWANCE_BYTES:
+                head += body[: UPLOAD_ALLOWANCE_BYTES - len(head)]
+            if delimiter:
+                seen = tail + body
+                delimiters += seen.count(delimiter)
+                tail = seen[-(len(delimiter) - 1):]
+
+        def safe_to_close() -> bool:
+            if not delimiter or delimiters != 1:
+                return False
+            start = head.find(delimiter)
+            return start != -1 and head.find(b"\r\n\r\n", start) != -1
+
+        async def limited_receive():
+            nonlocal cut
+            if cut:
+                await response_done.wait()
+                return {"type": "http.disconnect"}
+            message = await receive()
+            if message["type"] != "http.request":
+                return message
+            body = message.get("body", b"")
+            if passed + len(body) <= limit:
+                note(body)
+                return message
+            body = body[: limit - passed + 1]
+            note(body)
+            cut = True
+            if safe_to_close():
+                body += b"\r\n" + delimiter + b"--\r\n"
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        async def watched_send(message):
+            if message["type"] == "http.response.body" and not message.get(
+                "more_body", False
+            ):
+                response_done.set()
+            await send(message)
+
+        await self.app(scope, limited_receive, watched_send)
+
+
+# Added after attach_session, so Starlette runs it outside that middleware:
+# the body is limited before anything else reads it, and the response still
+# passes back through attach_session, which sets the cookie.
+app.add_middleware(UploadBodyLimit)
 
 
 # --- Backwards-compatible module attributes (#242) ---------------------------
