@@ -346,6 +346,28 @@ consistently with POL-4.
 
 ---
 
+### A rule whose traffic Batfish cannot be asked about is refused
+
+A rule's `queries` (and an `access_control` statement's `headers`) go straight
+to Batfish's `HeaderConstraints`, which accepts almost anything locally. Such
+a rule used to load and then fail at scan time as "could not check", with an
+error the user could not act on: `"queries": "10.10.10.0/24"` ran thirteen
+queries, one per character. `load_policy()` now refuses, naming the rule:
+
+- `queries` that is not a non-empty list, or a query that is not a mapping;
+- a field name `HeaderConstraints` does not have (`srcIp` for `srcIps`);
+- an address element that is plainly one address or prefix (digits, dots, a
+  slash) but is not valid, such as `10.10.10.300`.
+
+Batfish's address language is larger than that: ranges (`a-b`), wildcards
+(`a:b`), set difference and named groups are passed through for Batfish to
+judge, and each accepted form is checked against real Batfish in
+`tests/test_policy_traffic_shape.py`. An empty query, `{}`, still loads: it
+means all traffic, and "this filter must permit nothing" is a rule someone
+can mean.
+
+---
+
 ### A policy that forbids what it requires is refused (#322, US-30)
 
 A `prohibition` says traffic must be DENIED. A `requirement` says traffic must
