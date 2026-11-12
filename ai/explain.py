@@ -654,8 +654,14 @@ _LEAD_TO_PATTERN = re.compile(r"\bcan\s+lead\s+to\b", re.IGNORECASE)
 # "found" explanation legitimately says "reach" or "blocked" -- the word list
 # above rejected 3 of the 4 rated "found" explanations in
 # tests/fixtures/explanation_quality/holdout.json.
+#
+# "no problems"/"no issues" allow exactly one inserted word (#457) -- measured
+# live, the literal phrase alone missed "no security problems", the actual
+# sentence from the prompt-injection case that motivated this whole check.
+# Still a fixed list, not a paraphrase match: one adjective, not open-ended
+# drift detection, which is #410's separate, bigger problem.
 _ALL_CLEAR_PATTERN = re.compile(
-    r"\b(no problems|no issues|nothing needs fixing|looks clean|"
+    r"\b(no (\w+\s+)?problems|no (\w+\s+)?issues|nothing needs fixing|looks clean|"
     r"check passed|is fine|is safe)\b",
     re.IGNORECASE,
 )
