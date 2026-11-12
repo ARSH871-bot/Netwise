@@ -714,20 +714,35 @@ def load_policy_file(path: Any) -> Policy:
     # on upload rather than a refusal naming the file: an integer of more
     # than 4,300 digits (ValueError), and nesting deeper than Python's
     # recursion limit, hit by json.loads or by load_policy() walking it.
+    #
+    # THE TWO STEPS ARE GUARDED SEPARATELY (#446 follow-up, Shubham's note).
+    # The bare ValueError is json.loads's, and only json.loads's: it is the
+    # one that really is about the file. Wrapping load_policy() in the same
+    # `except ValueError` made a plain ValueError from a validation BUG
+    # reach the user as "holds a value that cannot be read", a refusal that
+    # blames their file for our mistake. load_policy() raises PolicyError
+    # for every problem with a file, so it is guarded only for the
+    # RecursionError a deeply nested rule list causes, and anything else it
+    # raises stays visible as the bug it is.
     try:
         parsed = json.loads(text, object_pairs_hook=_refuse_duplicate_keys)
-        return load_policy(parsed)
     except json.JSONDecodeError as error:
         raise PolicyError(
             f"{file_path} is not valid JSON: line {error.lineno}, "
             f"column {error.colno}: {error.msg}"
         ) from error
     except PolicyError:
+        # _refuse_duplicate_keys() runs inside json.loads and raises this.
         raise
     except RecursionError as error:
         raise PolicyError(f"{file_path} is nested too deeply to be a policy") from error
     except ValueError as error:
         raise PolicyError(f"{file_path} holds a value that cannot be read: {error}") from error
+
+    try:
+        return load_policy(parsed)
+    except RecursionError as error:
+        raise PolicyError(f"{file_path} is nested too deeply to be a policy") from error
 
 
 def _refuse_duplicate_keys(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
