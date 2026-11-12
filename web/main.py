@@ -2490,7 +2490,8 @@ def propose_change_endpoint(body: ProposeRequest) -> Dict[str, Any]:
     impact before returning it (US-13, US-14).
 
     Always returns ai.propose.propose_change()'s shape (request_understood,
-    proposed_change, impact, verified, warning, grounded, answer), whether
+    proposed_change, impact, verified, warning, opens_access, grounded,
+    answer), whether
     the request was understood or refused. Never a 500 for an operational
     failure -- no upload yet, an unreachable Batfish, or a request that
     does not resolve are all refusals in the same shape, the same
@@ -2512,6 +2513,14 @@ def propose_change_endpoint(body: ProposeRequest) -> Dict[str, Any]:
     reusing _attach_explanations() rather than a second mechanism -- a
     warning naming the exact ACL lines that changed is more useful read in
     plain English than as a raw Batfish diff.
+
+    PASSES THE STAGED POLICY (#402). Before this, every proposal was
+    checked against Netwise's built-in example rules regardless of what
+    the user had staged via /api/policy, and the resulting finding's own
+    evidence then said "no policy file was supplied" -- true of this call
+    specifically, misleading about the app as a whole. `_staged_policy()`
+    is the same accessor `/api/findings` already uses, so a staged policy
+    now reads the same way on every surface that checks one.
     """
     if not _is_uploaded():
         return {
@@ -2520,6 +2529,7 @@ def propose_change_endpoint(body: ProposeRequest) -> Dict[str, Any]:
             "impact": [],
             "verified": False,
             "warning": False,
+            "opens_access": False,
             "grounded": False,
             "answer": (
                 "Upload a config first, there is nothing to propose a "
@@ -2527,7 +2537,7 @@ def propose_change_endpoint(body: ProposeRequest) -> Dict[str, Any]:
             ),
         }
 
-    result = propose_change(body.request, snapshot_dir())
+    result = propose_change(body.request, snapshot_dir(), policy=_staged_policy())
     result["impact"] = _attach_explanations(result["impact"])
     return result
 

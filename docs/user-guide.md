@@ -258,7 +258,8 @@ Netwise will:
 2. Generate a candidate config line.
 3. Apply it to a **disposable copy** of your network model and re-analyse.
 4. Report what actually changed — and **warn** if the change opens access
-   that was previously blocked.
+   that was previously blocked, or closes access your policy says must
+   stay open.
 
 **Nothing is ever applied to your device.** The generated line is text for
 you to review. Your uploaded config is never modified; a test asserts it is
