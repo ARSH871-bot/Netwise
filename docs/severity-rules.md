@@ -46,21 +46,44 @@ move it down the page, which is the F-4 failure by another route.
 Applied in order. The first that matches wins; anything unmatched keeps the
 severity its check assigned.
 
-### R-1 — A dead rule is low, whatever it says
+### R-1 — A dead permit is low; a dead deny keeps its check's severity
 
 **Matches:** `status="found"` and the evidence describes an unreachable /
-shadowed ACL line.
+shadowed ACL line that is **not** marked `(action DENY)`.
 **Sets:** `low`
 
-A line that can never match cannot expose anything. It is a hygiene problem —
+A dead **permit** blocks traffic someone wanted. It is a hygiene problem —
 someone believes a rule is in force when it is not — and it is worth reporting,
 but it is not an exposure and should not sit above one.
 
+A dead **deny** is usually the opposite: when the line shadowing it is a
+permit, traffic someone meant to block gets through. `access_control` grades
+it `high` for that reason, and R-1 leaves it alone.
+
+**Known over-rating: a dead deny behind another deny (#447).** Then the traffic
+is still blocked, by the earlier line, and nothing is exposed. R-1 cannot tell
+this case apart: the evidence names the dead line's action, not the blocker's.
+So it keeps the check's `high` here too, which over-rates it.
+
+**This used to lower every dead line**, on the grounds that the exposure is
+reported separately by R-2. That only holds when the line shadowing the deny is
+a blanket permit. Measured in section 4 of the CVSS comparison in PR
+#434: a telnet deny shadowed by a *specific* permit went to `low`, R-2 did not
+fire, and the only finding about that traffic sat at the bottom of the list.
+§6 item 2 below also records that R-2 has no observed effect on any fixture we
+have, so R-1 should not lean on it.
+
+**How the action is read.** The finding has no structured field for it, so R-1
+reads the fixed marker `access_control` writes into `evidence.detail` —
+*"Unreachable line: … (action DENY). Blocked by: …"*. That is our wording, not
+config text. A dead-rule finding without a clear `(action DENY)` marker keeps
+the old answer, `low`.
+
 This rule is deliberately **first**, because a dead-rule finding usually quotes
 the line that shadows it, and that line is very often a blanket permit. Without
-the ordering, R-2 would match the quoted blocker and rate the dead rule `high`.
-The exposure is not lost by rating it low: the blanket permit is reported
-separately, on its own finding, by R-2.
+the ordering, R-2 would match the quoted blocker and rate a dead permit `high`.
+A dead deny passes through R-1 and is not promoted by R-2 either: its blocker
+follows *"Blocked by:"*, so R-2 treats it as a citation.
 
 ### R-2 — A blanket permit is high
 
@@ -124,7 +147,9 @@ registry order, which is alphabetical by accident rather than meaningful.
 - **It does not weight by device.** "This router is more important than that
   one" is real, but we have no source for it that is not guesswork, and
   inventing one would be exactly the unfounded claim the rest of this project
-  avoids. If the client tells us, it becomes data, not a rule.
+  avoids. If the client tells us, it becomes data, not a rule. That data is
+  business context (`critical` / `important` / `standard`), applied after these
+  rules: our equivalent of CVSS Environmental metrics.
 
 ## 6. Open, and deliberately not settled here
 
