@@ -121,7 +121,10 @@ def _stub(monkeypatch, *, filters=None, flows=None, filters_raises=False, flows_
     # tests keep meaning what they meant before it existed. Its own tests are
     # in tests/test_change_against_policy.py.
     monkeypatch.setattr(change_impact, "_policy_change_findings",
-                        lambda bf, number: ([], [], number))
+                        lambda bf, number, before=None, after=None: {"findings": [], "number": number})
+    # The same device on both sides, so #403's device check finds no change
+    # and these tests keep meaning what they meant before it existed.
+    monkeypatch.setattr(change_impact, "_devices", lambda bf: ({"rtr-us5"}, {"rtr-us5"}))
 
 
 def _a_change(number=1):
