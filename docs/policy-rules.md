@@ -413,7 +413,9 @@ same ACL in different spellings. When two filters match only after trimming
 and ignoring case, or either is a specifier rather than a plain name (`/`,
 `@`, `(`, `,`), the pair is reported as **undecidable**, not skipped. Found in
 review on #387: the first version compared the raw strings and called
-`ACL_IN` versus `acl_in` "cannot collide".
+`ACL_IN` versus `acl_in` "cannot collide". The traffic is compared first,
+though (#440): two rules whose traffic is provably disjoint cannot collide
+whichever ACL their filters resolve to, so they get no warning.
 
 A rule's `queries` are a union, because `policy_compliance` fails the rule if
 any one of them fails, so a contradiction is any query of the prohibition
