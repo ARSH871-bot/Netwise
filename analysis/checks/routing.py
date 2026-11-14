@@ -306,6 +306,15 @@ def _evaluate(expected: str, traces: Sequence[Any]) -> Optional[str]:
     raise ValueError(f"route 'expected' must be REACHABLE or UNREACHABLE, got {expected!r}")
 
 
+def _violation_detail(expected: str, src_ip: str, dst_ip: str, violation: str) -> str:
+    """The exact evidence.detail shape run() has always produced for a
+    routing-assertion finding. Pulled out to its own function (#439) so
+    tests can call the real producer instead of retyping this string by
+    hand -- the same reason _evaluate() itself is tested directly rather
+    than through a copy of its output."""
+    return f"Expected {expected} for a flow from {src_ip} to {dst_ip}, but {violation}"
+
+
 def run(bf: Session) -> List[Dict[str, Any]]:
     """Check every route statement and return F-1 findings.
 
@@ -503,9 +512,8 @@ def run(bf: Session) -> List[Dict[str, Any]]:
                 # actually reached and the path it took to get there. We
                 # never paraphrase it here; the AI layer does that, grounded
                 # in this string.
-                detail=(
-                    f"Expected {route['expected']} for a flow from "
-                    f"{route['src_ip']} to {route['dst_ip']}, but {violation}"
+                detail=_violation_detail(
+                    route["expected"], route["src_ip"], route["dst_ip"], violation
                 ),
                 source=f"{node}:{route['dst_ip']}",
                 status="found",
