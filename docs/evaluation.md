@@ -774,9 +774,30 @@ functions already name both sides of their fact), and the same discipline
 #145 itself set: **not fixed here.** Fixing it now would mean rating text
 that no longer exists by the time anyone reads this table.
 
+> **RE-CAPTURED, after #401 fixed #384 (reviewed by @ARSH871-bot before
+> merge).** #401 extended `_compute_dead_rule_outcome()` to name the dead
+> line's own action explicitly, which is exactly the fix this section asked
+> for -- and review found a second problem while measuring it: the
+> single-template wording also assumed a dead line's own action and the
+> real outcome always disagree, which is false whenever the line is
+> redundant rather than contradicted (a DENY shadowed by an earlier DENY,
+> say). Both are fixed in #401, with a branch on whether the two sides
+> agree. #385's own prompt-hash guard caught AC-002 as stale the moment
+> #401 merged onto this held-out set, which is exactly what that guard
+> exists to catch -- re-captured under the fixed prompt rather than editing
+> the old rating in place, same discipline this section used the first
+> time. The table and the repeatable score below are both updated; the
+> `AC-002` row and this paragraph are left as the honest record of what was
+> found and when, not rewritten to read as if it were always correct.
+
 ### The held-out set and its ratings
 
-One rater so far (Ankeet) - see
+Four rounds so far (Ankeet, 10 October; AC-002 re-captured and re-rated by
+Ankeet, 3 November, after #401; AC-002 re-captured and re-rated by Ankeet
+again, 8 November, after review found the 3 November capture's own wording
+was itself a misdescription; AC-002 re-captured and re-rated a third time,
+9 November, after review found the 8 November wording traded that
+misdescription for a different one) - see
 [`tests/fixtures/explanation_quality/holdout.json`](../tests/fixtures/explanation_quality/holdout.json)
 for the full captured findings, explanations and reasoning behind each
 score. Same 1-5 scale as Part 3 (accuracy: does the text claim only what the
@@ -788,7 +809,7 @@ read `evidence.detail` what is wrong).
 | RT-050 | fallback | 5 | 4 | Deterministic, cannot be wrong by construction - **reported separately below, not part of the model score.** |
 | AC-001 | model | 5 | 4 | Correct, no inversion. |
 | PC-001 | model | 5 | 4 | Regenerated post-#145: inversion gone. |
-| AC-002 | model | **2** | **2** | **Real defect, kept rather than re-rolled - see #384.** |
+| AC-002 | model | 5 | 5 | **Re-captured a third time, 9 November, after review found that naming the blocking line in raw ACL syntax (the 8 November fix) traded one misdescription for another.** 30 live generations on the 8 November wording: 0/30 called the permit line a block, but 16/30 called the dead line's own /24 source "a specific host" - a confusion neither the pre-fix wording nor `main` produced, caused by two raw ACL snippets sitting next to each other in the prompt. Fixed by describing the blocking line in plain English instead of raw syntax, refusing rather than guessing on any shape it does not recognise. Re-measured, same finding, 30 generations: 0/30 call the permit line a block, 1/30 clearly calls the source a specific host (down from 16/30), 1/30 ambiguous, 0/30 copy Modelfile Example 1. This capture states both source and destination explicitly and correctly. Two things found along the way, reported but out of scope here: 2/30 invert the flow direction, 2/30 echo Example 1's "unencrypted" vocabulary without copying the phrase exactly. **@ARSH871-bot @shubhamkataria2005, fresh capture against a changed fact - your earlier ratings were of the 8 November text. Please rate again.** |
 | PC-005 | model | 5 | 3 | Regenerated post-#145: inversion gone. First-sentence phrasing still asks the reader to resolve an apparent contradiction before it resolves itself - a readability risk, not a false claim this time. |
 
 @ARSH871-bot @shubhamkataria2005 @SamikaPerera - a second independent rating
@@ -804,13 +825,19 @@ python -m tools.explanation_quality
 
 ```
 4 model-written findings, 4 ratings
-accuracy:   mean 4.25  min 2
-usefulness: mean 3.25  min 2
+accuracy:   mean 5.00  min 5
+usefulness: mean 4.00  min 3
 
 fallback-sourced (not scored against the threshold - cannot be wrong by
 construction):
   RT-050   accuracy 5.0  usefulness 4.0  (1 rating(s))
 ```
+
+The minimum moved from AC-002's accuracy=2 to PC-005's usefulness=3 - a
+readability nit already noted above, not a factual inversion. The
+per-finding breakdown is still what surfaces it rather than the mean
+hiding it; see `tools/explanation_quality.py`'s own docstring for why mean
+alone was rejected as the published number in the first place.
 
 **Published, and pinned in `tests/test_explanation_quality.py`** so CI
 catches it if the committed ratings ever drift from what this document
@@ -853,15 +880,17 @@ mean accuracy 4.0, mean usefulness 3.0 - both below the measurement above,
 so the threshold is a real tripwire rather than a number chosen to always
 pass.
 
-**Deliberately based on the mean, not the minimum.** `AC-002`'s accuracy=2 is
-a correctness bug in one evidence shape, the same class of thing #52 and
-#145 already were, and both of those were fixed for their one shape rather
-than by turning the model off for every finding. Tying this threshold to the
-minimum would mean one narrow, already-understood, 1-in-8 defect forces every
-explanation in the product onto the deterministic fallback - a far bigger
-change than the finding justifies. The mean is what actually answers the
-question this threshold exists for: has quality collapsed broadly, not did
-one shape have one bad day.
+**Deliberately based on the mean, not the minimum.** `AC-002`'s accuracy=2
+(now fixed by #401, re-captured at 5/4 above) was a correctness bug in one
+evidence shape, the same class of thing #52 and #145 already were, and all
+three were fixed for their one shape rather than by turning the model off
+for every finding. Tying this threshold to the minimum would have meant one
+narrow, already-understood, 1-in-8 defect forcing every explanation in the
+product onto the deterministic fallback - a far bigger change than the
+finding justified. The mean is what actually answers the question this
+threshold exists for: has quality collapsed broadly, not did one shape have
+one bad day. The reasoning stands regardless of which specific finding is
+currently lowest.
 
 **Why this is a documented number, not a runtime check.** There is no honest
 way to score one live generation's quality automatically without another
