@@ -111,6 +111,27 @@ the live verification behind it, not committed to this repo)
     interface description text to match a name against). A real,
     incremental step, not the whole client ask.
 
+    A NEGATED reachability question is answered as the negation, not as
+    the plain question (#435). "Can X NOT reach Y" used to be answered
+    identically to "Can X reach Y" -- the word "NOT" was simply inside
+    `source_text`, where `_find_device()` ignores anything that is not a
+    known device name, so it was silently dropped, not refused. Measured
+    live: this came back `grounded: true` with full confidence, a full
+    inversion of what was asked rather than a narrowed or missing detail --
+    the same shape of danger #70's silent CIDR substitution above is. Fixed
+    the same way everything else here is: a closed set of negation words
+    (`_NEGATION_BEFORE_REACH`), anchored to the end of `source_text` so an
+    unrelated earlier "not" in the sentence never triggers it, exactly the
+    discipline `_REACH_KEYWORDS` and the back-reference sets already use.
+    `question_understood` states the negation back explicitly rather than
+    rendering the always-affirmative phrasing it used to, and the answer
+    text flips Yes/No to match what was actually asked, over the same
+    Batfish evidence. Port and protocol constraints named in the same
+    question (e.g. "on port 443", "over udp") are a SEPARATE, still-open
+    gap -- #435 lists three, and this fixes only the negation one, on
+    purpose, matching this project's one-shape-at-a-time discipline for an
+    inversion fix (#52, #145, #384 before it).
+
 FOLLOW-UPS: ENTITIES CARRIED FORWARD, NEVER INTENT (#318)
     #240 named the unscoped version of this as "multi-step deterministic
     reasoning" -- a planner decomposing a compound question into an ordered
@@ -209,6 +230,18 @@ from analysis.pipeline import classify_parse_status
 _REACH_KEYWORDS = re.compile(
     r"\b(?:reach|access|connect to|get to|talk to)\b", re.IGNORECASE
 )
+
+# #435: "Can rtr-us5 NOT reach X?" was answered as if it were "Can rtr-us5
+# reach X?" -- a full inversion, not a dropped detail, and it came back
+# grounded: True with full confidence. A closed set, anchored to the END of
+# the text before the reach keyword, exactly the same discipline
+# _REACH_KEYWORDS and _SOURCE_BACK_REFERENCES already use -- so a question
+# naming something unrelated earlier ("the router that is not in
+# maintenance") never falsely triggers this. See _is_negated_reachability().
+_NEGATION_BEFORE_REACH = re.compile(
+    r"\b(?:not|never|cannot|can't|doesn't|does\s+not|won't|will\s+not)\s*$",
+    re.IGNORECASE,
+)
 _DEAD_RULE_KEYWORDS = re.compile(
     r"\b(?:dead|unreachable|shadow(?:ed)?|never\s+(?:take|takes)\s+effect)\b"
     r".*\b(?:rules?|lines?|acls?)\b"
@@ -300,6 +333,15 @@ def _split_on_reach_keyword(question: str) -> Optional[tuple]:
     if not match:
         return None
     return question[: match.start()], question[match.end() :]
+
+
+def _is_negated_reachability(source_text: str) -> bool:
+    """True if `source_text` -- everything before the matched reach keyword
+    -- ends in a negation word from the closed set above. Anchored to the
+    end on purpose: "the router that is not in maintenance, can it reach
+    X" must not trigger this just because "not" appears somewhere earlier
+    in the sentence (#435)."""
+    return bool(_NEGATION_BEFORE_REACH.search(source_text))
 
 
 # ------------------------------------------------------------------------------
@@ -531,6 +573,7 @@ def _answer_reachability_question(
     split: tuple, bf: Session, previous: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     source_text, destination_text = split
+    negated = _is_negated_reachability(source_text)
 
     present = snapshot.device_names(bf)
     if present is None:
@@ -591,8 +634,13 @@ def _answer_reachability_question(
         "destination_display": destination_display,
     }
 
+    # Negated phrasing is stated back explicitly (#435) -- shape C only does
+    # its job of surfacing a mistranslation if the rendered question still
+    # says what was actually asked, not a silently-un-negated version of it.
     question_understood = (
-        f"Can {source_device} reach {destination_display}?"
+        f"Does {source_device} NOT reach {destination_display}?"
+        if negated
+        else f"Can {source_device} reach {destination_display}?"
     )
 
     refusal, caveat = _what_was_not_read(bf, question_understood)
@@ -640,7 +688,10 @@ def _answer_reachability_question(
     traces = frame.iloc[0]["Traces"]
     return {
         "question_understood": question_understood,
-        "answer": _describe_traces(source_device, destination_display, traces) + caveat,
+        "answer": _describe_traces(
+            source_device, destination_display, traces, negated=negated
+        )
+        + caveat,
         "grounded": True,
         "resolved_entities": resolved_entities,
     }
@@ -710,7 +761,9 @@ def _what_was_not_read(bf: Session, question_understood: str) -> "tuple[Optional
 _SUCCESS_DISPOSITIONS = {"ACCEPTED", "DELIVERED_TO_SUBNET"}
 
 
-def _describe_traces(source_device: str, destination_display: str, traces: Any) -> str:
+def _describe_traces(
+    source_device: str, destination_display: str, traces: Any, negated: bool = False
+) -> str:
     """Plain English, built directly from Batfish's own disposition and
     path -- never paraphrased by a model. States the observed effect, not
     an assumed cause, same discipline routing.py's own summaries hold.
@@ -719,16 +772,34 @@ def _describe_traces(source_device: str, destination_display: str, traces: Any) 
     call the destination -- a literal address, or (#70) "a host in
     <network> (checked <address>)" -- so the answer names the same thing
     question_understood does, rather than the answer being silently more
-    specific than what the person was told was checked."""
+    specific than what the person was told was checked.
+
+    `negated` answers the question actually asked (#435): "Can X NOT reach
+    Y" means Yes when it does NOT reach, No when it DOES -- the opposite
+    framing of the plain question, over the exact same Batfish evidence.
+    Only the clean-cut cases flip; the mixed case below already states
+    plainly which paths succeed and which do not, with no yes/no word to
+    get backwards, so it is unchanged either way."""
     successes = [t for t in traces if t.disposition in _SUCCESS_DISPOSITIONS]
     failures = [t for t in traces if t.disposition not in _SUCCESS_DISPOSITIONS]
 
     if successes and not failures:
+        if negated:
+            return (
+                f"No -- traffic from {source_device} DOES reach "
+                f"{destination_display}, which is the opposite of what you "
+                f"asked ({source_device} NOT reaching it)."
+            )
         return f"Yes. Traffic from {source_device} reaches {destination_display}."
 
     if failures and not successes:
         bad = failures[0]
         hops = " -> ".join(hop.node for hop in bad.hops) or source_device
+        if negated:
+            return (
+                f"Yes -- traffic from {source_device} to {destination_display} "
+                f"does NOT reach it; it ends in {bad.disposition}. Path: {hops}."
+            )
         return (
             f"No. Traffic from {source_device} to {destination_display} ends in "
             f"{bad.disposition}. Path: {hops}."
