@@ -2040,6 +2040,39 @@ def delete_all_saved_scans() -> Dict[str, Any]:
     return {"deleted": deleted}
 
 
+def _refusal_without_temp_path(message: str, temp_path: Path, display_name: str) -> str:
+    """A loader's refusal with our temp file's path replaced by the file the
+    user chose.
+
+    WHY THIS EXISTS
+        The policy and business-context uploads are validated through a temp
+        file, and the loaders' refusals for an unreadable file start with
+        that path: "C:\\Users\\<name>\\AppData\\Local\\Temp\\tmpab12cd.json is
+        not valid JSON: ...". Returned as is, the user saw a server folder,
+        Windows user name included, instead of their own file's name.
+
+    THE EXACT PATH, NOT A PATTERN
+        Only spellings of THIS temp path are replaced, every occurrence: as
+        written, as repr() quotes it (an OSError doubles every backslash),
+        and with forward slashes. A pattern matching any path was rejected:
+        the loaders echo the user's own values ("unknown tier
+        'D:\\\\shares\\\\gold'"), and a drive-path regex rewrote that text.
+        The analysis/ loaders are left alone, so the command line keeps
+        naming the file it was given.
+
+    WHAT IT DOES NOT CATCH
+        A different spelling of the same location, such as a resolved or
+        8.3 short path, or the temp FOLDER quoted without the file name.
+        Neither appears in any refusal today.
+    """
+    shown = f"'{display_name}'"
+    plain = str(temp_path)
+    doubled = plain.replace("\\", "\\\\")
+    for spelling in (repr(plain), doubled, plain, temp_path.as_posix()):
+        message = message.replace(spelling, shown)
+    return message
+
+
 @app.post("/api/policy")
 async def upload_policy(file: UploadFile) -> Dict[str, Any]:
     """Accept and validate a policy file, staging it only if it loads.
@@ -2118,7 +2151,10 @@ async def upload_policy(file: UploadFile) -> Dict[str, Any]:
             staging.write(bytes(contents))
         policy = load_policy_file(temp_path)
     except PolicyError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+        raise HTTPException(
+            status_code=400,
+            detail=_refusal_without_temp_path(str(error), temp_path, display_name),
+        ) from error
     finally:
         temp_path.unlink(missing_ok=True)
 
@@ -2364,7 +2400,10 @@ async def upload_business_context(file: UploadFile) -> Dict[str, Any]:
             staging.write(bytes(contents))
         context = load_business_context_file(temp_path)
     except BusinessContextError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+        raise HTTPException(
+            status_code=400,
+            detail=_refusal_without_temp_path(str(error), temp_path, display_name),
+        ) from error
     finally:
         temp_path.unlink(missing_ok=True)
 
