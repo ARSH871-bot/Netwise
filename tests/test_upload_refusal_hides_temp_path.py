@@ -106,6 +106,22 @@ def test_a_path_quoted_with_doubled_backslashes_is_hidden_too(canary_tempdir, mo
     assert "[Errno 13] Permission denied" in detail, detail
 
 
+def test_a_path_named_twice_is_hidden_both_times(canary_tempdir, monkeypatch):
+    """Every occurrence is replaced, not only the first: a refusal can name
+    the file twice in the same spelling. Replacing only the first left the
+    second path in place and passed every other test here."""
+    def refuse(path):
+        raise main.PolicyError(f"{path} is not valid JSON, so {path} was not loaded")
+
+    monkeypatch.setattr(main, "load_policy_file", refuse)
+    response = client.post("/api/policy", files={"file": ("my-policy.json", b"{}", "application/json")})
+
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    _assert_no_server_path(detail, canary_tempdir)
+    assert detail == "'my-policy.json' is not valid JSON, so 'my-policy.json' was not loaded", detail
+
+
 def test_a_refusal_that_never_named_a_path_is_unchanged():
     """The control: a refusal with no path in it keeps exactly its words."""
     body = b'{"policy_compliance": [], "policy_compliance": []}'
