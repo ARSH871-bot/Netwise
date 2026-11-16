@@ -138,6 +138,49 @@ def test_no_string_in_any_finding_keeps_a_folder(tmp_path, monkeypatch):
     assert moved["evidence"]["detail"] == "compared your uploaded config with the proposed config"
 
 
+def test_an_oserror_quoting_a_file_in_the_folder_is_cleaned_too(tmp_path, monkeypatch):
+    """#463 review: an OSError formats its filename with repr(), doubling
+    every backslash, so on Windows the session folder slipped past a
+    replacement that looked for the path as written. The folder name here
+    contains a backslash, so the doubled form differs on any OS, CI's Linux
+    included."""
+    before = tmp_path / ("sessions\\" + SESSION)
+    before.mkdir(parents=True)
+    after = tmp_path / "netwise-proposal-xyz" / "after"
+    after.mkdir(parents=True)
+    locked = PermissionError(13, "Permission denied", str(before / "rtr.cfg"))
+    assert SESSION in str(locked)
+    _quiet_stages(monkeypatch)
+
+    def refuse(bf, folder, *a, **k):
+        raise locked
+    monkeypatch.setattr(change_impact, "load_snapshot", refuse)
+
+    results = change_impact.analyse_change(before, after, labels=LABELS)
+
+    text = json.dumps(results)
+    assert SESSION not in text
+    assert "Permission denied" in text
+    assert "your uploaded config" in text
+
+
+def test_a_relative_folder_does_not_rewrite_ordinary_text(tmp_path, monkeypatch):
+    """#463 review: with labels and a folder of ".", the folder itself was a
+    spelling to replace, and "." is in every address."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "after").mkdir()
+    finding = {"summary": "Traffic from 10.10.10.0 changed.",
+               "evidence": {"detail": "Flow 10.10.10.0->8.8.8.8 (line 1). Before: deny ip any any.",
+                            "source": "differentialReachability"}}
+    monkeypatch.setattr(change_impact, "_analyse_change",
+                        lambda *a, **k: [dict(finding, evidence=dict(finding["evidence"]))])
+
+    results = change_impact.analyse_change(".", "after", labels=LABELS)
+
+    assert results[0]["summary"] == "Traffic from 10.10.10.0 changed."
+    assert results[0]["evidence"]["detail"] == finding["evidence"]["detail"]
+
+
 def test_without_labels_the_command_line_still_shows_the_paths(tmp_path, monkeypatch):
     """The user typed these paths, so they are useful there, and not secret."""
     before, after = _folders(tmp_path)

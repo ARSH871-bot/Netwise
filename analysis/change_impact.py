@@ -708,13 +708,23 @@ def analyse_change(
     it, so neither copy could be trusted alone. With no labels, as from the
     command line, the paths the user typed are shown as typed.
     """
+    if labels:
+        # A relative folder such as "." would itself be a spelling to
+        # replace, and "." is in every address (#463 review). Resolved first,
+        # never refused: propose_change() promises not to raise.
+        before_dir, after_dir = Path(before_dir).resolve(), Path(after_dir).resolve()
     results = _analyse_change(before_dir, after_dir, host, policy)
     if not labels:
         return results
     swaps = []
     for folder, label in zip((before_dir, after_dir), labels):
         path = Path(folder)
-        for spelling in {str(folder), str(path), path.as_posix(), str(path.resolve())}:
+        spellings = {str(folder), str(path), path.as_posix(), str(path.resolve())}
+        # An OSError formats its filename with repr(), which DOUBLES every
+        # backslash: on Windows the session folder reached the card as
+        # 'C:\\Users\\...\\sessions\\<id>' (#463 review, @ARSH871-bot).
+        spellings |= {spelling.replace("\\", "\\\\") for spelling in spellings}
+        for spelling in spellings:
             swaps.append((spelling, label))
     swaps.sort(key=lambda pair: len(pair[0]), reverse=True)   # longest first
 
