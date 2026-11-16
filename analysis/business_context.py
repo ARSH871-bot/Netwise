@@ -334,17 +334,51 @@ def load_business_context_file(path: Any) -> BusinessContext:
     if not file_path.exists():
         raise BusinessContextError(f"no business context file at {file_path}")
 
-    text = file_path.read_text(encoding="utf-8").strip()
+    try:
+        text = file_path.read_text(encoding="utf-8").strip()
+    except UnicodeDecodeError as error:
+        raise BusinessContextError(
+            f"{file_path} is not UTF-8 text: byte {error.start} cannot be "
+            f"decoded. Save the file as UTF-8 and try again"
+        ) from error
     if not text:
         # An empty FILE is an empty CONTEXT, which is valid.
         return BusinessContext()
 
+    # Same three escapes, and the same fix, as policy.load_policy_file().
     try:
-        parsed = json.loads(text)
+        parsed = json.loads(text, object_pairs_hook=_refuse_duplicate_keys)
+        return load_business_context(parsed)
     except json.JSONDecodeError as error:
         raise BusinessContextError(
             f"{file_path} is not valid JSON: line {error.lineno}, "
             f"column {error.colno}: {error.msg}"
         ) from error
+    except BusinessContextError:
+        raise
+    except RecursionError as error:
+        raise BusinessContextError(
+            f"{file_path} is nested too deeply to be a business context"
+        ) from error
+    except ValueError as error:
+        raise BusinessContextError(
+            f"{file_path} holds a value that cannot be read: {error}"
+        ) from error
 
-    return load_business_context(parsed)
+
+def _refuse_duplicate_keys(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
+    """Build one JSON object, refusing a key that appears twice in it.
+
+    Mirrors policy._refuse_duplicate_keys(). json.loads keeps the LAST of two
+    equal keys: `{"device": "rtr-us5", "tier": "critical", "tier":
+    "standard"}` loaded as standard, the user's "critical" dropped silently.
+    """
+    built: Dict[str, Any] = {}
+    for key, value in pairs:
+        if key in built:
+            raise BusinessContextError(
+                f"the key {key!r} appears twice in one entry. JSON keeps only "
+                f"the last, so the first would be silently ignored"
+            )
+        built[key] = value
+    return built

@@ -648,6 +648,18 @@ _SPECULATION_PATTERN = re.compile(
 )
 _LEAD_TO_PATTERN = re.compile(r"\bcan\s+lead\s+to\b", re.IGNORECASE)
 
+# Phrases that tell the user everything is fine. Checked for "found" (a
+# confirmed problem) and "error" (nobody looked), never for "none", where an
+# all-clear is the truth. Whole phrases rather than single words, because a
+# "found" explanation legitimately says "reach" or "blocked" -- the word list
+# above rejected 3 of the 4 rated "found" explanations in
+# tests/fixtures/explanation_quality/holdout.json.
+_ALL_CLEAR_PATTERN = re.compile(
+    r"\b(no problems|no issues|nothing needs fixing|looks clean|"
+    r"check passed|is fine|is safe)\b",
+    re.IGNORECASE,
+)
+
 
 def _looks_like_a_result_claim(text: str) -> bool:
     """True if `text` uses language that asserts something about the
@@ -858,6 +870,9 @@ def _is_unacceptable(text: str, *, is_error: bool,
     device the finding does not contain. See the module docstring's
     failure-modes sections for why these are checked separately."""
     if is_error and _looks_like_a_result_claim(text):
+        return True
+    status = finding.get("status") if finding is not None else None
+    if (is_error or status == "found") and _ALL_CLEAR_PATTERN.search(text):
         return True
     if finding is not None and _names_an_invented_fact(text, finding):
         return True

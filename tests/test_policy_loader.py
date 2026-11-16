@@ -210,6 +210,38 @@ def test_an_empty_file_is_an_empty_policy_not_a_parse_error(tmp_path):
     assert load_policy_file(path).is_empty
 
 
+_A_RULE = (b'{"description": "DNS allowed", "node": "rtr-us5", "filter": "acl_in", '
+           b'"kind": "requirement", "queries": [{"dstIps": "218.8.104.58"}], '
+           b'"violation_severity": "high", "violation_summary": "DNS is blocked"}')
+
+
+@pytest.mark.parametrize(
+    "contents, said",
+    [
+        # The rule is silently dropped by json.loads: the policy loaded EMPTY.
+        pytest.param(b'{"policy_compliance": [' + _A_RULE + b'], "policy_compliance": []}',
+                     "appears twice", id="duplicate-key"),
+        pytest.param(b'{"device": "r\xe9", "policy_compliance": []}', "not UTF-8", id="not-utf8"),
+        pytest.param(b'{"policy_compliance": [{"number": 1' + b"0" * 5000 + b"}]}",
+                     "cannot be read", id="5000-digit-int"),
+        pytest.param(b"[" * 100000 + b"]" * 100000, "nested too deeply", id="deep-json"),
+        # json.loads manages this one; the validation walking it did not.
+        pytest.param(b'{"policy_compliance": [' + b"[" * 2000 + b"]" * 2000 + b"]}",
+                     "nested too deeply", id="deep-validation"),
+    ],
+)
+def test_a_file_json_cannot_hold_faithfully_is_refused_not_crashed_or_trimmed(
+    tmp_path, contents, said
+):
+    """Each of these escaped as a raw UnicodeDecodeError, ValueError or
+    RecursionError (HTTP 500 on upload), or -- the duplicate key -- loaded
+    with the user's rule gone and HTTP 200."""
+    path = tmp_path / "policy.json"
+    path.write_bytes(contents)
+    with pytest.raises(PolicyError, match=said):
+        load_policy_file(path)
+
+
 # ---------------------------------------------------------------------------
 # D2 -- per entry, with an optional top-level default
 # ---------------------------------------------------------------------------

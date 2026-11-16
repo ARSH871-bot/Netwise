@@ -180,6 +180,26 @@ def test_a_rule_that_holds_on_every_arm_reports_all_clear(two_arm_rule):
     assert results[0]["id"] == "PC-000"
 
 
+def test_a_rule_with_no_queries_is_could_not_check_not_all_clear(two_arm_rule):
+    """Zero arms is zero questions asked, not a rule that holds.
+
+    analysis/policy.py accepts `"queries": []`. Measured live on main
+    dc93ccb with such a rule on rtr-us5-insecure: "No issues found by policy
+    compliance -- All 1 policy rule(s) about the device(s) listed hold",
+    status none, without one searchFilters call.
+    """
+    two_arm_rule["queries"] = []
+    asked = []
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(policy_compliance, "_search", lambda *a, **k: asked.append(a) or [])
+        results = policy_compliance.run(bf=None)
+
+    assert asked == []
+    assert [f["status"] for f in results] == ["error"], results
+    assert results[0]["summary"].startswith("Could not check policy rule")
+
+
 def test_the_two_bands_cannot_overlap_or_reach_the_guards_id():
     """Violations and check-errors must stay disjoint, and clear of PC-999.
 

@@ -227,6 +227,30 @@ def test_an_invalid_context_is_rejected_with_the_loaders_own_message(body, expec
     assert expected in response.json()["detail"]
 
 
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        # PowerShell 5.1's `>` and Notepad's "Unicode" both save UTF-16.
+        (json.dumps([{"device": "rtr-us5", "tier": "critical"}]).encode("utf-16"),
+         "not UTF-8"),
+        (json.dumps([{"device": "rtr-café", "tier": "critical"}],
+                    ensure_ascii=False).encode("latin-1"),
+         "not UTF-8"),
+        (b"[" * 200_000 + b"]" * 200_000, "nested too deeply"),
+    ],
+    ids=["utf-16", "latin-1", "deep-nesting"],
+)
+def test_a_file_the_loader_cannot_decode_is_a_400_not_a_500(raw, expected):
+    """Measured on origin/main: all three were HTTP 500 Internal Server
+    Error, the same escape as the policy loader's (see
+    test_web_policy_upload.py). Refused, never guessed at."""
+    response = _post_context(raw)
+
+    assert response.status_code == 400
+    assert expected in response.json()["detail"]
+    assert not main.BUSINESS_CONTEXT_PATH.exists()
+
+
 def test_a_rejected_context_is_never_staged():
     """The safety property the validate-then-stage order exists for."""
     _post_context([{"device": "rtr-us5", "tier": "critical"}])

@@ -198,6 +198,7 @@ from pybatfish.client.session import Session
 from pybatfish.datamodel.flow import HeaderConstraints
 
 from analysis import findings, snapshot
+from analysis.pipeline import classify_parse_status
 
 # ------------------------------------------------------------------------------
 # 1. Intent classification -- a closed set of three, nothing else
@@ -594,6 +595,10 @@ def _answer_reachability_question(
         f"Can {source_device} reach {destination_display}?"
     )
 
+    refusal, caveat = _what_was_not_read(bf, question_understood)
+    if refusal is not None:
+        return refusal
+
     try:
         frame = (
             bf.q.traceroute(
@@ -635,10 +640,63 @@ def _answer_reachability_question(
     traces = frame.iloc[0]["Traces"]
     return {
         "question_understood": question_understood,
-        "answer": _describe_traces(source_device, destination_display, traces),
+        "answer": _describe_traces(source_device, destination_display, traces) + caveat,
         "grounded": True,
         "resolved_entities": resolved_entities,
     }
+
+
+def _what_was_not_read(bf: Session, question_understood: str) -> "tuple[Optional[Dict[str, Any]], str]":
+    """Refuse when Batfish could not read the config; caveat when it read part.
+
+    Returns (refusal, caveat). `refusal` is the whole answer to give INSTEAD
+    of asking Batfish anything, or None. `caveat` is a sentence to add to the
+    answer, or "".
+
+    WHY THIS EXISTS
+        An empty answer from Batfish means "none" only if Batfish read the
+        config. Measured on main dc93ccb, a file it could not read at all
+        (status UNKNOWN, zero devices) answered "are there any dead rules?"
+        with "No, checked the whole snapshot and found none.", grounded. That
+        is "we found nothing" standing in for "we could not look" -- F-4.
+
+        The rule is analyse()'s, and so is the classification
+        (classify_parse_status, #217): an unreadable file means no answer at
+        all, a partly read one means the answer AND the caveat.
+    """
+    try:
+        fatal, partial = classify_parse_status(bf)
+    except Exception as error:
+        return {
+            "question_understood": question_understood,
+            "answer": (
+                "I could not tell what Batfish was able to read in this "
+                "config, so I will not answer. The underlying reason: "
+                + findings.describe_error(error)
+            ),
+            "grounded": False,
+            # Nothing was resolved, and a follow-up must not reuse anything
+            # from a config we could not read (see the module docstring).
+            "resolved_entities": None,
+        }, ""
+
+    if fatal:
+        return {
+            "question_understood": question_understood,
+            "answer": (
+                "Batfish could not read: " + "; ".join(fatal) + ". I cannot "
+                "answer about rules it did not read, so I will not say yes or no."
+            ),
+            "grounded": False,
+            "resolved_entities": None,
+        }, ""
+
+    if partial:
+        return None, (
+            " Batfish could not read all of: " + "; ".join(partial)
+            + ", so nothing is claimed about the lines it skipped."
+        )
+    return None, ""
 
 
 # Same set analysis/checks/routing.py uses, and for the same reason,
@@ -695,6 +753,10 @@ def _describe_traces(source_device: str, destination_display: str, traces: Any) 
 def _answer_whole_snapshot_question(
     bf: Session, *, batfish_question: str, question_understood: str
 ) -> Dict[str, Any]:
+    refusal, caveat = _what_was_not_read(bf, question_understood)
+    if refusal is not None:
+        return refusal
+
     try:
         frame = getattr(bf.q, batfish_question)().answer().frame()
     except Exception as error:
@@ -709,9 +771,13 @@ def _answer_whole_snapshot_question(
         }
 
     if frame.empty:
+        # "The whole snapshot" only when Batfish read all of it.
         return {
             "question_understood": question_understood,
-            "answer": "No, checked the whole snapshot and found none.",
+            "answer": (
+                "No, found none in the part of the config Batfish could read." + caveat
+                if caveat else "No, checked the whole snapshot and found none."
+            ),
             "grounded": True,
             "resolved_entities": None,
         }
@@ -721,6 +787,7 @@ def _answer_whole_snapshot_question(
         "answer": (
             f"Yes, found {len(frame)}. See the dashboard's findings list for "
             "the specific lines, this question only confirms whether any exist."
+            + caveat
         ),
         "grounded": True,
         "resolved_entities": None,

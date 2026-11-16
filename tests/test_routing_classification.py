@@ -139,3 +139,148 @@ def test_unknown_expected_value_raises_rather_than_silently_passing():
     false "all clear" the way the original UNREACHABLE gap did."""
     with pytest.raises(ValueError):
         _evaluate("SOMETHING_ELSE", [FakeTrace("ACCEPTED")])
+
+
+# --- No traces at all ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("expected", ["REACHABLE", "UNREACHABLE"])
+def test_no_traces_raises_rather_than_silently_passing(expected):
+    """Zero traces is zero evidence, for either expectation.
+
+    With an empty list there are no failures (so REACHABLE "held") and no
+    successes (so UNREACHABLE "held"). Measured on main dc93ccb, both
+    returned None, and routing.run() said "All 1 route assertion(s) ...
+    hold", status none, for a path nobody traced.
+    """
+    with pytest.raises(ValueError):
+        _evaluate(expected, [])
+
+
+def test_no_traces_reaches_the_user_as_could_not_check(monkeypatch):
+    """It reaches the user as an error, not a tick."""
+    import pandas as pd
+
+    from analysis import pipeline
+    from analysis.checks import routing
+
+    class _Answer:
+        def answer(self): return self
+        def frame(self): return pd.DataFrame([{"Traces": []}])
+
+    class _Session:
+        class q:  # noqa: N801 -- mirrors pybatfish's bf.q
+            @staticmethod
+            def traceroute(**_kwargs): return _Answer()
+
+    route = {
+        "description": "hq must reach branch", "node": "rtr-hq",
+        "src_ip": "10.1.1.1", "dst_ip": "10.2.2.2", "expected": "REACHABLE",
+        "violation_summary": "hq cannot reach branch",
+        "violation_severity": "high", "number": 1,
+    }
+    monkeypatch.setattr(routing, "ROUTES", [route])
+    monkeypatch.setattr(routing.snapshot, "device_names", lambda bf: {"rtr-hq"})
+    monkeypatch.setattr(routing, "_routing_hygiene", lambda bf: [])
+
+    results = pipeline.run_check(_Session(), "routing")
+
+    assert [f["status"] for f in results] == ["error"], results
+
+
+# --- One route that cannot be judged must not take the others with it -----------
+#
+# Found by Ankeet reviewing #442. _evaluate() now raises for zero traces, and its
+# call site in run() was the one place in the loop with no handling of its own.
+# So one such route ended the whole check: the routes after it were never asked,
+# the policy-free analyses never ran, and the user saw one "failed to run" card.
+
+
+def _routes_and_session(monkeypatch, answers):
+    """Three routes on three devices. `answers` maps a device to its traces."""
+    import pandas as pd
+
+    from analysis.checks import routing
+
+    asked = []
+
+    class _Answer:
+        def __init__(self, traces): self.traces = traces
+        def answer(self): return self
+        def frame(self): return pd.DataFrame([{"Traces": self.traces}])
+
+    class _Session:
+        class q:  # noqa: N801 -- mirrors pybatfish's bf.q
+            @staticmethod
+            def traceroute(startLocation=None, **_kwargs):  # noqa: N803 -- pybatfish's name
+                asked.append(startLocation)
+                return _Answer(answers[startLocation])
+
+    def route(number, node, expected="REACHABLE"):
+        return {"description": f"route {number}", "node": node, "src_ip": "10.1.1.1",
+                "dst_ip": "10.2.2.2", "expected": expected,
+                "violation_summary": f"route {number} is broken",
+                "violation_severity": "high", "number": number}
+
+    monkeypatch.setattr(routing, "ROUTES", [route(1, "rtr-a"), route(2, "rtr-b"), route(3, "rtr-c")])
+    monkeypatch.setattr(routing.snapshot, "device_names", lambda bf: {"rtr-a", "rtr-b", "rtr-c"})
+    hygiene = []
+    monkeypatch.setattr(routing, "_routing_hygiene", lambda bf: (hygiene.append(True), [])[1])
+    return _Session(), asked, hygiene
+
+
+def test_a_route_with_no_traces_does_not_stop_the_other_routes(monkeypatch):
+    from analysis import pipeline
+
+    session, asked, hygiene = _routes_and_session(monkeypatch, {
+        "rtr-a": [],  # nothing traced: cannot be judged
+        "rtr-b": [FakeTrace("NO_ROUTE")],  # a real violation, and it must still be reported
+        "rtr-c": [FakeTrace("ACCEPTED")],  # holds
+    })
+
+    results = pipeline.run_check(session, "routing")
+    by_device = {f["device"]: f for f in results}
+
+    assert asked == ["rtr-a", "rtr-b", "rtr-c"], "every route must still be asked"
+    assert hygiene, "the policy-free analyses must still run"
+    assert by_device["rtr-a"]["status"] == "error"
+    assert by_device["rtr-a"]["id"] == "RT-001", "the error belongs to that route, not to the check"
+    assert "route 1" in by_device["rtr-a"]["summary"]
+    assert "no traces" in by_device["rtr-a"]["evidence"]["detail"]
+    assert by_device["rtr-b"]["status"] == "found"
+
+
+def test_the_route_that_could_not_be_judged_is_never_vouched_for(monkeypatch):
+    """The all-clear covers rtr-c, which held. It must not include rtr-a, which
+    nobody checked: this PR exists to stop exactly that sentence being printed."""
+    from analysis import pipeline
+
+    session, _asked, _hygiene = _routes_and_session(monkeypatch, {
+        "rtr-a": [], "rtr-b": [FakeTrace("ACCEPTED")], "rtr-c": [FakeTrace("ACCEPTED")],
+    })
+
+    results = pipeline.run_check(session, "routing")
+    clean = [f for f in results if f["status"] == "none"]
+
+    assert len(clean) == 1, results
+    assert "rtr-a" not in clean[0]["evidence"]["source"]
+    assert "rtr-b" in clean[0]["evidence"]["source"] and "rtr-c" in clean[0]["evidence"]["source"]
+
+
+def test_a_bad_expected_value_is_reported_on_that_route_alone(monkeypatch):
+    """_evaluate() raises the same way for a bad "expected", so it gets the same
+    treatment: that route says it could not be checked, and the rest still run."""
+    from analysis import pipeline
+    from analysis.checks import routing
+
+    session, asked, hygiene = _routes_and_session(monkeypatch, {
+        "rtr-a": [FakeTrace("ACCEPTED")], "rtr-b": [FakeTrace("ACCEPTED")], "rtr-c": [FakeTrace("ACCEPTED")],
+    })
+    routing.ROUTES[0]["expected"] = "SOMETIMES"
+
+    results = pipeline.run_check(session, "routing")
+    by_device = {f["device"]: f for f in results}
+
+    assert asked == ["rtr-a", "rtr-b", "rtr-c"] and hygiene
+    assert by_device["rtr-a"]["status"] == "error"
+    assert "SOMETIMES" in by_device["rtr-a"]["evidence"]["detail"]
