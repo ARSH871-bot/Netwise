@@ -476,10 +476,14 @@ def _validate_entry(
     # queries, one per character. Refused here, naming the rule, instead.
     if section == "policy_compliance" and "queries" in normalised:
         queries = normalised["queries"]
-        if not isinstance(queries, list) or not queries:
+        if not isinstance(queries, list):
             raise PolicyError(
-                f"{where}: 'queries' must be a non-empty list of traffic descriptions, "
-                f"got {queries!r}. A rule with no queries asks Batfish nothing"
+                f"{where}: 'queries' must be a list of traffic descriptions, "
+                f"got {type(queries).__name__} {queries!r}"
+            )
+        if not queries:
+            raise PolicyError(
+                f"{where}: 'queries' is empty. A rule with no queries asks Batfish nothing"
             )
         for number, query in enumerate(queries, start=1):
             _check_traffic(f"{where}, query {number}", query)

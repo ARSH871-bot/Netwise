@@ -53,8 +53,9 @@ def access(headers):
 
 
 @pytest.mark.parametrize("queries,says", [
-    ([], "non-empty list"),
-    ("10.10.10.0/24", "non-empty list"),
+    ([], "'queries' is empty"),
+    ("10.10.10.0/24", "must be a list of traffic descriptions, got str"),
+    (None, "must be a list of traffic descriptions, got NoneType"),
     (["10.10.10.0/24"], "expected a mapping"),
     ([{"srcIp": "10.10.10.0/24"}], "unknown traffic field(s) 'srcIp'"),
     ([{"srcIps": "10.10.10.300"}], "srcIps '10.10.10.300' is not a valid address"),
