@@ -153,6 +153,29 @@ def test_a_proved_opening_renders_a_warning(rendered, case):
 
 
 @needs_node
+def test_a_proved_closing_warns_without_claiming_it_opens_access(rendered):
+    """#405 review (Arsh + Samika): `warning === true` used to always render
+    as "This change opens access that is currently blocked", even for a
+    proved high-severity CLOSING (a policy requirement breached). The banner
+    must still fire -- under-warning a serious change is the dangerous
+    direction -- but must not claim the specific, false direction."""
+    assert rendered["warningClosing"]["warningPresent"] == 1
+    assert "opens access" not in rendered["warningClosing"]["warningText"]
+    assert "serious effect" in rendered["warningClosing"]["warningText"]
+
+
+@needs_node
+def test_a_malformed_opens_access_gets_the_generic_wording_not_a_crash(rendered):
+    """`opens_access` junk, `warning` exactly true. Same reasoning as the
+    existing malformed-`warning`/`verified` cases: a junk flag gives no
+    grounds for the specific "opens access" claim, so it must render the
+    generic wording rather than that claim or a crash."""
+    assert rendered["warningJunkOpensAccess"]["warningPresent"] == 1
+    assert "opens access" not in rendered["warningJunkOpensAccess"]["warningText"]
+    assert "serious effect" in rendered["warningJunkOpensAccess"]["warningText"]
+
+
+@needs_node
 def test_the_warning_appears_before_the_answer(rendered):
     """Order is a safety property, not layout taste. "This change opens
     access" is a proved fact from the diff and belongs before the prose; a
@@ -163,7 +186,9 @@ def test_the_warning_appears_before_the_answer(rendered):
 
 
 @needs_node
-@pytest.mark.parametrize("case", ["warning", "warningAndUnverified", "mixedImpact"])
+@pytest.mark.parametrize(
+    "case", ["warning", "warningClosing", "warningAndUnverified", "mixedImpact"]
+)
 def test_a_warned_response_scrolls_its_own_start_into_view(rendered, case):
     """Being FIRST in the DOM is not the same as being visible.
 

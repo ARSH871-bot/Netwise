@@ -338,11 +338,45 @@ const WARNING = {
   impact: [finding({})],
   verified: true,
   warning: true,
+  opens_access: true,
   grounded: true,
   answer:
     "Generated: permit tcp host 10.10.10.5 host 10.20.0.5 eq 443, on rtr-us5's " +
     "'acl_in' filter. Warning: simulating this change shows it newly opens " +
     "access that was previously blocked -- see the impact list.",
+};
+
+// #405 review (Arsh + Samika): a PROVED high-severity CLOSING -- a policy
+// requirement breached, which blocks traffic that should stay open. `warning`
+// is true for the same reason as WARNING above (a serious effect was proved),
+// but `opens_access` is false: the banner must not claim this opens anything.
+const WARNING_CLOSING = {
+  request_understood: "On rtr-us5, add to 'acl_in' (at the top): deny udp ...",
+  proposed_change: {
+    device: "rtr-us5",
+    filter: "acl_in",
+    line: "deny udp any host 218.8.104.58 eq domain",
+  },
+  impact: [
+    finding({
+      severity: "high",
+      summary: "This change BREAKS policy rule 4",
+      direction: "closing",
+      evidence: {
+        detail: "requirement on rtr-us5 filter acl_in: held before, breached after.",
+        source: "the policy file you supplied; rule 4",
+      },
+    }),
+  ],
+  verified: true,
+  warning: true,
+  opens_access: false,
+  grounded: true,
+  answer:
+    "Generated: deny udp any host 218.8.104.58 eq domain, on rtr-us5's " +
+    "'acl_in' filter. Warning: simulating this change has a serious effect " +
+    "that is not simply opening access -- see the impact list for exactly " +
+    "what changed.",
 };
 
 // #183's case: a PROVED opening beside an UNRELATED error. Both must show.
@@ -361,6 +395,7 @@ const WARNING_AND_UNVERIFIED = {
   ],
   verified: false,
   warning: true,
+  opens_access: true,
   grounded: true,
   answer: "Generated: ... Warning: ... Some of the impact analysis also could not run.",
 };
@@ -390,11 +425,12 @@ const MIXED_IMPACT = {
   impact: [
     finding({ id: "CH-003", severity: "medium", status: "found" }),
     finding({ id: "CH-004", status: "none", severity: "low", summary: "No change" }),
-    finding({ id: "CH-001", severity: "high", status: "found" }),
+    finding({ id: "CH-001", severity: "high", status: "found", direction: "opening" }),
     finding({ id: "CH-000", status: "error", summary: "could not run" }),
   ],
   verified: false,
   warning: true,
+  opens_access: true,
   grounded: true,
   answer: "Generated: ...",
 };
@@ -442,6 +478,20 @@ const GROUNDED_JUNK_WARNING_ONLY = {
   impact: [],
   verified: true,
   warning: "no",
+  grounded: true,
+  answer: "Generated: ...",
+};
+
+// warning EXACTLY true, only `opens_access` malformed (#405 review). The
+// generic "serious effect" wording must render, not the specific "opens
+// access" claim a junk flag gives no grounds for, and not a crash.
+const WARNING_JUNK_OPENS_ACCESS = {
+  request_understood: "On rtr-us5, add to 'acl_in' (at the top): deny tcp ...",
+  proposed_change: CHANGE,
+  impact: [finding({})],
+  verified: true,
+  warning: true,
+  opens_access: "yes",
   grounded: true,
   answer: "Generated: ...",
 };
@@ -511,6 +561,7 @@ const out = {
   clean: renderAndDescribe(CLEAN),
   narrows: renderAndDescribe(NARROWS),
   warning: renderAndDescribe(WARNING),
+  warningClosing: renderAndDescribe(WARNING_CLOSING),
   warningAndUnverified: renderAndDescribe(WARNING_AND_UNVERIFIED),
   unverifiedOnly: renderAndDescribe(UNVERIFIED_ONLY),
   mixedImpact: renderAndDescribe(MIXED_IMPACT),
@@ -518,6 +569,7 @@ const out = {
   junkKeys: renderAndDescribe(JUNK_KEYS),
   groundedJunkFlags: renderAndDescribe(GROUNDED_JUNK_FLAGS),
   groundedJunkWarningOnly: renderAndDescribe(GROUNDED_JUNK_WARNING_ONLY),
+  warningJunkOpensAccess: renderAndDescribe(WARNING_JUNK_OPENS_ACCESS),
   scripted: renderAndDescribe(SCRIPTED),
 
   // The two strengthenings, exercised together: a real request resubmitted

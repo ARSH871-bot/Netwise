@@ -54,7 +54,7 @@ def test_a_refusal_from_propose_change_passes_through_unchanged(monkeypatch):
     parsing logic here."""
     monkeypatch.setattr(main, "_uploaded", True)
 
-    def fake_propose_change(request, before_dir, host="localhost"):
+    def fake_propose_change(request, before_dir, host="localhost", policy=None):
         return {
             "request_understood": None,
             "proposed_change": None,
@@ -84,9 +84,10 @@ def test_a_successful_proposal_delegates_to_propose_change_with_the_snapshot_dir
     monkeypatch.setattr(main, "_uploaded", True)
     captured = {}
 
-    def fake_propose_change(request, before_dir, host="localhost"):
+    def fake_propose_change(request, before_dir, host="localhost", policy=None):
         captured["request"] = request
         captured["before_dir"] = before_dir
+        captured["policy"] = policy
         return {
             "request_understood": "On rtr-us5, add to 'acl_in' (at the top): deny tcp host 10.10.10.5 host 10.20.0.5 eq 443",
             "proposed_change": {
@@ -109,6 +110,30 @@ def test_a_successful_proposal_delegates_to_propose_change_with_the_snapshot_dir
     assert body["proposed_change"]["device"] == "rtr-us5"
     assert captured["request"] == GOOD_REQUEST
     assert captured["before_dir"] == main.SNAPSHOT_DIR
+    assert captured["policy"] is None, "no policy staged in this test -- must pass through as None"
+
+
+def test_a_staged_policy_reaches_propose_change(monkeypatch):
+    """#402: propose_change_endpoint() must pass the SAME staged policy
+    /api/findings already reads, not silently keep comparing against the
+    built-in example rules."""
+    monkeypatch.setattr(main, "_uploaded", True)
+    sentinel_policy = object()
+    monkeypatch.setattr(main, "_staged_policy", lambda: sentinel_policy)
+    captured = {}
+
+    def fake_propose_change(request, before_dir, host="localhost", policy=None):
+        captured["policy"] = policy
+        return {
+            "request_understood": None, "proposed_change": None, "impact": [],
+            "verified": False, "warning": False, "grounded": False, "answer": "refused",
+        }
+
+    monkeypatch.setattr(main, "propose_change", fake_propose_change)
+    response = client.post("/api/propose", json={"request": GOOD_REQUEST})
+
+    assert response.status_code == 200
+    assert captured["policy"] is sentinel_policy
 
 
 def test_impact_findings_with_status_found_get_an_explanation_attached(monkeypatch):
@@ -123,7 +148,7 @@ def test_impact_findings_with_status_found_get_an_explanation_attached(monkeypat
         "evidence": {"detail": "d", "source": "s"}, "status": "found",
     }
 
-    def fake_propose_change(request, before_dir, host="localhost"):
+    def fake_propose_change(request, before_dir, host="localhost", policy=None):
         return {
             "request_understood": "...", "proposed_change": {"device": "rtr-us5", "filter": "acl_in", "line": "..."},
             "impact": [dict(finding)],
@@ -151,7 +176,7 @@ def test_an_explanation_failure_does_not_break_the_response(monkeypatch):
         "evidence": {"detail": "d", "source": "s"}, "status": "found",
     }
 
-    def fake_propose_change(request, before_dir, host="localhost"):
+    def fake_propose_change(request, before_dir, host="localhost", policy=None):
         return {
             "request_understood": "...", "proposed_change": {"device": "rtr-us5", "filter": "acl_in", "line": "..."},
             "impact": [dict(finding)],
@@ -182,7 +207,7 @@ def test_a_none_status_finding_in_impact_is_not_explained(monkeypatch):
     }
     calls = []
 
-    def fake_propose_change(request, before_dir, host="localhost"):
+    def fake_propose_change(request, before_dir, host="localhost", policy=None):
         return {
             "request_understood": "...", "proposed_change": {"device": "rtr-us5", "filter": "acl_in", "line": "..."},
             "impact": [dict(finding)],
