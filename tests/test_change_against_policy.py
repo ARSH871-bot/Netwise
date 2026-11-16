@@ -351,6 +351,40 @@ def test_a_long_diff_never_folds_away_a_broken_policy_rule():
     assert ids == sorted(ids), "what is kept stays in the order found"
 
 
+def test_a_capped_list_is_numbered_one_to_forty_eight_whatever_was_kept():
+    """The cap keeps the MOST IMPORTANT 48, not the first 48, and a kept
+    finding kept the number it was given when it was found. With mixed
+    severities the 49th finding found is a high one, is kept, and was CH-049:
+    the same id as the card that summarises the rest. The ids this module
+    reserves (CH-049 and CH-050 to CH-054) must be free whatever was kept, so
+    a capped list is renumbered in the order found. (#406 review: the test
+    above uses one severity, where the cap keeps the first 48, so it cannot
+    see this.)"""
+    mk = change_impact.findings.make_finding
+    found = [mk(check="change_impact", severity="high" if i % 2 == 1 else "medium",
+                device="rtr-us5", summary=f"line {i}", detail="d",
+                source="rtr-us5:acl_in", status="found", number=i) for i in range(1, 61)]
+    kept = change_impact._cap(found)
+    ids = [f["id"] for f in kept]
+    assert len(ids) == len(set(ids)), f"duplicate ids: {sorted(i for i in set(ids) if ids.count(i) > 1)}"
+    assert ids == [f"CH-{n:03d}" for n in range(1, 49)] + ["CH-049"]
+    nums = [int(f["summary"].split()[1]) for f in kept[:-1]]
+    assert nums == sorted(nums), "what is kept stays in the order found"
+
+
+def test_a_capped_list_keeps_the_worst_severity_not_the_first_found():
+    """55 medium lines found first, then 5 high ones: the highs must survive
+    the cap. Keeping the first 48 would fold all five away."""
+    mk = change_impact.findings.make_finding
+    found = [mk(check="change_impact", severity="high" if i > 55 else "medium",
+                device="rtr-us5", summary=f"line {i}", detail="d",
+                source="rtr-us5:acl_in", status="found", number=i) for i in range(1, 61)]
+    kept = change_impact._cap(found)
+    kept_highs = [f for f in kept[:-1] if f["severity"] == "high"]
+    assert len(kept_highs) == 5, "every high finding is kept"
+    assert kept[-1]["severity"] == "medium", "the summary is as bad as the worst it hides"
+
+
 def test_the_policy_is_cleared_even_when_the_stage_raises(monkeypatch):
     """A policy outliving the call that supplied it would answer the next
     caller's question with someone else's rules."""

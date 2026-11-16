@@ -667,6 +667,13 @@ def _cap(regular: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     keep = set(sorted(range(len(regular)), key=importance)[: _OVERFLOW_NUMBER - 1])
     kept = [f for i, f in enumerate(regular) if i in keep]
     rest = [f for i, f in enumerate(regular) if i not in keep]
+    # A kept finding keeps the number it was found under, so the 49th found
+    # can sit here as CH-049 -- the id of the summary card below -- or on a
+    # reserved CH-050+ (#406 review, @ARSH871-bot). Renumber in the order
+    # found, so CH-001..048 are the ordinary cards and 049 is only ever the
+    # summary. Nothing outside this function relies on a kept card's id.
+    for new_number, f in enumerate(kept, start=1):
+        f["id"] = f"{findings.PREFIX_BY_CHECK[CHECK_NAME]}-{new_number:03d}"
     worst = min((f["severity"] for f in rest), key=order.get)
     kept.append(findings.make_finding(
         check=CHECK_NAME, severity=worst, device="unknown",
