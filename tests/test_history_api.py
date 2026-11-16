@@ -172,6 +172,19 @@ def test_delete_one_then_all(world):
     assert client.get("/api/history").json() == {"scans": []}
 
 
+@pytest.mark.parametrize("scan_id", [2**63, 99999999999999999999, -(2**63) - 1])
+def test_an_id_no_scan_could_have_is_not_found_rather_than_a_500(world, scan_id):
+    """Measured on origin/main: 500 Internal Server Error. FastAPI accepts
+    any size of integer in the path, and SQLite raised OverflowError binding
+    one wider than its 64-bit ids."""
+    client, scan = world
+    scan([_clean()])
+    client.post("/api/history", json={"name": "A"})
+
+    assert client.delete(f"/api/history/{scan_id}").status_code == 404
+    assert len(client.get("/api/history").json()["scans"]) == 1
+
+
 def test_a_new_upload_not_yet_scanned_cannot_be_saved_or_compared(world):
     """The last scan belongs to the config it was computed from. Upload
     something else without scanning, and neither save nor compare may pair
