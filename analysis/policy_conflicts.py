@@ -349,7 +349,9 @@ def _compare(prohibitions: Sequence[Any], requirements: Sequence[Any],
                 pairs = [overlap(qa, qb)[0]
                          for qa in forbid.get("queries", []) or []
                          for qb in require.get("queries", []) or []]
-                if any(verdict is not False for verdict in pairs):
+                # No pairs at all means a rule with no queries: nothing proves the
+                # two disjoint, so it still warns (#464 review, @SamikaPerera).
+                if not pairs or any(verdict is not False for verdict in pairs):
                     undecided.append(
                         f"{name_p(forbid)} and {name_r(require)} name filters "
                         f"{forbid.get('filter')!r} and {require.get('filter')!r} on {node}, "

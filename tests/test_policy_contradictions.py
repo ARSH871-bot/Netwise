@@ -275,6 +275,19 @@ def test_disjoint_traffic_needs_no_warning_whatever_the_filter_is_called(other):
     assert loaded.undecidable == []
 
 
+@pytest.mark.parametrize("empty_side", ["prohibition", "requirement"])
+def test_a_rule_with_no_queries_still_warns_about_a_spelling_difference(empty_side):
+    """#464 review: with either rule's queries empty there are no pairs, and
+    any([]) is False, so the spelling warning silently went away. Nothing
+    proves such a pair disjoint, so it still warns. (#468 refuses an empty
+    queries list at load; policy_conflicts can still be handed one.)"""
+    from analysis.policy_conflicts import contradictions
+    forbid = rule(1, "prohibition", [] if empty_side == "prohibition" else [P])
+    require = rule(2, "requirement", [] if empty_side == "requirement" else [R], filter_name="ACL_IN")
+    _, undecided = contradictions([forbid, require])
+    assert len(undecided) == 1 and "may resolve to the same ACL" in undecided[0]
+
+
 @pytest.mark.parametrize("number,name,other", [("6", "tcp", "udp"), ("17", "udp", "tcp"),
                                                ("1", "icmp", "udp")])
 def test_each_protocol_number_means_its_own_protocol(number, name, other):
