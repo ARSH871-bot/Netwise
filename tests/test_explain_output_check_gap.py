@@ -128,6 +128,8 @@ def test_a_faithful_explanation_is_still_accepted(monkeypatch, status):
     "This is fine and nothing needs fixing.",
     "Everything looks clean.",
     "This check passed.",
+    "There are no security problems with this configuration.",
+    "The scan found no real issues of concern.",
 ])
 def test_an_error_finding_is_not_explained_as_fine(monkeypatch, text):
     assert not _accepted(monkeypatch, "error", text), (
@@ -153,6 +155,8 @@ def test_an_error_finding_is_not_explained_as_fine(monkeypatch, text):
     "Everything looks clean.",
     "This check passed.",
     "No problems were found, the rule is safe.",
+    "There are no security problems with this configuration.",
+    "The scan found no real issues of concern.",
 ])
 def test_a_found_finding_is_not_explained_as_clean(monkeypatch, text):
     assert not _accepted(monkeypatch, "found", text), (
@@ -161,3 +165,46 @@ def test_a_found_finding_is_not_explained_as_clean(monkeypatch, text):
         f"runs no result-claim test for 'found', so an all-clear contradicting "
         f"the finding it explains gets through."
     )
+
+
+# --- #457: the inserted word must not be allowed to roam ---------------------
+#
+# The widened pattern allows exactly one word between "no" and
+# "problems"/"issues" (#457). It must still refuse the two real sentences
+# that motivated the widening, and it must not start rejecting genuine,
+# accurate explanations -- checked against every rated capture in
+# tests/fixtures/explanation_quality/holdout.json, not just eyeballed.
+
+@pytest.mark.parametrize("status,text", [
+    ("found", "There are no security problems with this configuration."),
+    ("error", "There are no security problems with this configuration."),
+    ("found", "The scan found no real issues of concern."),
+    ("error", "The scan found no real issues of concern."),
+])
+def test_a_one_word_inserted_all_clear_phrase_is_still_refused(monkeypatch, status, text):
+    assert not _accepted(monkeypatch, status, text), (
+        f"a status={status!r} finding was explained as {text!r}, labelled as "
+        f"model output. This is the exact sentence from the prompt-injection "
+        f"case that motivated _ALL_CLEAR_PATTERN in the first place, and it "
+        f"must not escape through an inserted adjective."
+    )
+
+
+def test_the_widened_pattern_does_not_reject_real_rated_explanations():
+    import json
+    from pathlib import Path
+
+    holdout_path = (
+        Path(__file__).parent / "fixtures" / "explanation_quality" / "holdout.json"
+    )
+    data = json.loads(holdout_path.read_text(encoding="utf-8"))
+    for entry in data["findings"]:
+        text = entry["captured_explanation"]
+        match = explain_module._ALL_CLEAR_PATTERN.search(text)
+        assert match is None, (
+            f"{entry['id']}'s real, rated explanation was flagged as an "
+            f"all-clear phrase by the widened pattern ({match.group()!r} in "
+            f"{text!r}). The one-word-insertion widening (#457) must not start "
+            f"rejecting genuine, accurate answers -- that's exactly the "
+            f"false-positive risk the issue asked to re-test before landing."
+        )
