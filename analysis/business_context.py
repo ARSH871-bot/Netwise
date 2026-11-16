@@ -345,16 +345,21 @@ def load_business_context_file(path: Any) -> BusinessContext:
         # An empty FILE is an empty CONTEXT, which is valid.
         return BusinessContext()
 
-    # Same three escapes, and the same fix, as policy.load_policy_file().
+    # Same three escapes, and the same fix, as policy.load_policy_file(): only
+    # json.loads is guarded by `except ValueError` and RecursionError, because
+    # they are about the file only there. load_business_context() raises
+    # BusinessContextError for every problem with a file and does not recurse
+    # into nested values, so a bare ValueError from it is a bug and is left
+    # to show as one (#446 follow-up, Shubham's note).
     try:
         parsed = json.loads(text, object_pairs_hook=_refuse_duplicate_keys)
-        return load_business_context(parsed)
     except json.JSONDecodeError as error:
         raise BusinessContextError(
             f"{file_path} is not valid JSON: line {error.lineno}, "
             f"column {error.colno}: {error.msg}"
         ) from error
     except BusinessContextError:
+        # _refuse_duplicate_keys() runs inside json.loads and raises this.
         raise
     except RecursionError as error:
         raise BusinessContextError(
@@ -364,6 +369,8 @@ def load_business_context_file(path: Any) -> BusinessContext:
         raise BusinessContextError(
             f"{file_path} holds a value that cannot be read: {error}"
         ) from error
+
+    return load_business_context(parsed)
 
 
 def _refuse_duplicate_keys(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
