@@ -162,14 +162,20 @@ def test_the_published_score_matches_the_committed_ratings():
     tools/explanation_quality.py's score_holdout() docstring). A change
     here means either the holdout set or its ratings changed -- re-measure
     deliberately (docs/evaluation.md Part 4), don't just update this
-    assertion to make it pass."""
+    assertion to make it pass.
+
+    Re-measured again (9 November) after review found the raw-ACL-syntax
+    wording traded one misdescription for another (#401 review,
+    @shubhamkataria2005) -- #385's guard flagged AC-002 as stale the
+    moment the fix changed its prompt. AC-002 moved from 5/4 to 5/5; see
+    docs/evaluation.md Part 4 for the dated note."""
     score = score_holdout(load_holdout())
     assert score["n_findings"] == 4
     assert score["n_ratings"] == 4
-    assert score["mean_accuracy"] == pytest.approx(4.25)
-    assert score["min_accuracy"] == 2
-    assert score["mean_usefulness"] == pytest.approx(3.25)
-    assert score["min_usefulness"] == 2
+    assert score["mean_accuracy"] == pytest.approx(5.0)
+    assert score["min_accuracy"] == 5
+    assert score["mean_usefulness"] == pytest.approx(4.0)
+    assert score["min_usefulness"] == 3
     assert {row["id"] for row in score["per_finding"]} == {
         "AC-001", "PC-001", "AC-002", "PC-005",
     }
@@ -187,13 +193,22 @@ def test_rt_050_is_reported_as_fallback_not_scored_against_the_threshold():
 
 
 def test_the_low_scoring_finding_is_identifiable_in_the_breakdown():
-    """AC-002's accuracy=2 is a real, filed defect (#384), not noise. The
-    per-finding breakdown is what makes it findable rather than letting the
-    4.4 mean hide it -- see tools/explanation_quality.py's own module
-    docstring for why mean alone was rejected as the published number."""
+    """AC-002's accuracy=2 (#384) was the breakdown's original reason to
+    exist -- a defect the blended mean would have hidden. #401 fixed that
+    defect and re-captured AC-002 at 5/4 (see the test above), so every
+    finding now ties at accuracy=5 and there is no accuracy outlier left
+    to find. The breakdown's job is unchanged, only which finding it
+    surfaces: PC-005's usefulness=3 is now the lowest figure in the set,
+    a readability nit already noted in docs/evaluation.md's own table
+    (its first sentence asks the reader to resolve an apparent
+    contradiction before it resolves itself), not a filed defect -- the
+    point of this test is that the breakdown still finds it rather than
+    averaging it away, whatever its current cause."""
     score = score_holdout(load_holdout())
     by_id = {row["id"]: row for row in score["per_finding"]}
-    assert by_id["AC-002"]["mean_accuracy"] == 2.0
+    assert by_id["AC-002"]["mean_accuracy"] == 5.0
+    assert by_id["PC-005"]["mean_usefulness"] == 3.0
+    assert min(row["mean_usefulness"] for row in score["per_finding"]) == 3.0
 
 
 def test_current_mean_quality_meets_the_documented_threshold():
