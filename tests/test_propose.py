@@ -356,7 +356,7 @@ def _stub_batfish(monkeypatch, *, devices=frozenset({"rtr-us5"}), parse_problems
 def _stub_change_impact(monkeypatch, results):
     monkeypatch.setattr(
         propose.change_impact, "analyse_change",
-        lambda before_dir, after_dir, host="localhost": results,
+        lambda before_dir, after_dir, host="localhost", labels=None: results,
     )
 
 
