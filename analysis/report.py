@@ -498,7 +498,7 @@ def render_comparison_csv(
     ):
         for finding in rows:
             evidence = finding.get("evidence") or {}
-            writer.writerow([
+            writer.writerow(_csv_cell(cell) for cell in [
                 change_type,
                 finding.get("id", ""),
                 finding.get("check", ""),
