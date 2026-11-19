@@ -181,6 +181,39 @@ def test_a_relative_folder_does_not_rewrite_ordinary_text(tmp_path, monkeypatch)
     assert results[0]["evidence"]["detail"] == finding["evidence"]["detail"]
 
 
+def test_a_relative_before_or_after_folder_does_not_rewrite_the_words(tmp_path, monkeypatch):
+    """#463 review (@ARSH871-bot): "." only proves the BEFORE side. A relative
+    after folder named "after" would rewrite the word "after" in a card if
+    only the before folder were resolved."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "before").mkdir()
+    (tmp_path / "after").mkdir()
+    detail = "The filter was a deny before the edit and a permit after it."
+    monkeypatch.setattr(change_impact, "_analyse_change", lambda *a, **k: [
+        {"summary": "A line moved.",
+         "evidence": {"detail": detail, "source": "compareFilters"}}])
+
+    results = change_impact.analyse_change("before", "after", labels=LABELS)
+
+    assert results[0]["evidence"]["detail"] == detail
+
+
+def test_without_labels_a_relative_folder_is_shown_as_typed(tmp_path, monkeypatch):
+    """#463 review: the command line keeps the user's own spelling. Resolving
+    without labels would turn "before" into a full path nobody typed."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "before").mkdir()
+    (tmp_path / "after").mkdir()
+
+    def down(host=None):
+        raise ConnectionError("down")
+    monkeypatch.setattr(change_impact, "connect", down)
+
+    results = change_impact.analyse_change("before", "after")
+
+    assert results[0]["evidence"]["source"] == "before -> after"
+
+
 def test_without_labels_the_command_line_still_shows_the_paths(tmp_path, monkeypatch):
     """The user typed these paths, so they are useful there, and not secret."""
     before, after = _folders(tmp_path)
