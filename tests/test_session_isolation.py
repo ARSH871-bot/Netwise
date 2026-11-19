@@ -283,7 +283,7 @@ def test_a_policy_uploaded_by_one_session_is_not_staged_for_another(analysed):
                 "description": "d",
                 "filter": "acl_in",
                 "kind": "prohibition",
-                "queries": [],
+                "queries": [{"srcIps": "10.0.0.0/8"}],
                 "violation_severity": "high",
                 "violation_summary": "s",
             }
