@@ -252,7 +252,8 @@ def test_an_unrecognised_protocol_is_undecidable_not_disjoint():
     assert len(loaded.undecidable) == 1
 
 
-@pytest.mark.parametrize("other", ["ACL_IN", "acl_in ", "/acl_in/", "@in(GigabitEthernet0/0)"])
+@pytest.mark.parametrize("other", ["ACL_IN", "acl_in ", "/acl_in/", "@in(GigabitEthernet0/0)",
+                                   "acl_in,acl_out"])
 def test_a_filter_batfish_may_resolve_to_the_same_acl_is_not_skipped(other):
     """`ACL_IN` and `acl_in` were "different filter: cannot collide". Batfish
     resolves them to the same ACL, so the pair is reported, not skipped."""
@@ -260,6 +261,39 @@ def test_a_filter_batfish_may_resolve_to_the_same_acl_is_not_skipped(other):
                                 rule(2, "requirement", [R], filter_name=other)))
     assert len(loaded.undecidable) == 1
     assert "could not be compared" in loaded.undecidable[0]
+
+
+@pytest.mark.parametrize("other", ["ACL_IN", "/acl_in/", "acl_in,acl_out"])
+def test_disjoint_traffic_needs_no_warning_whatever_the_filter_is_called(other):
+    """#440, N1. The spelling warning fired before the traffic was compared,
+    so two rules about different hosts warned although they cannot collide
+    whichever ACL Batfish resolves the names to."""
+    loaded = load_policy(policy(
+        rule(1, "prohibition", [{"srcIps": "10.10.10.0/24", "dstIps": "10.20.0.5"}]),
+        rule(2, "requirement", [{"srcIps": "10.10.10.0/24", "dstIps": "218.8.104.58"}],
+             filter_name=other)))
+    assert loaded.undecidable == []
+
+
+@pytest.mark.parametrize("empty_side", ["prohibition", "requirement"])
+def test_a_rule_with_no_queries_still_warns_about_a_spelling_difference(empty_side):
+    """#464 review: with either rule's queries empty there are no pairs, and
+    any([]) is False, so the spelling warning silently went away. Nothing
+    proves such a pair disjoint, so it still warns. (#468 refuses an empty
+    queries list at load; policy_conflicts can still be handed one.)"""
+    from analysis.policy_conflicts import contradictions
+    forbid = rule(1, "prohibition", [] if empty_side == "prohibition" else [P])
+    require = rule(2, "requirement", [] if empty_side == "requirement" else [R], filter_name="ACL_IN")
+    _, undecided = contradictions([forbid, require])
+    assert len(undecided) == 1 and "may resolve to the same ACL" in undecided[0]
+
+
+@pytest.mark.parametrize("number,name,other", [("6", "tcp", "udp"), ("17", "udp", "tcp"),
+                                               ("1", "icmp", "udp")])
+def test_each_protocol_number_means_its_own_protocol(number, name, other):
+    """#440, N2: changing "17" to tcp, or "1" to udp, passed every test."""
+    assert policy_conflicts.overlap({"ipProtocols": [number]}, {"ipProtocols": [name]})[0] is True
+    assert policy_conflicts.overlap({"ipProtocols": [number]}, {"ipProtocols": [other]})[0] is False
 
 
 def test_one_disjoint_parsed_field_beats_an_unparsed_one():

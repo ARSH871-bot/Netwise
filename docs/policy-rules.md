@@ -346,6 +346,28 @@ consistently with POL-4.
 
 ---
 
+### A rule whose traffic Batfish cannot be asked about is refused
+
+A rule's `queries` (and an `access_control` statement's `headers`) go straight
+to Batfish's `HeaderConstraints`, which accepts almost anything locally. Such
+a rule used to load and then fail at scan time as "could not check", with an
+error the user could not act on: `"queries": "10.10.10.0/24"` ran thirteen
+queries, one per character. `load_policy()` now refuses, naming the rule:
+
+- `queries` that is not a non-empty list, or a query that is not a mapping;
+- a field name `HeaderConstraints` does not have (`srcIp` for `srcIps`);
+- an address element that is plainly one address or prefix (digits, dots, a
+  slash) but is not valid, such as `10.10.10.300`.
+
+Batfish's address language is larger than that: ranges (`a-b`), wildcards
+(`a:b`), set difference and named groups are passed through for Batfish to
+judge, and each accepted form is checked against real Batfish in
+`tests/test_policy_traffic_shape.py`. An empty query, `{}`, still loads: it
+means all traffic, and "this filter must permit nothing" is a rule someone
+can mean.
+
+---
+
 ### A policy that forbids what it requires is refused (#322, US-30)
 
 A `prohibition` says traffic must be DENIED. A `requirement` says traffic must
@@ -413,7 +435,9 @@ same ACL in different spellings. When two filters match only after trimming
 and ignoring case, or either is a specifier rather than a plain name (`/`,
 `@`, `(`, `,`), the pair is reported as **undecidable**, not skipped. Found in
 review on #387: the first version compared the raw strings and called
-`ACL_IN` versus `acl_in` "cannot collide".
+`ACL_IN` versus `acl_in` "cannot collide". The traffic is compared first,
+though (#440): two rules whose traffic is provably disjoint cannot collide
+whichever ACL their filters resolve to, so they get no warning.
 
 A rule's `queries` are a union, because `policy_compliance` fails the rule if
 any one of them fails, so a contradiction is any query of the prohibition
@@ -799,7 +823,16 @@ unapproved destination, and POL-2 arm A catches DNS to `10.20.0.5`. Verified:
 ---
 
 
-### Change impact now checks every policy rule (#323, US-31)
+## 7. Sign-off
+
+| Member | Role in this decision | Agreed |
+|---|---|---|
+| Shubham | Author; owns the check | ✅ |
+| Arsh | Registry, pipeline, `findings.py` impact | ✅ rules, IDs, and the §4 `findings.py` change |
+| Samika | Severity values are his | ✅ |
+| Ankeet | Consumes findings in the AI layer | ⬜ |
+
+## 8. Change impact checks every policy rule (#323, #402, #403)
 
 `analyse_change(before, after)` used to answer one question: *what traffic
 moved*. It now also answers the one an engineer actually asks before applying
@@ -811,10 +844,20 @@ breach is), once against each snapshot:
 
 | before | after | reported as |
 |---|---|---|
-| holds | holds | unchanged |
-| breached | breached | unchanged — still broken, not caused by this edit |
+| holds | holds | unchanged — *on the rule's filter*, which is all that is claimed |
+| breached | breached, by the same traffic | **still breached** — `found`, `low`: not caused by this edit, but never a green tick (#402) |
+| breached | breached, by **more** traffic | **WIDENS** the breach — at the rule's own severity |
+| breached | breached, by **less** traffic | **NARROWS** the breach — `low`, still breached, never the "opens access" banner (#406 review) |
+| breached | breached, some flows added and some removed | **ALTERS** the rule — at the rule's own severity, direction *changed* |
 | breached | holds | **FIXES** the rule, `low` |
 | holds | breached | **BREAKS** the rule, at the rule's own severity |
+
+The last three rows come from one differential `searchFilters`. Each row it
+returns carries both verdicts, and Batfish returns one example per direction,
+so a flow now taking the breaching action that did not before widens the
+breach, and the reverse narrows it. The first version asked only *whether*
+the breach moved and rated every move at the rule's own severity, so a pure
+deny raised the "opens access" warning.
 
 Direction uses change impact's existing terms: a prohibition breach created is
 *opening*, a requirement breach created is *tightening*, and the reverse for
@@ -848,11 +891,14 @@ built-in rules, like a scan does. The CLI takes it as a third argument:
 python -m analysis.change_impact before/ after/ my-policy.json
 ```
 
-## 7. Sign-off
 
-| Member | Role in this decision | Agreed |
-|---|---|---|
-| Shubham | Author; owns the check | ✅ |
-| Arsh | Registry, pipeline, `findings.py` impact | ✅ rules, IDs, and the §4 `findings.py` change |
-| Samika | Severity values are his | ✅ |
-| Ankeet | Consumes findings in the AI layer | ⬜ |
+### What it does not look at, said out loud (#402, #403)
+
+- **Devices added or removed** are their own `found` cards. Before #403, deleting a whole router came back as "No change detected" with a green tick, because neither Batfish comparison describes a device that exists on one side only.
+- **One of our built-in rules about a device in neither configuration** is *not applicable* — this change cannot affect it — and is named in the result, not reported as an error. Reporting it as an error made every proposal on a network without `rtr-us5` "could not be fully verified".
+- **One of the user's own rules about a device in neither configuration** is part of the `CH-051` error instead. A scan of the same files calls it `PC-050`, could not check, and the two must not disagree (#406 review).
+- **Device names are compared as Batfish compares them**, case-free. A policy naming `RTR-US5` is about the device Batfish calls `rtr-us5`; a case-sensitive test once filed a real breach on it under a tick.
+- **A rule about a device on one side only** cannot be compared and is a single `CH-051` error.
+- **Only `policy_compliance` rules are compared.** A policy with `access_control` or `routing` rules gets a sentence beginning "NOT compared:" naming how many, and a policy with no `policy_compliance` rules says no rule of the user's was checked.
+- **"Unchanged" means the rule's filter decided its traffic the same way.** Unbinding the filter from its interface changes the network without changing that answer, so the wording claims no more than that.
+

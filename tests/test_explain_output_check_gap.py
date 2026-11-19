@@ -161,3 +161,70 @@ def test_a_found_finding_is_not_explained_as_clean(monkeypatch, text):
         f"runs no result-claim test for 'found', so an all-clear contradicting "
         f"the finding it explains gets through."
     )
+
+
+# --- The all-clear check never touches a "none" finding ------------------------
+#
+# Asked for on #456 (Shubham's review, 10 November). For status="none" the
+# check ran and found nothing, so an all-clear is the truth. Nothing pinned
+# that: widening the check to status in ("found", "none") passed every test.
+
+@pytest.mark.parametrize("text", [
+    "No issues were found by policy compliance.",
+    "The access-control check ran on rtr-us5, found no problems, and the "
+    "filter is fine.",
+])
+def test_a_none_finding_may_be_explained_as_all_clear(monkeypatch, text):
+    assert _accepted(monkeypatch, "none", text), (
+        f"a status='none' finding -- the check ran and found nothing -- was "
+        f"refused when explained as {text!r}. For 'none' an all-clear is the "
+        f"truth; the all-clear check must apply only to 'found' and 'error'."
+    )
+
+
+# --- Each all-clear phrase is refused on its own -------------------------------
+#
+# Also asked for on #456. The sentences above each carry two phrases, so
+# dropping one phrase from _ALL_CLEAR_PATTERN went unnoticed ("is safe" was
+# measured surviving). Each sentence below is a natural answer about a
+# found finding that uses exactly ONE of the seven phrases, so removing any
+# one phrase fails exactly one case. "Nothing needs fixing" starts with a
+# capital on purpose, so the case-insensitive match is pinned here too.
+
+_ALL_CLEAR_PHRASES = (
+    "no problems", "no issues", "nothing needs fixing", "looks clean",
+    "check passed", "is fine", "is safe",
+)
+
+_ONE_PHRASE_EACH = {
+    "no problems": "The filter on rtr-us5 has no problems that need attention.",
+    "no issues": "There are no issues with how this filter handles telnet.",
+    "nothing needs fixing": "Nothing needs fixing on this filter; it matches "
+                            "the policy.",
+    "looks clean": "The access list on rtr-us5 looks clean and matches the "
+                   "policy.",
+    "check passed": "The access-control check passed for this filter.",
+    "is fine": "The telnet rule on this filter is fine as it stands.",
+    "is safe": "Leaving the permit ip any any line in place is safe here.",
+}
+
+
+def test_every_phrase_has_a_sentence_that_uses_only_that_phrase():
+    """Guards the test below: if a sentence carried a second phrase, dropping
+    either phrase from the pattern could go unnoticed."""
+    assert set(_ONE_PHRASE_EACH) == set(_ALL_CLEAR_PHRASES)
+    for phrase, sentence in _ONE_PHRASE_EACH.items():
+        present = [p for p in _ALL_CLEAR_PHRASES if p in sentence.lower()]
+        assert present == [phrase], (
+            f"the sentence for {phrase!r} contains {present}: {sentence!r}"
+        )
+
+
+@pytest.mark.parametrize("phrase", _ALL_CLEAR_PHRASES)
+def test_each_all_clear_phrase_is_refused_for_a_found_finding(monkeypatch, phrase):
+    sentence = _ONE_PHRASE_EACH[phrase]
+    assert not _accepted(monkeypatch, "found", sentence), (
+        f"a status='found' finding was explained as {sentence!r}, which tells "
+        f"the user a confirmed problem is fine. The only all-clear phrase in "
+        f"it is {phrase!r}, so that phrase is no longer refused."
+    )

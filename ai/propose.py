@@ -455,7 +455,11 @@ def propose_change(
         after_dir = Path(tmp) / "after"
         shutil.copytree(before_dir, after_dir)
         (after_dir / "configs" / cfg_path.name).write_text(new_cfg_text, encoding="utf-8")
-        impact = change_impact.analyse_change(before_dir, after_dir, host=host)
+        # Labels, not folders: the upload folder is named after the session
+        # cookie, and every card would print it (#462).
+        impact = change_impact.analyse_change(
+            before_dir, after_dir, host=host,
+            labels=("your uploaded config", "the proposed config"))
 
     # Shown on the dashboard as a before/after diff of the affected filter,
     # not just the one generated line -- a line in isolation does not say
