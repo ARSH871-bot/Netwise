@@ -55,18 +55,57 @@ def _evidence(finding: Dict[str, Any]) -> str:
     return str(evidence.get("detail", "")).lower()
 
 
-def _rule_dead_rule_is_low(finding: Dict[str, Any]) -> Optional[str]:
-    """R-1: a line that can never match cannot expose anything.
+# The marker access_control._check_dead_rules() writes after the dead line:
+#
+#   "Unreachable line: <line> (action PERMIT|DENY). Blocked by: <lines>. ..."
+#
+# Our own fixed wording, not config text, and the same shape ai/explain.py
+# reads. The first "(action ...)." before "Blocked by:" is ours; the line
+# text before it comes from Batfish and never carries one.
+#
+# R-1 matches the START of the evidence, not the word anywhere (#444). Every
+# other producer opens with its own fixed words ("Expected", "Flow",
+# "Example permitted flow", "Referenced as"), while "unreachable" turns up in
+# routing assertions, Batfish dispositions and Cisco ICMP keywords.
+_DEAD_LINE = "unreachable line: "
+_DEAD_DENY = re.compile(r"unreachable line: .+?\(action deny\)\. blocked by:")
 
-    FIRST ON PURPOSE. A dead-rule finding normally quotes the line that shadows
-    it, and that line is very often a blanket permit -- so if R-2 ran first it
-    would match the quoted BLOCKER and rate the dead rule "high". The exposure
-    is not lost by rating this low: the blanket permit is reported separately on
-    its own finding, where R-2 rates it high.
+
+def _rule_dead_rule_is_low(finding: Dict[str, Any]) -> Optional[str]:
+    """R-1: a dead PERMIT is low. A dead DENY keeps its check's severity.
+
+    A permit that can never match blocks traffic someone wanted: a hygiene
+    problem, worth reporting, not an exposure. A deny that can never match is
+    the opposite -- traffic someone meant to block gets through -- and
+    access_control already grades it high for that reason.
+
+    It used to lower both, on the grounds that the exposure "is reported
+    separately by R-2". That only holds when the line shadowing the deny is
+    a blanket permit. Measured in docs/research/cvss-comparison.md section 4
+    (#434): a deny shadowed by a SPECIFIC permit went to low, R-2 did not
+    fire, and the only finding about that traffic sat at the bottom.
+
+    Only a clear "(action DENY)" marker is left alone. A dead-line finding
+    without one keeps the old answer, low.
+
+    ONLY A DEAD ACL LINE. The evidence must start with "Unreachable line: ",
+    as access_control writes it. It used to be the word "unreachable"
+    anywhere, which lowered routing isolation assertions ("Expected
+    UNREACHABLE ...") and any finding quoting an ICMP `unreachable` line
+    (#444).
+
+    FIRST ON PURPOSE. When the dead line is itself a blanket permit, R-2
+    would match it and rate a dead permit "high" if it ran first. The
+    blocker is not the risk: it follows "Blocked by:", so R-2 treats it as a
+    citation. For a dead deny this rule passes, and R-2 does not promote it
+    for the same reason.
     """
-    if "unreachable" in _evidence(finding):
-        return "low"
-    return None
+    detail = _evidence(finding)
+    if not detail.startswith(_DEAD_LINE):
+        return None
+    if _DEAD_DENY.search(detail):
+        return None
+    return "low"
 
 
 # The phrases our checks use to ATTRIBUTE a violation to the ACL line that
