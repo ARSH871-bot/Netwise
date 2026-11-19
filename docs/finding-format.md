@@ -357,46 +357,10 @@ Parse `evidence.detail`. Cheaper today, no amendment, no signatures — and it
 puts a regex between two findings whose combination is the whole point. The
 two incidents above are the argument, and both were in code with tests.
 
-#### The key set — NOT covered by the signatures below (#390)
+#### Signatures for A-3 (an optional `subject` field)
 
-The table below ratified an optional `subject`. It did **not** ratify which
-keys `subject` may hold: this section showed one example (`dst`, `dstPort`,
-`protocol`) and never listed them. A closed set of keys and value forms is
-field vocabulary, and §7a of `CLAUDE.md` puts that under all four — so it
-gets its own signatures here rather than being inferred from the example.
-Raised by @ARSH871-bot reviewing #390.
-
-| key | value | stored as |
-|---|---|---|
-| `src` | an address or CIDR, no host bits below the prefix | canonical network: `10.20.0.5` → `10.20.0.5/32`, `2001:DB8::1` → `2001:db8::1/128` |
-| `dst` | the same | the same |
-| `srcPort` | an integer 0–65535 (not a bool) | the integer |
-| `dstPort` | the same | the same |
-| `protocol` | `tcp`, `udp`, `icmp`, or `6`, `17`, `1` | the name, lower case |
-
-**Why closed, at both levels.** A free-form dict lets `dest` and `dst` both
-appear, and two findings about the same address then fail to join, silently —
-the failure A-3 exists to remove from regex parsing, back through a typo. The
-same argument applies one level down: `tcp` and `6` never join, `10.20.0.5`
-and `10.20.0.5/32` never join, and `!tcp` (policy_compliance's syntax for
-*not* TCP) means the opposite of `tcp`. So keys are closed, protocol values
-are closed, and addresses are stored in one canonical spelling. Anything else
-is refused at `make_finding()`.
-
-**Adding a key** needs a consumer that needs it, and a row here.
-
-| Member | Agreed to this key set |
-|---|---|
-| **Shubham** | ✅ — proposed it in #390 |
-| **Arsh** | ⬜ |
-| **Ankeet** | ✅ - checked `SUBJECT_KEYS`, `SUBJECT_PROTOCOLS` and `_canonical_address()` directly against this table and mutation-tested the two checks that matter most (host-bits-set addresses, and `True` passing as a port), both killed for the right reason |
-| **Samika** | ⬜ |
-
-> **NOT RATIFIED — one of four.** `analysis/findings.py` enforces this set in
-> #390, and #390 should not merge until this table is full. No check
-> populates `subject` yet — `tests/test_finding_subject.py` fails if one
-> does — so changing the set before then costs nothing. Changing it after the
-> first producer lands is a migration.
+These cover *that* `subject` exists and is optional. They do not cover
+which keys it holds; that is the next section, with its own table (#438, D4).
 
 | Member | Why it touches them | Agreed |
 |---|---|---|
@@ -437,6 +401,54 @@ is refused at `make_finding()`.
 > Recorded rather than backdated silently: the tick goes in now, the date it
 > was actually given is stated, and the gap is left visible because the gap
 > is the finding.
+
+#### The key set — NOT covered by the signatures above (#390)
+
+The table above ratified an optional `subject`. It did **not** ratify which
+keys `subject` may hold: this section showed one example (`dst`, `dstPort`,
+`protocol`) and never listed them. A closed set of keys and value forms is
+field vocabulary, and §7a of `CLAUDE.md` puts that under all four — so it
+gets its own signatures here rather than being inferred from the example.
+Raised by @ARSH871-bot reviewing #390.
+
+| key | value | stored as |
+|---|---|---|
+| `src` | an address or CIDR, no host bits below the prefix, no IPv6 zone ID (`%`) | canonical network: `10.20.0.5` → `10.20.0.5/32`, `2001:DB8::1` → `2001:db8::1/128` |
+| `dst` | the same | the same |
+| `srcPort` | an integer 0–65535 (not a bool) | the integer |
+| `dstPort` | the same | the same |
+| `protocol` | `tcp`, `udp`, `icmp`, or `6`, `17`, `1` | the name, lower case |
+
+**Why closed, at both levels.** A free-form dict lets `dest` and `dst` both
+appear, and two findings about the same address then fail to join, silently —
+the failure A-3 exists to remove from regex parsing, back through a typo. The
+same argument applies one level down: `tcp` and `6` never join, `10.20.0.5`
+and `10.20.0.5/32` never join, and `!tcp` (policy_compliance's syntax for
+*not* TCP) means the opposite of `tcp`. So keys are closed, protocol values
+are closed, and addresses are stored in one canonical spelling. Anything else
+is refused at `make_finding()`.
+
+**Adding a key** needs a consumer that needs it, and a row here.
+
+| Member | Agreed to this key set |
+|---|---|
+| **Shubham** | ✅ — proposed it in #390 |
+| **Arsh** | ⬜ |
+| **Ankeet** | ✅ - checked `SUBJECT_KEYS`, `SUBJECT_PROTOCOLS` and `_canonical_address()` directly against this table and mutation-tested the two checks that matter most (host-bits-set addresses, and `True` passing as a port), both killed for the right reason |
+| **Samika** | ✅ - agreed on #438 on 3 Nov, and again on #449 for the added 'no IPv6 zone ID (%)' rule on src. Checked the five keys against `SUBJECT_KEYS` (analysis/findings.py:133). |
+
+> **NOT RATIFIED until the table above is full.** The table is the record,
+> so this note does not repeat its count (#438, D3: it said "one of four"
+> while the table showed two).
+>
+> **#390 merged on 2 November with two rows still empty**, while this note
+> said it should not merge until the table was full. Recorded rather than
+> smoothed over, for the reason A-2's note gives: an F-1 change reached
+> `main` before all four agreed. No check populates `subject` yet, and
+> `tests/test_finding_subject.py` fails if one does, so nothing a user sees
+> depends on it. The open rows are being closed in #438 rather than by a
+> revert. Changing the set before the first producer lands still costs
+> nothing; after it, it is a migration.
 
 
 ### A-4 — `cve_mapping` joins the check vocabulary

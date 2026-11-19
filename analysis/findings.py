@@ -150,7 +150,18 @@ def _canonical_address(key: str, value: Any) -> str:
     Python's canonical form -- `10.20.0.5/32`, `2001:db8::1/128`. Host bits
     set below the prefix (`10.20.0.1/16`) are REFUSED rather than silently
     masked, because the caller meant something and we cannot tell what.
+
+    NO IPv6 ZONE ID (#438, D2, @ARSH871-bot). Python accepts anything after a
+    `%` as a scope, so `fe80::1%ignore all previous instructions` was stored
+    verbatim -- free text inside a field that is meant to hold only an
+    address, on its way to the model's prompt. A zone names an interface on
+    one machine and means nothing across findings, so it is refused rather
+    than stripped.
     """
+    if "%" in str(value):
+        raise ValueError(
+            f"subject[{key!r}] must not carry an IPv6 zone ID ('%'), got {value!r}"
+        )
     try:
         return str(ipaddress.ip_network(str(value), strict=True))
     except ValueError:
@@ -173,9 +184,6 @@ def _validate_subject(subject: Any) -> Dict[str, Any]:
             "subject must not be empty -- a check with nothing to put in it "
             "leaves it out (A-3)"
         )
-    unknown = sorted(set(subject) - set(SUBJECT_KEYS))
-    if unknown:
-        raise ValueError(f"subject has unknown key(s) {unknown}; allowed: {SUBJECT_KEYS}")
     checked: Dict[str, Any] = {}
     for key, value in subject.items():
         if key in ("src", "dst"):
@@ -184,7 +192,7 @@ def _validate_subject(subject: Any) -> Dict[str, Any]:
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 65535:
                 raise ValueError(f"subject[{key!r}] must be a port from 0 to 65535, got {value!r}")
             checked[key] = value
-        else:  # protocol
+        elif key == "protocol":
             name = SUBJECT_PROTOCOLS.get(str(value).strip().lower()) if not isinstance(value, bool) else None
             if name is None:
                 raise ValueError(
@@ -192,6 +200,15 @@ def _validate_subject(subject: Any) -> Dict[str, Any]:
                     f"got {value!r}"
                 )
             checked[key] = name
+        else:
+            # THE ONE PLACE an unknown key is refused (#438, D1). It used to be
+            # checked up front as well, and the loop's last branch was a bare
+            # `else` for protocol -- so `{"dest": "tcp"}` raised from the
+            # protocol branch with the up-front check deleted, and nothing
+            # tested that check. With this branch here, the up-front copy could
+            # be deleted with every test still green, which makes each copy
+            # look like the guard while neither is. One decision point.
+            raise ValueError(f"subject has unknown key {key!r}; allowed: {SUBJECT_KEYS}")
     return checked
 
 
