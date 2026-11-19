@@ -341,6 +341,122 @@ def test_reachability_mixed_result_is_reported_not_picked():
     assert "disagree" in result["answer"]
 
 
+# --- #435: a negated reachability question answers the negation, not the
+# plain question -------------------------------------------------------------
+#
+# "Can rtr-us5 NOT reach X" used to be answered identically to "Can rtr-us5
+# reach X" -- the word "NOT" sat inside source_text, where _find_device()
+# ignores anything that is not a known device name, so it was dropped
+# silently rather than refused. Measured live: grounded: true, full
+# confidence, the answer to a question nobody asked.
+
+
+def test_a_negated_question_that_does_reach_answers_no():
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    result = answer_question("Can rtr-us5 NOT reach 218.8.104.58?", session)
+    assert result["grounded"] is True
+    assert result["answer"].startswith("No --")
+    assert "DOES reach" in result["answer"]
+
+
+def test_a_negated_question_that_does_not_reach_answers_yes():
+    frame = _FakeFrame(
+        [{"Traces": [FakeTrace("DENIED_IN", hops=[FakeHop("rtr-us5")])]}]
+    )
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    result = answer_question("Can rtr-us5 NOT reach 218.8.104.58?", session)
+    assert result["grounded"] is True
+    assert result["answer"].startswith("Yes --")
+    assert "does NOT reach" in result["answer"]
+    assert "DENIED_IN" in result["answer"]
+
+
+def test_negation_is_stated_back_in_question_understood():
+    """Shape C only does its job if the rendered question still says what
+    was actually asked -- the bug this fixes made it say the opposite."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    result = answer_question("Can rtr-us5 NOT reach 218.8.104.58?", session)
+    assert "NOT reach" in result["question_understood"]
+
+
+def test_a_non_negated_question_is_unaffected():
+    """Regression: the plain-question path must render exactly as before."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    result = answer_question("Can rtr-us5 reach 218.8.104.58?", session)
+    assert result["answer"] == "Yes. Traffic from rtr-us5 reaches 218.8.104.58."
+    assert result["question_understood"] == "Can rtr-us5 reach 218.8.104.58?"
+
+
+@pytest.mark.parametrize("phrasing", [
+    "Can rtr-us5 never reach 218.8.104.58?",
+    "Can rtr-us5 cannot reach 218.8.104.58?",
+    "Can rtr-us5 can't reach 218.8.104.58?",
+    "Does rtr-us5 doesn't reach 218.8.104.58?",
+    "Does rtr-us5 does not reach 218.8.104.58?",
+    "Will rtr-us5 won't reach 218.8.104.58?",
+    "Will rtr-us5 will not reach 218.8.104.58?",
+])
+def test_the_closed_set_of_negation_phrasings_are_all_recognised(phrasing):
+    """Deliberately ungrammatical combinations (e.g. "Can ... cannot
+    reach") -- the point is that each individual negation word in the
+    closed set is recognised on its own, not that the whole sentence
+    reads naturally."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    result = answer_question(phrasing, session)
+    assert result["answer"].startswith("No --")
+
+
+def test_an_unrelated_earlier_not_does_not_falsely_trigger_negation():
+    """Anchored to the END of source_text on purpose: "not" appearing
+    earlier in the question, unrelated to the reach keyword, must not be
+    read as negating the question."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    result = answer_question(
+        "Can the router that is not in maintenance, rtr-us5, reach 218.8.104.58?",
+        session,
+    )
+    assert result["answer"].startswith("Yes.")
+    assert "question_understood" in result
+    assert result["question_understood"] == "Can rtr-us5 reach 218.8.104.58?"
+
+
+def test_a_negated_mixed_result_still_reports_plainly():
+    """The mixed case has no yes/no word to get backwards -- confirm
+    negation leaves it untouched rather than prefixing something
+    misleading onto already-neutral language."""
+    frame = _FakeFrame(
+        [{"Traces": [FakeTrace("ACCEPTED"), FakeTrace("DENIED_IN")]}]
+    )
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    result = answer_question("Can rtr-us5 NOT reach 218.8.104.58?", session)
+    assert "Mixed result" in result["answer"]
+    assert "disagree" in result["answer"]
+
+
+def test_a_negated_back_reference_still_refuses_rather_than_guessing():
+    """Combining negation with a back-reference follow-up ("does it NOT
+    reach X") is not something this fix teaches the back-reference
+    matcher to recognise -- _is_source_back_reference()'s closed set only
+    contains the bare reference word, not "it NOT". Confirms this falls
+    through to the existing refusal rather than silently resolving to the
+    previous turn's device, which is the safe degradation, not a gap this
+    issue needs to close."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    previous = {
+        "source_device": "rtr-us5",
+        "destination_ip": "218.8.104.58",
+        "destination_display": "218.8.104.58",
+    }
+    result = answer_question("Does it NOT reach 218.8.104.58?", session, previous)
+    assert result["grounded"] is False
+
+
 def test_reachability_empty_frame_is_a_refusal():
     frame = _FakeFrame([])
     session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
