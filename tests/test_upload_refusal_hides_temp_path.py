@@ -26,6 +26,7 @@ NO BATFISH, NO OLLAMA -- the loaders refuse before anything is staged.
 
 import re
 import tempfile
+from pathlib import PurePosixPath, PureWindowsPath
 
 import pytest
 from fastapi.testclient import TestClient
@@ -143,3 +144,36 @@ def test_a_good_upload_is_unchanged(url, name, body):
 
     assert response.status_code == 200, response.text
     assert response.json()["filename"] == name
+
+
+# Each spelling on its own (#475 follow-up). The endpoint tests above pass
+# with any ONE of repr / doubled / as_posix removed: repr's inner text IS the
+# doubled spelling, so each covers for the other, and no loader writes a
+# forward-slash path. These call the function directly with a pure path, so
+# a Windows path is a Windows path on CI's Linux too, and each spelling is
+# the only one that can match its message.
+
+WINDOWS_TEMP = PureWindowsPath(r"C:\Users\<user>\AppData\Local\Temp\tmpab12cd.json")
+LINUX_TEMP = PurePosixPath("/tmp/pytest-of-ci/netwise-temp-canary" + chr(92) + "x/tmpab12cd.json")
+
+
+@pytest.mark.parametrize("temp_path", [WINDOWS_TEMP, LINUX_TEMP], ids=["windows", "linux-backslash"])
+@pytest.mark.parametrize("spell", [
+    pytest.param(lambda p: repr(str(p)), id="repr"),
+    pytest.param(lambda p: str(p).replace("\\", "\\\\"), id="doubled-unquoted"),
+    pytest.param(lambda p: str(p), id="plain"),
+])
+def test_each_spelling_alone_is_replaced_exactly(temp_path, spell):
+    message = f"cannot read {spell(temp_path)}: Permission denied"
+
+    shown = main._refusal_without_temp_path(message, temp_path, "my-policy.json")
+
+    assert shown == "cannot read 'my-policy.json': Permission denied", shown
+
+
+def test_a_forward_slash_spelling_of_a_windows_path_is_replaced():
+    message = f"{WINDOWS_TEMP.as_posix()} is not valid JSON"
+
+    shown = main._refusal_without_temp_path(message, WINDOWS_TEMP, "my-policy.json")
+
+    assert shown == "'my-policy.json' is not valid JSON", shown
