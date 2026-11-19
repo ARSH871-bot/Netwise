@@ -405,7 +405,7 @@ table(["Question we ask", "What Batfish gives back", "What we do with it"], [
                       "possible traffic",
      "No rows is a proof that no such flow exists. One row is a counter-example"],
     ["filterLineReachability", "Rules that can never match, and the earlier rule shadowing them",
-     "Report it as a tidiness problem and rate it low, because a dead rule cannot expose anything"],
+     "Rate a dead permit low, as a tidiness problem; a dead deny keeps its check's severity, because when a permit shadows it the traffic it was meant to block gets through"],
     ["undefinedReferences", "Things the configuration mentions but never defines",
      "Report it directly. This is a silent failure risk"],
     ["traceroute", "The hop-by-hop path and whether the traffic arrived",
