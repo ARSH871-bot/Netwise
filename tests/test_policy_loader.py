@@ -26,6 +26,7 @@ import json
 
 import pytest
 
+import analysis.policy as policy_module
 from analysis.policy import (POLICY_SECTIONS, Policy, PolicyError, load_policy,
                              load_policy_file, _ALLOWED_VALUES, _LEGACY_KEYS,
                              _SECTION_REQUIRED)
@@ -240,6 +241,47 @@ def test_a_file_json_cannot_hold_faithfully_is_refused_not_crashed_or_trimmed(
     path.write_bytes(contents)
     with pytest.raises(PolicyError, match=said):
         load_policy_file(path)
+
+
+def test_a_duplicate_key_refusal_keeps_its_own_message_not_a_generic_one(tmp_path):
+    """_refuse_duplicate_keys() raises a PolicyError from inside json.loads,
+    and PolicyError is a ValueError. Without `except PolicyError: raise` the
+    bare `except ValueError` beside it re-wraps it as "holds a value that
+    cannot be read: ... appears twice", which a substring match on "appears
+    twice" still accepts, so the parametrized test above cannot tell. This
+    one can: the user is told what is actually wrong, in the loader's words."""
+    path = tmp_path / "policy.json"
+    path.write_bytes(b'{"policy_compliance": [' + _A_RULE + b'], "policy_compliance": []}')
+
+    with pytest.raises(PolicyError) as raised:
+        load_policy_file(path)
+
+    assert "appears twice" in str(raised.value)
+    assert "cannot be read" not in str(raised.value)
+
+
+def test_a_bug_in_the_validator_is_not_relabelled_as_a_bad_file(tmp_path, monkeypatch):
+    """The broad `except ValueError` used to wrap load_policy() too, so a plain
+    ValueError raised by a validation bug reached the user as "holds a value
+    that cannot be read", a refusal that blames their file for our mistake
+    (Shubham's note on #446). Only json.loads raises a bare ValueError that
+    really is about the file (an integer past 4,300 digits), so only
+    json.loads is guarded by it. A bug must stay a bug."""
+
+    def broken_validator(parsed):
+        raise ValueError("a bug in the validator, not in the file")
+
+    monkeypatch.setattr(policy_module, "load_policy", broken_validator)
+    path = tmp_path / "policy.json"
+    path.write_text('{"policy_compliance": []}', encoding="utf-8")
+
+    with pytest.raises(ValueError) as raised:
+        load_policy_file(path)
+
+    assert not isinstance(raised.value, PolicyError), (
+        "a validator bug was turned into a refusal that blames the user's file"
+    )
+    assert "a bug in the validator" in str(raised.value)
 
 
 # ---------------------------------------------------------------------------

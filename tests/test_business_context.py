@@ -30,6 +30,7 @@ import json
 
 import pytest
 
+import analysis.business_context as context_module
 from analysis.business_context import (
     TIERS,
     BusinessContext,
@@ -404,6 +405,43 @@ def test_a_file_json_cannot_hold_faithfully_is_refused_not_crashed_or_trimmed(
     path.write_bytes(contents)
     with pytest.raises(BusinessContextError, match=said):
         load_business_context_file(path)
+
+
+def test_a_duplicate_key_refusal_keeps_its_own_message_not_a_generic_one(tmp_path):
+    """Mirrors the policy loader's test: BusinessContextError is a ValueError,
+    so without `except BusinessContextError: raise` the duplicate-key refusal
+    raised inside json.loads would be re-wrapped as "holds a value that cannot
+    be read", which a substring match on "appears twice" still accepts."""
+    path = tmp_path / "business-context.json"
+    path.write_bytes(b'[{"device": "rtr-us5", "tier": "critical", "tier": "standard"}]')
+
+    with pytest.raises(BusinessContextError) as raised:
+        load_business_context_file(path)
+
+    assert "appears twice" in str(raised.value)
+    assert "cannot be read" not in str(raised.value)
+
+
+def test_a_bug_in_the_validator_is_not_relabelled_as_a_bad_file(tmp_path, monkeypatch):
+    """Mirrors the policy loader's test (#446 follow-up). Only json.loads
+    raises a bare ValueError that is really about the file, so only json.loads
+    is guarded by `except ValueError`. A bug in load_business_context() must
+    surface as itself, not as "holds a value that cannot be read"."""
+
+    def broken_validator(parsed):
+        raise ValueError("a bug in the validator, not in the file")
+
+    monkeypatch.setattr(context_module, "load_business_context", broken_validator)
+    path = tmp_path / "business-context.json"
+    path.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(ValueError) as raised:
+        load_business_context_file(path)
+
+    assert not isinstance(raised.value, BusinessContextError), (
+        "a validator bug was turned into a refusal that blames the user's file"
+    )
+    assert "a bug in the validator" in str(raised.value)
 
 
 def test_a_real_file_round_trips(tmp_path):
