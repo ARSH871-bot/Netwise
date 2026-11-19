@@ -348,6 +348,54 @@ _ROUTING_ASSERTION_DETAIL_PATTERN = re.compile(
 )
 
 
+# Same disposition sets analysis/checks/routing.py itself works with
+# (SUCCESS_DISPOSITIONS there is the complement of these two plus the
+# genuinely-routing ones below), re-declared here rather than imported --
+# same reason ai/query.py's own _SUCCESS_DISPOSITIONS is re-declared
+# rather than imported: ai/ does not depend on a specific check module
+# for a general Batfish-interpretation fact.
+#
+# Measured (#439, #399 follow-up): the flat branches below said "the
+# network's current routing is what disagrees" for EVERY disposition,
+# including DENIED_IN/DENIED_OUT -- which routing.py's own module
+# docstring says are filter decisions, not routing -- and EXITS_NETWORK,
+# which routing.py's own module docstring says most often means the
+# destination device is missing from the snapshot (measured there by
+# deleting a config and re-running). Everything else this project's
+# disposition vocabulary contains (NO_ROUTE, NULL_ROUTED, LOOP,
+# INSUFFICIENT_INFO, NEIGHBOR_UNREACHABLE) really is a routing/forwarding
+# outcome, so the "routing" wording stays for that remaining case -- not
+# a guessed default, since these two sets are the only non-routing causes
+# this project has observed or documented.
+_FILTER_DISPOSITIONS = {"DENIED_IN", "DENIED_OUT"}
+_MISSING_DEVICE_DISPOSITIONS = {"EXITS_NETWORK"}
+
+
+def _routing_cause_clause(disposition: str) -> str:
+    """What actually disagrees with the requirement, given the real
+    disposition Batfish reported for this flow -- see the module-level
+    comment above _FILTER_DISPOSITIONS for why this is not always
+    "routing". Always ends mid-sentence, with no trailing period, so the
+    two call sites below can each finish the sentence their own way."""
+    if disposition in _FILTER_DISPOSITIONS:
+        return (
+            "a filter rule somewhere along the path is what disagrees "
+            "with that requirement, not the requirement itself"
+        )
+    if disposition in _MISSING_DEVICE_DISPOSITIONS:
+        return (
+            f"traceroute reports {disposition} partway along the path, "
+            "which this project has measured most often means the "
+            "destination device named in this statement is not in this "
+            "snapshot -- not that the network's routing disagrees with "
+            "the requirement"
+        )
+    return (
+        "the network's current routing is what disagrees with that "
+        "requirement, not the requirement itself"
+    )
+
+
 def _compute_routing_outcome(detail: str) -> Optional[str]:
     """For a routing-assertion finding, state -- in unambiguous words --
     which direction the flow runs and what actually happens to it, rather
@@ -395,6 +443,16 @@ def _compute_routing_outcome(detail: str) -> Optional[str]:
     split in its own words, the exact risk this function family exists to
     remove. When n == m every path agrees, so the flat statement is still
     exactly accurate and unchanged.
+
+    WHAT THIS STILL DOES NOT COVER (#439)
+        The cause clause below is only as good as the ONE disposition
+        routing._evaluate() names (`failures[0]`/`successes[0]`). If a
+        unanimous multi-path result (n == m, so not "mixed" in this
+        function's sense) is unanimous only in pass/fail, not in WHY --
+        say, one path DENIED_IN and another NO_ROUTE -- this still
+        categorizes only the first one. That is a limit of what
+        routing.py itself reports, not something this function can fix
+        from the one disposition string it is given.
     """
     match = _ROUTING_ASSERTION_DETAIL_PATTERN.search(detail)
     if not match:
@@ -411,37 +469,35 @@ def _compute_routing_outcome(detail: str) -> Optional[str]:
             return (
                 f"{n} of {m} traced paths for the flow FROM {src} TO {dst} "
                 f"-- that direction, not the reverse -- do NOT reach {dst} "
-                f"(one ended in {disposition}); the rest do. That is a "
-                f"real, mixed result, not a single yes or no -- state both "
-                f"parts, do not round it to one. The statement requires "
-                f"this flow to be {expected}; whether that holds depends on "
-                f"which path is taken."
+                f"(at least one of them ended in {disposition}); the rest "
+                f"do. That is a real, mixed result, not a single yes or no "
+                f"-- state both parts, do not round it to one. The "
+                f"statement requires this flow to be {expected}; whether "
+                f"that holds depends on which path is taken."
             )
         return (
             f"the flow FROM {src} TO {dst} -- that direction, not the "
             f"reverse -- currently does NOT reach {dst}; the trace ended in "
             f"{disposition}. That is the real, observed outcome. The "
-            f"statement requires this flow to be {expected}; the network's "
-            f"current routing is what disagrees with that requirement, not "
-            f"the requirement itself."
+            f"statement requires this flow to be {expected}; "
+            f"{_routing_cause_clause(disposition)}."
         )
     disposition = match.group("succeeded_disposition")
     if mixed:
         return (
             f"{n} of {m} traced paths for the flow FROM {src} TO {dst} -- "
-            f"that direction, not the reverse -- DO reach {dst} (one "
-            f"succeeded as {disposition}); the rest do not. That is a "
-            f"real, mixed result, not a single yes or no -- state both "
-            f"parts, do not round it to one. The statement requires this "
-            f"flow to be {expected}; whether that holds depends on which "
-            f"path is taken."
+            f"that direction, not the reverse -- DO reach {dst} (at least "
+            f"one of them succeeded as {disposition}); the rest do not. "
+            f"That is a real, mixed result, not a single yes or no -- "
+            f"state both parts, do not round it to one. The statement "
+            f"requires this flow to be {expected}; whether that holds "
+            f"depends on which path is taken."
         )
     return (
         f"the flow FROM {src} TO {dst} -- that direction, not the "
         f"reverse -- currently DOES reach {dst} ({disposition}). That is "
         f"the real, observed outcome. The statement requires this flow to "
-        f"be {expected}; the network's current routing is what disagrees "
-        f"with that requirement, not the requirement itself."
+        f"be {expected}; {_routing_cause_clause(disposition)}."
     )
 
 

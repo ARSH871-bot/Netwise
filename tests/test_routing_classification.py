@@ -30,7 +30,7 @@ RUN
 
 import pytest
 
-from analysis.checks.routing import _evaluate
+from analysis.checks.routing import _evaluate, _violation_detail
 
 
 class FakeHop:
@@ -126,6 +126,24 @@ def test_exits_network_does_not_satisfy_unreachable_either():
     statement should hold when the only trace is EXITS_NETWORK, the same as
     any other non-success disposition."""
     assert _evaluate("UNREACHABLE", [FakeTrace("EXITS_NETWORK")]) is None
+
+
+# --- _violation_detail (#439) ---------------------------------------------------
+# run() builds a finding's evidence.detail by calling this function with
+# _evaluate()'s own output. Tested directly so tests/test_explain_safety_
+# net.py's routing fixtures, which call this same function to build a
+# realistic detail string, fail loudly if this format ever changes --
+# rather than silently testing a hand-typed copy that no longer matches
+# what run() actually emits.
+
+
+def test_violation_detail_matches_what_run_actually_builds():
+    violation = _evaluate("REACHABLE", [FakeTrace("NO_ROUTE")])
+    detail = _violation_detail("REACHABLE", "10.10.10.5", "10.20.20.5", violation)
+    assert detail == (
+        "Expected REACHABLE for a flow from 10.10.10.5 to 10.20.20.5, "
+        f"but {violation}"
+    )
 
 
 # --- Unknown expected value ----------------------------------------------------
