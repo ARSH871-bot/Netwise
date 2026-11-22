@@ -614,10 +614,40 @@ class UploadBodyLimit:
                 body += b"\r\n" + delimiter + b"--\r\n"
             return {"type": "http.request", "body": body, "more_body": False}
 
+        # After a cut, a 422 means the endpoint never ran: FastAPI found no
+        # whole `file` part in what it was shown -- the cut fell in a part
+        # before it, or in the middle of it. Its "Field required" is true of
+        # the shortened body, not of what was sent, so it is replaced with
+        # the limit. The endpoints' own refusals (400) are kept as they are.
+        limit_mb = MAX_UPLOAD_BYTES / (1024 * 1024)
+        over_limit = json.dumps({"detail": (
+            f"The upload is larger than the {limit_mb:.0f} MB limit, so it "
+            "was not read. Upload the file on its own."
+        )}).encode()
+        replacing = False
+
         async def watched_send(message):
-            if message["type"] == "http.response.body" and not message.get(
+            nonlocal replacing
+            last = message["type"] == "http.response.body" and not message.get(
                 "more_body", False
-            ):
+            )
+            if message["type"] == "http.response.start" and cut \
+                    and message["status"] == 422:
+                # Same 400 the endpoints give for an oversized file. The
+                # headers are kept (attach_session's cookie is one of them),
+                # except the two that describe the body being replaced.
+                replacing = True
+                headers = [(k, v) for k, v in message.get("headers", [])
+                           if k.lower() not in (b"content-length", b"content-type")]
+                headers += [(b"content-type", b"application/json"),
+                            (b"content-length", str(len(over_limit)).encode())]
+                message = {"type": "http.response.start", "status": 400,
+                           "headers": headers}
+            elif replacing and message["type"] == "http.response.body":
+                if not last:
+                    return                    # the endpoint's own words, dropped
+                message = {"type": "http.response.body", "body": over_limit}
+            if last:
                 response_done.set()
             await send(message)
 

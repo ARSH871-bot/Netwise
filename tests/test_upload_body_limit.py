@@ -343,6 +343,27 @@ def test_part_headers_longer_than_the_allowance_never_stage_a_shortened_file():
         assert r.status in (400, 422), r.body[:300]
 
 
+@pytest.mark.parametrize("path", ["/api/upload", "/api/policy", "/api/business-context"])
+@pytest.mark.parametrize("decoy_size", [LIMIT + 100_000, 6 * MB])
+def test_a_cut_before_the_file_part_says_the_request_was_over_the_limit(path, decoy_size):
+    """#470 review (@shubhamkataria2005): with a decoy part first, the cut
+    falls before `file`, and FastAPI's own 422 said the file was missing --
+    "Field required" -- when it was the request that was too big."""
+    def body() -> Iterator[bytes]:
+        yield part_head("decoy.bin", name="other")
+        yield from file_bytes(decoy_size)
+        yield CRLF + part_head("small.json")
+        yield b"{}"
+        yield CLOSING
+
+    r = post(path, body(), content_length=sum(len(p) for p in body()))
+
+    assert r.status == 400, (r.status, r.body[:300])
+    assert r.detail == ("The upload is larger than the 2 MB limit, so it was not read. "
+                        "Upload the file on its own."), r.detail
+    assert any(c.startswith(b"netwise_session=") for c in r.header(b"set-cookie"))
+
+
 # --- The middleware on its own, without the parser in front of it -----------
 #
 # Two of its rules cannot be seen through main.app, and mutation testing
