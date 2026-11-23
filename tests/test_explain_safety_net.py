@@ -19,6 +19,7 @@ RUN
 """
 
 import ollama
+import pandas as pd
 
 from ai import explain as explain_module
 import pytest
@@ -29,6 +30,7 @@ from ai.explain import (
     _compute_expected_actual_outcome,
     _compute_policy_outcome,
     _compute_routing_outcome,
+    _describe_acl_line,
     _evidence_detail,
     _fallback_error_explanation,
     _fallback_plain_restatement,
@@ -163,8 +165,10 @@ def test_dead_deny_shadowed_by_permit_means_traffic_is_permitted():
     )
     outcome = _compute_dead_rule_outcome(detail)
     assert outcome is not None
-    assert "permitted" in outcome
-    assert "denied" not in outcome
+    assert "own stated action is DENY" in outcome
+    assert "permits all traffic from anywhere to 2.128.0.0/16" in outcome
+    assert "denies" not in outcome
+    assert "own stated action is PERMIT" not in outcome
 
 
 def test_dead_permit_shadowed_by_deny_means_traffic_is_denied():
@@ -176,8 +180,10 @@ def test_dead_permit_shadowed_by_deny_means_traffic_is_denied():
     )
     outcome = _compute_dead_rule_outcome(detail)
     assert outcome is not None
-    assert "denied" in outcome
-    assert "permitted" not in outcome
+    assert "own stated action is PERMIT" in outcome
+    assert "denies all traffic from anywhere to any destination" in outcome
+    assert "permits" not in outcome
+    assert "own stated action is DENY" not in outcome
 
 
 def test_returns_none_for_a_finding_that_is_not_a_dead_rule():
@@ -197,12 +203,301 @@ def test_returns_none_when_blocking_lines_disagree():
     assert _compute_dead_rule_outcome(detail) is None
 
 
+def test_two_agreeing_blocking_lines_are_both_named_with_plural_grammar():
+    """Two blocking lines, both DENY -- not ambiguous (they agree), so this
+    states the outcome and names both lines. Added in review (5 November):
+    not live-tested by anyone before this, and the first version written
+    here had a real subject-verb mismatch ("lines ... are ... decides"),
+    caught before it shipped."""
+    detail = (
+        "Unreachable line: permit udp 10.10.10.0 0.0.0.255 host 218.8.104.58 "
+        "eq domain (action PERMIT). Blocked by: deny ip 10.10.10.0 "
+        "0.0.0.255 any, deny tcp 10.10.10.0 0.0.0.255 any. Reason: BLOCKING_LINES"
+    )
+    outcome = _compute_dead_rule_outcome(detail)
+    assert outcome is not None
+    assert "earlier lines, evaluated first, decide instead" in outcome
+    assert "one denies all traffic from 10.10.10.0/24 to any destination" in outcome
+    assert "and another denies TCP traffic from 10.10.10.0/24 to any destination" in outcome
+
+
 def test_returns_none_for_unrecognised_blocking_line_syntax():
     detail = (
         "Unreachable line: permit tcp any any eq 80 (action PERMIT). "
         "Blocked by: remark this is a comment. Reason: BLOCKING_LINES"
     )
     assert _compute_dead_rule_outcome(detail) is None
+
+
+# --- the dead line's own action, as well as the outcome (#384) -------------
+# Found live, not assumed: the original version of this function stated only
+# the OUTCOME, never what the dead line's own action actually IS. 3 of 8 live
+# generations on a real finding mischaracterised or were internally
+# inconsistent about it ("which is supposed to block traffic" for a line
+# whose real action is PERMIT) -- correct about the outcome, backwards about
+# the dead line's own stated action, a different fact.
+
+
+def test_the_dead_lines_own_action_is_stated_explicitly_permit():
+    """THE REASON THIS FIX EXISTS. A PERMIT line shadowed by a DENY line --
+    the dead line's own action must be named as PERMIT, not left for the
+    model to read off the raw evidence and risk getting backwards."""
+    detail = (
+        "Unreachable line: permit udp 10.10.10.0 0.0.0.255 host 218.8.104.58 "
+        "eq domain (action PERMIT). Blocked by: deny   ip 10.10.10.0 "
+        "0.0.0.255 any. Reason: BLOCKING_LINES"
+    )
+    outcome = _compute_dead_rule_outcome(detail)
+    assert outcome is not None
+    assert "own stated action is PERMIT" in outcome
+    assert "own stated action is DENY" not in outcome
+
+
+def test_the_dead_lines_own_action_is_stated_explicitly_deny():
+    """The mirror case -- a DENY line shadowed by a PERMIT line. The dead
+    line's own action must be named as DENY, not inferred as PERMIT just
+    because the real outcome happens to be 'permitted'."""
+    detail = (
+        "Unreachable line: deny   ip 1.128.0.0 0.0.255.255 2.128.0.0 "
+        "0.0.255.255 (action DENY). Blocked by: permit ip any "
+        "2.128.0.0 0.0.255.255. Reason: BLOCKING_LINES"
+    )
+    outcome = _compute_dead_rule_outcome(detail)
+    assert outcome is not None
+    assert "own stated action is DENY" in outcome
+    assert "own stated action is PERMIT" not in outcome
+
+
+def test_the_dead_lines_own_action_and_the_outcome_can_differ():
+    """The whole point: the dead line's own action and the real outcome are
+    two DIFFERENT facts, and a PERMIT line shadowed by a DENY line has them
+    disagree -- own action PERMIT, the blocking line's action DENY. Both
+    must be stated, not just whichever one the function used to consider
+    more important."""
+    detail = (
+        "Unreachable line: permit udp 10.10.10.0 0.0.0.255 host 218.8.104.58 "
+        "eq domain (action PERMIT). Blocked by: deny   ip 10.10.10.0 "
+        "0.0.0.255 any. Reason: BLOCKING_LINES"
+    )
+    outcome = _compute_dead_rule_outcome(detail)
+    assert outcome is not None
+    assert "own stated action is PERMIT" in outcome
+    # Describes the real blocking line in plain English rather than a vague
+    # "same traffic" claim (found in review, 5 November) or raw ACL syntax
+    # (found in review, 9 November, on this exact AC-002 finding: raw
+    # syntax measurably made the model call this /24 source "a specific
+    # host" 16/30 times). "10.10.10.0 0.0.0.255 any" is one source subnet
+    # to ANY destination.
+    assert "denies all traffic from 10.10.10.0/24 to any destination" in outcome
+    assert "same traffic" not in outcome
+    assert "same destination" not in outcome
+    assert "a specific host" not in outcome
+    assert "0.0.0.255" not in outcome, "raw wildcard-mask syntax must not leak into the fact"
+    # #453: must not claim a universal outcome for every packet the dead
+    # line's pattern would match either -- this plain-English path never
+    # did (it only ever describes what the blocking line itself does), but
+    # pin it anyway since it is exactly the phrasing that used to appear.
+    assert "traffic matching it is actually" not in outcome
+    assert "actually denied" not in outcome
+    assert "actually permitted" not in outcome
+
+
+# --- _describe_acl_line (#401 review, @shubhamkataria2005, 9 November) -------
+# Measured live: naming the blocking line in raw ACL syntax (review, 5
+# November) made the model call a /24 source "a specific host" 16 of 30
+# times -- a different misdescription from the one it fixed. These pin the
+# plain-English replacement directly against the two real shapes measured,
+# plus the refusal cases this function must not guess past.
+
+def test_describes_a_wildcard_source_and_any_destination():
+    assert _describe_acl_line("deny ip 10.10.10.0 0.0.0.255 any") == (
+        "denies all traffic from 10.10.10.0/24 to any destination"
+    )
+
+
+def test_describes_a_non_ip_protocol_by_name():
+    assert _describe_acl_line("deny tcp 10.10.10.0 0.0.0.255 any") == (
+        "denies TCP traffic from 10.10.10.0/24 to any destination"
+    )
+
+
+def test_describes_a_host_destination():
+    assert _describe_acl_line("permit udp any host 218.8.104.58 eq domain") == (
+        "permits UDP traffic from anywhere to host 218.8.104.58 on port domain"
+    )
+
+
+def test_returns_none_for_a_source_port_clause():
+    """A shape this project's own converters never emit -- refuse rather
+    than guess at what the extra token means."""
+    assert _describe_acl_line("permit tcp any eq 1024 any eq 443") is None
+
+
+def test_returns_none_for_a_non_contiguous_wildcard_mask():
+    """Same reason analysis/draft_policy.py refuses one of these: the
+    inverted bytes do not form a legal netmask, so there is no CIDR to
+    state."""
+    assert _describe_acl_line("deny ip 10.10.10.0 0.0.255.0 any") is None
+
+
+def test_returns_none_for_too_few_tokens():
+    assert _describe_acl_line("permit ip any") is None
+
+
+def test_an_earlier_same_action_line_omitted_from_blocking_lines_is_not_overclaimed():
+    """#453, measured live. Blocking_Lines named only the opposite-action
+    deny; a host-specific PERMIT even earlier than that deny, sharing the
+    dead line's own PERMIT action, was not named at all and decides that
+    host's traffic the other way. The computed fact must not claim the
+    deny's outcome holds for every packet the dead line's wider pattern
+    would have matched -- it has no way to know that from this detail
+    string alone. This fixture's blocking line parses through
+    _describe_acl_line() (#401), so it takes that plain-English path, not
+    the raw-syntax fallback #453 was originally written against -- updated
+    accordingly rather than left pinning wording the code no longer
+    produces."""
+    detail = (
+        "Unreachable line: permit tcp 10.1.1.0 0.0.0.255 any eq 443 "
+        "(action PERMIT). Blocked by: deny tcp 10.1.1.0 0.0.0.255 any. "
+        "Reason: BLOCKING_LINES"
+    )
+    outcome = _compute_dead_rule_outcome(detail)
+    assert outcome is not None
+    assert "own stated action is PERMIT" in outcome
+    assert "denies TCP traffic from 10.1.1.0/24 to any destination" in outcome
+    # The overclaim #453 found: asserting this for ALL traffic matching
+    # the dead line's own pattern is false for host 10.1.1.5 specifically
+    # (real testFilters: PERMIT), because of a line even earlier than the
+    # one named here. Confirm the fact no longer makes that claim.
+    assert "actually denied" not in outcome
+    assert "traffic matching it" not in outcome
+
+
+def test_an_unparseable_blocking_line_returns_none_rather_than_a_weaker_claim():
+    """#461 review (@shubhamkataria2005), measured live. #453's own fix
+    fell back to naming an unparseable blocking line in raw syntax,
+    stating only that it has the opposite action -- no "traffic matching
+    it" claim, specifically to avoid the overclaim the test below this one
+    pins. Measured anyway: 20 live generations on this exact fixture gave
+    10/20 Modelfile Example 1 copies for that fallback sentence, against
+    1/20 for #401's main-head wording and 0/20 for no computed fact at
+    all. A sentence with no outcome in it still leaves a gap, and the
+    model filled it with Example 1 more often than either alternative.
+    This must now return None -- the same refusal this function already
+    makes for unrecognised syntax and disagreeing blocking lines, not a
+    softer version of the dropped fallback sentence. Nothing else in this
+    file reaches this path, since every other fixture's blocking line
+    happens to parse -- without this test, #461's fix would be silently
+    untested."""
+    detail = (
+        "Unreachable line: permit tcp any any eq 443 (action PERMIT). "
+        "Blocked by: deny tcp any eq 1024 any eq 443. Reason: BLOCKING_LINES"
+    )
+    assert _compute_dead_rule_outcome(detail) is None
+
+
+def test_one_unparseable_line_among_several_blocking_lines_also_returns_none():
+    """The `all(d is not None for d in descriptions)` check already
+    requires every named blocking line to parse before taking the
+    plain-English path, so a mix of one parseable and one unparseable
+    line should fall through to the same refusal as a single unparseable
+    line -- not a partial description naming only the one that parsed.
+    Nothing pinned this specifically before #461; added alongside the
+    single-line case rather than left as an untested assumption."""
+    detail = (
+        "Unreachable line: permit tcp any any eq 443 (action PERMIT). "
+        "Blocked by: deny tcp 10.1.1.0 0.0.0.255 any, deny tcp any eq "
+        "1024 any eq 443. Reason: BLOCKING_LINES"
+    )
+    assert _compute_dead_rule_outcome(detail) is None
+
+
+def _real_dead_rule_detail(dead_action: str, blocking_action: str) -> str:
+    """The genuine evidence string, from the genuine check -- not a literal.
+
+    Same reasoning as _real_detail() below: a hand-typed literal cannot
+    catch a wording drift between access_control._check_dead_rules() and
+    this module's own pattern. `dead_action` and `blocking_action` are
+    each "PERMIT" or "DENY", independently, so the same helper builds both
+    the opposite-action and the same-action (redundant) real findings.
+    """
+    from analysis.checks import access_control
+
+    dead_line = f"{dead_action.lower()} tcp any host 10.10.10.5 eq 22"
+    blocking_line = f"{blocking_action.lower()} ip any any"
+    frame = pd.DataFrame([{
+        "Sources": ["rtr-us5: acl_in"],
+        "Unreachable_Line": dead_line,
+        "Unreachable_Line_Action": dead_action,
+        "Blocking_Lines": [blocking_line],
+        "Reason": "BLOCKING_LINES",
+    }])
+
+    class _Question:
+        def __init__(self, frame): self._frame = frame
+        def answer(self): return self
+        def frame(self): return self._frame
+
+    class _Q:
+        def filterLineReachability(self, **kwargs): return _Question(frame)
+
+    class _FakeSession:
+        q = _Q()
+
+    [finding] = access_control._check_dead_rules(_FakeSession(), iter([1]))
+    return finding["evidence"]["detail"]
+
+
+# --- the redundant case: the two facts agree, so the wording must not say
+# "different" (found in review of #401, before it merged) --------------------
+
+
+def test_a_redundant_dead_deny_states_agreement_not_difference():
+    """CLAIMS: a DENY shadowed by an earlier DENY is redundant, not a real
+    exposure, and the computed fact must say so plainly rather than
+    claiming the outcome is "different" -- which would be false here and
+    is the #52 inversion #384's own fix exists to prevent.
+
+    Through the REAL producer (access_control._check_dead_rules), not a
+    literal, per the review that asked for this."""
+    detail = _real_dead_rule_detail(dead_action="DENY", blocking_action="DENY")
+    outcome = _compute_dead_rule_outcome(detail)
+
+    assert outcome is not None
+    assert "own stated action is DENY" in outcome
+    assert "denied anyway" in outcome
+    assert "what actually happens is different" not in outcome, (
+        f"the two lines agree -- nothing is different here: {outcome!r}"
+    )
+    assert "not what happens" not in outcome, (
+        f"the real outcome IS what the dead line's own action says here, "
+        f"so this phrase is false for the redundant case: {outcome!r}"
+    )
+    # Pins the actual agreement sentence, not just the absence of the two
+    # false phrases above -- found in review (5 November): without these,
+    # a rewrite that drops the agreement sentence entirely, or inverts its
+    # verb, still passes every assertion that was here before.
+    assert "also denies it" in outcome
+    assert "the same as the unreachable line says" in outcome
+
+
+def test_a_redundant_dead_permit_states_agreement_not_difference():
+    """The mirror case -- a PERMIT shadowed by an earlier PERMIT."""
+    detail = _real_dead_rule_detail(dead_action="PERMIT", blocking_action="PERMIT")
+    outcome = _compute_dead_rule_outcome(detail)
+
+    assert outcome is not None
+    assert "own stated action is PERMIT" in outcome
+    assert "permitted anyway" in outcome
+    assert "what actually happens is different" not in outcome, (
+        f"the two lines agree -- nothing is different here: {outcome!r}"
+    )
+    assert "not what happens" not in outcome, (
+        f"the real outcome IS what the dead line's own action says here, "
+        f"so this phrase is false for the redundant case: {outcome!r}"
+    )
+    assert "also permits it" in outcome
+    assert "the same as the unreachable line says" in outcome
 
 
 # --- _compute_policy_outcome (#145) ---------------------------------------------
@@ -845,7 +1140,7 @@ def test_prompt_includes_the_computed_outcome_for_a_dead_rule_finding():
         },
     }
     prompt = _build_prompt(finding)
-    assert "denied" in prompt
+    assert "denies" in prompt
     assert "already verified" in prompt.lower()
 
 
@@ -893,7 +1188,7 @@ def test_prompt_prefers_the_dead_rule_computation_when_both_could_apply():
     }
     prompt = _build_prompt(finding)
     assert "already verified" in prompt.lower()
-    assert "denied" in prompt
+    assert "denies" in prompt
 
 
 def test_prompt_includes_the_computed_outcome_for_a_testfilters_finding():
