@@ -425,6 +425,29 @@ def test_an_unrelated_earlier_not_does_not_falsely_trigger_negation():
     assert result["question_understood"] == "Can rtr-us5 reach 218.8.104.58?"
 
 
+@pytest.mark.parametrize("phrasing", [
+    "Can rtr-us5 not be able to reach 218.8.104.58?",
+    "Is rtr-us5 unable to reach 218.8.104.58?",
+    "Does rtr-us5 fail to reach 218.8.104.58?",
+    "Can rtr-us5 no longer reach 218.8.104.58?",
+    "Can rtr-us5 not really reach 218.8.104.58?",
+    "Why can't rtr-us5 reach 218.8.104.58?",
+])
+def test_a_negation_the_closed_set_does_not_read_is_refused_not_answered_plain(phrasing):
+    """#472 review. The closed set only reads a negation DIRECTLY before the
+    reach word, so each of these was answered as the plain question, grounded
+    and confident: the inversion #435 exists to remove, reached by a phrasing
+    the set misses. A closed set that fails open is a guess, so a negation
+    near the reach word that is not recognised is refused."""
+    frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+    session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+    result = answer_question(phrasing, session)
+    assert result["grounded"] is False
+    assert result["question_understood"] is None
+    assert "opposite" in result["answer"]
+    assert not result["answer"].startswith(("Yes", "No"))
+
+
 def test_a_negated_mixed_result_still_reports_plainly():
     """The mixed case has no yes/no word to get backwards -- confirm
     negation leaves it untouched rather than prefixing something

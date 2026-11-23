@@ -242,6 +242,19 @@ _NEGATION_BEFORE_REACH = re.compile(
     r"\b(?:not|never|cannot|can't|doesn't|does\s+not|won't|will\s+not)\s*$",
     re.IGNORECASE,
 )
+# A negation that is NEAR the reach word but not directly before it ("not be able to
+# reach", "unable to reach", "fail to reach", "no longer reach", "not really
+# reach", "why can't rtr-us5 reach"). _NEGATION_BEFORE_REACH does not recognise
+# these, and without this they were answered as the PLAIN question: the same
+# inversion #435 fixes, reached by a phrasing the closed set misses (#472
+# review). A closed set that fails open is a guess, so these are REFUSED. At
+# most three plain words may follow the negation, and a comma ends the window,
+# so "the router that is not in maintenance, rtr-us5, reach X" is untouched.
+_NEGATION_NEAR_REACH = re.compile(
+    r"\b(?:not|never|cannot|unable|fails?|failed|no\s+longer|\w+n't)\b\s+"
+    r"(?:[\w-]+\s+){0,3}$",
+    re.IGNORECASE,
+)
 _DEAD_RULE_KEYWORDS = re.compile(
     r"\b(?:dead|unreachable|shadow(?:ed)?|never\s+(?:take|takes)\s+effect)\b"
     r".*\b(?:rules?|lines?|acls?)\b"
@@ -574,6 +587,14 @@ def _answer_reachability_question(
 ) -> Dict[str, Any]:
     source_text, destination_text = split
     negated = _is_negated_reachability(source_text)
+    if not negated and _NEGATION_NEAR_REACH.search(source_text):
+        return _refuse(
+            "This question looks negated, but not in a form I can read: "
+            f"{source_text.strip()!r}. Answering it as the plain question would "
+            "give the opposite of what was asked, so I will not guess. Ask it "
+            "as \"Can <device> NOT reach <address>?\", or as the plain "
+            "question."
+        )
 
     present = snapshot.device_names(bf)
     if present is None:
