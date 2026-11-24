@@ -73,6 +73,22 @@ CSV_COLUMNS = ("id", "check", "status", "severity", "device",
 #: misalignment no merge conflict would show.
 CSV_REPORT_COLUMNS = ("excluded_during_conversion",)
 
+#: A spreadsheet opening a CSV EVALUATES a cell that starts with one of
+#: these, rather than showing it (OWASP "CSV Injection"). Hostnames, ACL
+#: names and a policy's own wording all reach these cells from a file
+#: somebody uploaded -- the CSV twin of the escaping `_finding_html()` does.
+_FORMULA_STARTS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_cell(value: Any) -> str:
+    """The value as text a spreadsheet will show, never run.
+
+    A leading apostrophe is the spreadsheet convention for "this is text":
+    the value stays readable, and nothing else in it is changed.
+    """
+    text = str(value)
+    return "'" + text if text.startswith(_FORMULA_STARTS) else text
+
 #: The `device` value a check uses when a finding is ABOUT THE CHECK rather
 #: than about any device. Today exactly one producer emits it --
 #: `analysis/checks/policy_compliance.py`, for "your policy has no rules for
@@ -212,7 +228,7 @@ def render_csv(findings: Sequence[Dict[str, Any]],
                + _sections(findings)["clean"])
     for finding in ordered:
         evidence = finding.get("evidence") or {}
-        writer.writerow([
+        writer.writerow(_csv_cell(cell) for cell in [
             finding.get("id", ""),
             finding.get("check", ""),
             finding.get("status", ""),
@@ -482,7 +498,7 @@ def render_comparison_csv(
     ):
         for finding in rows:
             evidence = finding.get("evidence") or {}
-            writer.writerow([
+            writer.writerow(_csv_cell(cell) for cell in [
                 change_type,
                 finding.get("id", ""),
                 finding.get("check", ""),

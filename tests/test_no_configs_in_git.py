@@ -33,11 +33,15 @@ WHY THE FIX IS NOT `*.txt`
     checks the thing itself: does any committed file *look like* a real network
     configuration?
 
-These need neither Batfish nor Docker. They do need `git`.
+These need neither Batfish nor Docker. The ones that ask git need a git
+checkout, and skip -- never fail -- in a copy downloaded as a ZIP, which has
+no `.git` folder. See `git_checkout` below and
+`tests/test_suite_runs_from_a_download.py`.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -51,6 +55,43 @@ def _git(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True
     )
+
+
+def _in_a_git_checkout() -> bool:
+    """True only if git's top level here is THIS repository's root.
+
+    Not just "is git installed" or "is there a repository somewhere above".
+    A ZIP unzipped inside some other repository would get answers from that
+    repository's tracked files and ignore rules, which are not ours.
+    """
+    try:
+        top = _git("rev-parse", "--show-toplevel").stdout.strip()
+    except FileNotFoundError:  # git itself is not installed
+        return False
+    return bool(top) and Path(top).resolve() == REPO_ROOT
+
+
+@pytest.fixture
+def git_checkout():
+    """Run the git-dependent guards only where git can answer for us.
+
+    A copy downloaded as a ZIP from GitHub has no `.git` folder. There, git
+    cannot answer, so these tests either fail with a false alarm (20 of them
+    did, measured 21 October) or pass having checked nothing, because
+    `ls-files` lists no files and `check-ignore` says "not ignored" for every
+    path. Skipping says honestly that nothing was checked.
+
+    Never on CI, though. CI always runs from a real checkout, so a missing one
+    there means constraint 1's guard has silently stopped running, and that
+    must be red.
+    """
+    if _in_a_git_checkout():
+        return
+    if os.environ.get("CI"):
+        pytest.fail("CI is not running from a git checkout, so the "
+                    "constraint-1 guards in this file cannot run")
+    pytest.skip("not a git checkout (a downloaded ZIP has no .git folder), "
+                "so git cannot say what this repository ignores or tracks")
 
 
 def _is_ignored(path: str) -> bool:
@@ -93,7 +134,7 @@ MUST_BE_IGNORED = [
 
 
 @pytest.mark.parametrize("path", MUST_BE_IGNORED)
-def test_config_and_secret_paths_stay_ignored(path: str):
+def test_config_and_secret_paths_stay_ignored(path: str, git_checkout):
     """One deleted .gitignore line is all this protects against, and that is
     exactly the change nobody would notice in review."""
     assert _is_ignored(path), (
@@ -103,7 +144,7 @@ def test_config_and_secret_paths_stay_ignored(path: str):
     )
 
 
-def test_the_committed_fixtures_are_still_the_deliberate_exception():
+def test_the_committed_fixtures_are_still_the_deliberate_exception(git_checkout):
     """The negations must keep working, or the test suite loses its inputs.
 
     `tests/fixtures/` is the single documented exception to constraint 1
@@ -119,7 +160,7 @@ def test_the_committed_fixtures_are_still_the_deliberate_exception():
     assert any(f.endswith(".xml") for f in tracked), "no .xml fixture is tracked"
 
 
-def test_the_ignore_check_can_actually_fail():
+def test_the_ignore_check_can_actually_fail(git_checkout):
     """Proof this guard is not vacuously green.
 
     `check-ignore` returning 0 for everything -- a bad path, a wrong repo root
@@ -195,7 +236,7 @@ def _looks_like_a_device_config(text: str) -> list:
     return []
 
 
-def test_no_committed_file_outside_fixtures_looks_like_a_real_config():
+def test_no_committed_file_outside_fixtures_looks_like_a_real_config(git_checkout):
     """Catches the extension holes without ignoring requirements.txt.
 
     Catches the client's PF Sense export regardless of what it was named --
