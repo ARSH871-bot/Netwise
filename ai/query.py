@@ -539,7 +539,9 @@ def answer_question(
     analyse() already holds for an unreachable Batfish, and explain() now
     holds for an unreachable Ollama.
     """
-    question = (question or "").strip()
+    # A phone or Mac types a curly apostrophe; the negation patterns read the
+    # straight one, so "can't" would be answered as the plain question.
+    question = (question or "").replace("’", "'").replace("‘", "'").strip()
     if not question:
         return _refuse("The question was empty.")
 

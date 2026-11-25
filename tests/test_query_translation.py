@@ -923,3 +923,21 @@ def test_a_second_filler_word_is_not_tolerated():
     )
 
     assert result["grounded"] is False
+
+
+@pytest.mark.parametrize("phrasing", [
+    "rtr-us5 can’t reach 218.8.104.58?",
+    "rtr-us5 doesn’t reach 218.8.104.58?",
+    "Why can’t rtr-us5 reach 218.8.104.58?",
+])
+def test_a_curly_apostrophe_reads_the_same_as_a_straight_one(phrasing):
+    """A phone or Mac types ’, not '. Read differently, "can’t reach"
+    was answered as the plain question: "Yes", grounded."""
+    answers = []
+    for text in (phrasing, phrasing.replace("’", "'")):
+        frame = _FakeFrame([{"Traces": [FakeTrace("ACCEPTED")]}])
+        session = _session_with_devices({"rtr-us5"}, traceroute_frame=frame)
+        result = answer_question(text, session)
+        answers.append((result["grounded"], result["answer"]))
+    assert answers[0] == answers[1]
+    assert not answers[0][1].startswith("Yes")
